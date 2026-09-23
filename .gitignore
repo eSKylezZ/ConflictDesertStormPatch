@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------------------------------------------
+# Only our own source, build scripts, docs and freely licensed assets belong in the repo.
+# Never commit anything from the game itself (binaries, data, dumps) or reverse-engineering databases.
+# ---------------------------------------------------------------------------------------------------------------
+
+# Local reverse-engineering helpers and working notes
+tools/
+TODO.md
+CLAUDE.md
+
+# Game binaries and data (Steam / GOG / Xbox) – never commit
+*.exe
+*.exe.bak
+*.bak
+*.dll
+*.xbe
+*.iso
+*.iso.bak
+*.img
+*.dat
+*.sch
+*.key
+*.dds
+*.wav
+Data/
+
+# Reverse-engineering databases, dumps and disassembly exports
+*.gpr
+*.rep/
+*.gzf
+*.lock
+*.lock~
+*.idb
+*.i64
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.dmp
+*.asm
+*.lst
+
+# Build output
+build/
+build-dist/
+*.pdb
+*.ilk
+*.obj
+*.log
+.vs/
+
+# Local machine configuration (game install paths etc.) – see CMakeUserPresets.example.json
+CMakeUserPresets.json
+.vscode/*
+!.vscode/extensions.json
+.claude/settings.local.json
+
+# Source archives (curated copies live in assets/)
+*.zip
+
+# Python / OS clutter
+__pycache__/
+*.pyc
+Thumbs.db
+desktop.ini
+.DS_Store
