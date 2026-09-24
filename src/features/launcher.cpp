@@ -9,6 +9,7 @@
 // (launcher_pad.cpp).
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -18,6 +19,7 @@
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/launcher_pad.h"
+#include "features/splitscreen_layout.h"
 
 namespace {
 constexpr uint32_t kMainProcPush = 0x44793C;  // push 0x4478c0 (launcher dialog 106 proc) in FUN_00447930
@@ -33,7 +35,8 @@ constexpr int kIdOk = 1040, kIdCancel = 1041, kIdDefaults = 1034;
 constexpr int kIdSettingsButton = 1029;
 // Ours
 constexpr int kIdGroup = 1200, kIdFpsLabel = 1201, kIdFps = 1202, kIdHud = 1203, kIdHudSizeLabel = 1204,
-              kIdHudSize = 1205, kIdPad = 1206, kIdDeadzoneLabel = 1207, kIdDeadzone = 1208, kIdNote = 1209;
+              kIdHudSize = 1205, kIdPad = 1206, kIdDeadzoneLabel = 1207, kIdDeadzone = 1208, kIdNote = 1209,
+              kIdSplitLabel = 1210, kIdSplit = 1211, kIdSplitPreview = 1212, kIdDiscord = 1213;
 
 constexpr int kDialogW = 221;                  // original client width, dialog units
 constexpr int kColumnX = 228, kColumnW = 207;  // our column; 7 DLU margin on both sides
@@ -56,6 +59,8 @@ constexpr FpsChoice kFps[] = {
 };
 constexpr uint32_t kHudSizes[] = {75, 85, 100, 115, 125, 150};
 constexpr uint32_t kDeadzones[] = {10, 15, 20, 25, 30, 40, 50};
+constexpr const char* kSplitLayouts[splitscreen::kLayoutCount] = {"Horizontal (top / bottom)",
+                                                                  "Vertical (side by side)"};
 
 HFONT g_font = nullptr;
 
@@ -102,6 +107,48 @@ LPARAM SelectedData(HWND dlg, int id) {
 // Frame choice data = cap | toRefresh << 16
 LPARAM FpsData(uint32_t cap, bool toRefresh) { return static_cast<LPARAM>(cap | (toRefresh ? 0x10000u : 0u)); }
 
+// Preview under the split-screen choice: the 2, 3 and 4 player layouts as small 16:9 screens, the views
+// numbered and coloured per player, split by the game's grey divider lines.
+void DrawSplitPreview(HWND dlg, const DRAWITEMSTRUCT& di) {
+    const auto layout = static_cast<splitscreen::Layout>(SelectedData(dlg, kIdSplit));
+    HDC dc = di.hDC;
+    const RECT& rc = di.rcItem;
+    FillRect(dc, &rc, GetSysColorBrush(COLOR_BTNFACE));
+    SetBkMode(dc, TRANSPARENT);
+    HGDIOBJ oldFont = SelectObject(dc, g_font);
+    TEXTMETRICA tm;
+    GetTextMetricsA(dc, &tm);
+
+    constexpr COLORREF kPlayer[] = {RGB(58, 96, 150), RGB(150, 62, 58), RGB(62, 124, 70), RGB(150, 128, 48)};
+    constexpr int kGap = 6;
+    const int boxW = (rc.right - rc.left - 2 * kGap) / 3;
+    const int boxH = std::min(boxW * 9 / 16, static_cast<int>(rc.bottom - rc.top - tm.tmHeight - 1));
+    for (int players = 2; players <= 4; ++players) {
+        const int bx = rc.left + (players - 2) * (boxW + kGap), by = rc.top;
+        RECT screen{bx, by, bx + boxW, by + boxH};
+        FillRect(dc, &screen, GetSysColorBrush(COLOR_BTNSHADOW));  // shows through as the divider lines
+        for (int i = 0; i < players; ++i) {
+            splitscreen::View v = splitscreen::ViewRect(layout, players, i);
+            RECT r{bx + static_cast<int>(v.x * boxW), by + static_cast<int>(v.y * boxH),
+                   bx + static_cast<int>((v.x + v.w) * boxW), by + static_cast<int>((v.y + v.h) * boxH)};
+            InflateRect(&r, -1, -1);
+            HBRUSH b = CreateSolidBrush(kPlayer[i]);
+            FillRect(dc, &r, b);
+            DeleteObject(b);
+            char n[2] = {static_cast<char>('1' + i), 0};
+            SetTextColor(dc, RGB(255, 255, 255));
+            DrawTextA(dc, n, 1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        FrameRect(dc, &screen, GetSysColorBrush(COLOR_3DDKSHADOW));
+        char caption[16];
+        snprintf(caption, sizeof caption, "%d players", players);
+        RECT cr{bx, by + boxH + 1, bx + boxW, rc.bottom};
+        SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
+        DrawTextA(dc, caption, -1, &cr, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    }
+    SelectObject(dc, oldFont);
+}
+
 void UpdateEnabled(HWND dlg) {
     bool hud = IsDlgButtonChecked(dlg, kIdHud) == BST_CHECKED;
     bool pad = IsDlgButtonChecked(dlg, kIdPad) == BST_CHECKED;
@@ -117,6 +164,9 @@ void Fill(HWND dlg, const settings::Values& v) {
     SelectData(GetDlgItem(dlg, kIdHudSize), v.hudScalePercent, "%");
     CheckDlgButton(dlg, kIdPad, v.controller ? BST_CHECKED : BST_UNCHECKED);
     SelectData(GetDlgItem(dlg, kIdDeadzone), v.padDeadzone, "%");
+    SelectData(GetDlgItem(dlg, kIdSplit), v.splitScreenLayout, "");
+    CheckDlgButton(dlg, kIdDiscord, v.discordPresence ? BST_CHECKED : BST_UNCHECKED);
+    InvalidateRect(GetDlgItem(dlg, kIdSplitPreview), nullptr, FALSE);
     UpdateEnabled(dlg);
 }
 
@@ -129,6 +179,8 @@ void Save(HWND dlg) {
     v.hudScalePercent = static_cast<uint32_t>(SelectedData(dlg, kIdHudSize));
     v.controller = IsDlgButtonChecked(dlg, kIdPad) == BST_CHECKED;
     v.padDeadzone = static_cast<uint32_t>(SelectedData(dlg, kIdDeadzone));
+    v.splitScreenLayout = static_cast<uint32_t>(SelectedData(dlg, kIdSplit));
+    v.discordPresence = IsDlgButtonChecked(dlg, kIdDiscord) == BST_CHECKED;
     if (settings::Save(v)) features::OnSettingsChanged();
 }
 
@@ -188,7 +240,15 @@ void Build(HWND dlg) {
         AddItem(dz, t, d);
     }
 
-    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 207, w, 8);
+    Add(dlg, "BUTTON", "Show the game in my Discord st&atus", BS_AUTOCHECKBOX | WS_TABSTOP, kIdDiscord, x, 116, w,
+        10);
+
+    Add(dlg, "STATIC", "Spli&t screen:", SS_LEFT, kIdSplitLabel, x, 133, 70, 8);
+    HWND split = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdSplit, cx, 131, cw, 60);
+    for (uint32_t i = 0; i < splitscreen::kLayoutCount; ++i) AddItem(split, kSplitLayouts[i], i);
+    Add(dlg, "STATIC", "", SS_OWNERDRAW, kIdSplitPreview, cx, 147, cw, 30);
+
+    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 212, w, 8);
     Fill(dlg, settings::Get());
     // Left column, our column, then the bottom row left to right.
     MoveToEndOfTabOrder(dlg, {kIdDefaults, kIdOk, kIdCancel});
@@ -201,11 +261,17 @@ INT_PTR CALLBACK DetailProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         int id = LOWORD(wp);
         if (id == kIdOk) Save(dlg);  // before the game's handler ends the dialog
         if (id == kIdHud || id == kIdPad) UpdateEnabled(dlg);
+        if (id == kIdSplit && HIWORD(wp) == CBN_SELCHANGE)
+            InvalidateRect(GetDlgItem(dlg, kIdSplitPreview), nullptr, FALSE);
+    }
+    if (msg == WM_DRAWITEM && wp == kIdSplitPreview) {
+        DrawSplitPreview(dlg, *reinterpret_cast<const DRAWITEMSTRUCT*>(lp));
+        return TRUE;
     }
     INT_PTR result = g_gameProc(dlg, msg, wp, lp);
     if (msg == WM_INITDIALOG) {
         Build(dlg);
-        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, 174, kColumnW - 12, 29);
+        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, 179, kColumnW - 12, 29);
     }
     if (msg == WM_COMMAND && LOWORD(wp) == kIdDefaults) Fill(dlg, settings::Values{});
     return result;
@@ -240,8 +306,16 @@ void features::ApplyLauncher() {
         dslog::Write("[ok]   Launcher: gamepad navigation");
 }
 
+void features::OnFrame() {
+    OnFrameInput();
+    OnFrameSplitScreen();
+    OnFrameDiscord();
+}
+
 void features::OnSettingsChanged() {
     ApplyHud();
     ApplyController();
+    ApplyInGameInput();
     ApplyFrameCap();
+    ApplyDiscord();
 }

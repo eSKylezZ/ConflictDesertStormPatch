@@ -40,11 +40,15 @@ void settings::Load() {
         Read(key, "PadDeadzone", g_values.padDeadzone, 0, 90);
         Read(key, "FpsCap", g_values.fpsCap, 0, 1000);
         Read(key, "FpsCapToRefresh", g_values.fpsCapToRefresh);
+        Read(key, "SplitScreenLayout", g_values.splitScreenLayout, 0, 1);
+        Read(key, "DiscordPresence", g_values.discordPresence);
         RegCloseKey(key);
     }
     const Values& v = g_values;
-    dslog::Write("Settings: HudScaling=%d HudScalePercent=%u Controller=%d PadDeadzone=%u FpsCap=%u FpsCapToRefresh=%d",
-                v.hudScaling, v.hudScalePercent, v.controller, v.padDeadzone, v.fpsCap, v.fpsCapToRefresh);
+    dslog::Write("Settings: HudScaling=%d HudScalePercent=%u Controller=%d PadDeadzone=%u FpsCap=%u FpsCapToRefresh=%d "
+                "SplitScreenLayout=%u DiscordPresence=%d",
+                v.hudScaling, v.hudScalePercent, v.controller, v.padDeadzone, v.fpsCap, v.fpsCapToRefresh,
+                v.splitScreenLayout, v.discordPresence);
 }
 
 bool settings::Save(const Values& v) {
@@ -55,7 +59,8 @@ bool settings::Save(const Values& v) {
     }
     bool ok = Put(key, "HudScaling", v.hudScaling) && Put(key, "HudScalePercent", v.hudScalePercent) &&
               Put(key, "Controller", v.controller) && Put(key, "PadDeadzone", v.padDeadzone) &&
-              Put(key, "FpsCap", v.fpsCap) && Put(key, "FpsCapToRefresh", v.fpsCapToRefresh);
+              Put(key, "FpsCap", v.fpsCap) && Put(key, "FpsCapToRefresh", v.fpsCapToRefresh) &&
+              Put(key, "SplitScreenLayout", v.splitScreenLayout) && Put(key, "DiscordPresence", v.discordPresence);
     RegCloseKey(key);
     if (ok) g_values = v;
     return ok;

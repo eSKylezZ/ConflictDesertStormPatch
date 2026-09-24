@@ -46,6 +46,10 @@ void Init() {
     features::ApplyTiming();
     features::ApplyFrameCap();
     features::ApplyLauncher();
+    features::ApplyInGameInput();
+    features::ApplySplitScreen();
+    features::ApplyDiscord();
+    features::ApplyDevHooks();
 }
 
 extern "C" void __cdecl InitOnEntry() {

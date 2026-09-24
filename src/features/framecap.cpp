@@ -110,6 +110,7 @@ void __cdecl Frame() {
             g_next += g_period;
         }
     }
+    features::OnFrame();
     g_dispatch();
 }
 }  // namespace

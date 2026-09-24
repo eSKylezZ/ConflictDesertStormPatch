@@ -30,6 +30,10 @@ add_library(dinput8 SHARED
     src/features/framecap.cpp
     src/features/launcher.cpp
     src/features/launcher_pad.cpp
+    src/features/ingame_input.cpp
+    src/features/splitscreen.cpp
+    src/features/dev.cpp
+    src/features/discord.cpp
     ${CMAKE_BINARY_DIR}/version.rc
 )
 target_include_directories(dinput8 PRIVATE src)

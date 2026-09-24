@@ -70,7 +70,7 @@ uint32_t Directions(bool up, bool down, bool left, bool right) {
     return (up ? kUp : 0) | (down ? kDown : 0) | (left ? kLeft : 0) | (right ? kRight : 0);
 }
 
-uint32_t PollXInput(bool& connected) {
+uint32_t PollXInput(bool& connected, bool& activity) {
     uint32_t out = 0;
     if (!g_xinputGetState) return 0;
     for (DWORD i = 0; i < XUSER_MAX_COUNT; ++i) {
@@ -87,12 +87,17 @@ uint32_t PollXInput(bool& connected) {
         if (g.wButtons & XINPUT_GAMEPAD_B) out |= kBack;
         if (g.wButtons & XINPUT_GAMEPAD_START) out |= kStart;
         if (g.wButtons & XINPUT_GAMEPAD_Y) out |= kAlt;
+        const SHORT dz = 8000;
+        if (g.wButtons || g.bLeftTrigger > 30 || g.bRightTrigger > 30 || g.sThumbLX > dz || g.sThumbLX < -dz ||
+            g.sThumbLY > dz || g.sThumbLY < -dz || g.sThumbRX > dz || g.sThumbRX < -dz || g.sThumbRY > dz ||
+            g.sThumbRY < -dz)
+            activity = true;
     }
     return out;
 }
 
 // DualShock 4 / DualSense DirectInput layout: 0 Square 1 Cross 2 Circle 3 Triangle ... 9 Options; D-pad = POV.
-uint32_t PollDirectInput(bool& connected) {
+uint32_t PollDirectInput(bool& connected, bool& activity) {
     uint32_t out = 0;
     for (int i = 0; i < g_deviceCount; ++i) {
         IDirectInputDevice8A* dev = g_devices[i];
@@ -109,6 +114,11 @@ uint32_t PollDirectInput(bool& connected) {
         if (js.rgbButtons[2] & 0x80) out |= kBack;
         if (js.rgbButtons[9] & 0x80) out |= kStart;
         if (js.rgbButtons[3] & 0x80) out |= kAlt;
+        for (int b = 0; b < 16; ++b)
+            if (js.rgbButtons[b] & 0x80) activity = true;
+        if (hat || js.lX < -kStickThreshold || js.lX > kStickThreshold || js.lY < -kStickThreshold ||
+            js.lY > kStickThreshold)
+            activity = true;
     }
     return out;
 }
@@ -141,9 +151,9 @@ void Close() {
 
 State Poll() {
     if (g_deviceCount == 0 && GetTickCount() - g_lastEnum > 3000) Enumerate();  // hot-plug (Sony pads)
-    bool xConnected = false, dConnected = false;
-    uint32_t x = PollXInput(xConnected);
-    uint32_t d = PollDirectInput(dConnected);
+    bool xConnected = false, dConnected = false, xActivity = false, dActivity = false;
+    uint32_t x = PollXInput(xConnected, xActivity);
+    uint32_t d = PollDirectInput(dConnected, dActivity);
 #ifndef DS_DIST
     // Dev builds only: test scripts inject presses through HKCU\Software\DesertStormFix\Dev "PadInject"
     // (Button bits; bit 31 set = act as an Xbox pad, else PlayStation).
@@ -155,10 +165,10 @@ State Poll() {
         (inject >> 31 ? xConnected : dConnected) = true;
     }
 #endif
-    if (x) g_lastType = Type::Xbox;
-    else if (d) g_lastType = Type::PlayStation;
+    if (x || xActivity) g_lastType = Type::Xbox;
+    else if (d || dActivity) g_lastType = Type::PlayStation;
     else if (g_lastType == Type::None) g_lastType = dConnected ? Type::PlayStation : xConnected ? Type::Xbox : Type::None;
     if (!xConnected && !dConnected) g_lastType = Type::None;
-    return State{x | d, g_lastType};
+    return State{x | d, g_lastType, xActivity || dActivity || (x | d) != 0};
 }
 }  // namespace gamepad

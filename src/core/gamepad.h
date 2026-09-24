@@ -22,6 +22,7 @@ enum class Type { None, Xbox, PlayStation };
 struct State {
     uint32_t buttons = 0;
     Type type = Type::None;  // pad that was used last (or the first one found)
+    bool activity = false;   // any button, trigger or stick in use (not just the menu buttons above)
 };
 
 bool Open(HWND owner);  // DirectInput needs a window for its cooperative level

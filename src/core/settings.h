@@ -12,6 +12,8 @@ struct Values {
     uint32_t padDeadzone = 40;       // percent
     uint32_t fpsCap = 240;           // 0 = no fixed cap
     bool fpsCapToRefresh = true;     // also never exceed the monitor refresh rate
+    uint32_t splitScreenLayout = 0;  // splitscreen::Layout: 0 horizontal (top / bottom), 1 vertical (side by side)
+    bool discordPresence = true;     // show the mission / mode in the user's Discord status
 };
 
 const Values& Get();
