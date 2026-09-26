@@ -83,6 +83,7 @@ constexpr uint32_t kPlayerCount = 0x606414;        // number of local players (2
 constexpr uint32_t kInputBlocks = 0x60F5B8;        // per-player input blocks, 0x478 bytes each
 constexpr uint32_t kInputBlockSize = 0x478;
 constexpr uint32_t kBlockPlayer = 0x30;            // block + 0x30: the player object it drives
+constexpr uint32_t kBlockJoystick = 0x3C8;         // block + 0x3c8: joystick index (-1 = none)
 constexpr uint32_t kPlayerTable = 0x606A68;        // player objects [4]
 constexpr uint32_t kPickSoldier = 0x44ADA0;        // fastcall (block): hand the block its squad member
 constexpr uint32_t kPickSoldierSite = 0x40BB5E;    // call kPickSoldier for player 1 in FUN_0040bae0
@@ -157,8 +158,9 @@ uint32_t g_builtLayout = ~0u;
 DWORD g_probeStart = 0;  // dev HUD probe (below): when split views were built
 #endif
 
-// Wanted number of views. Until players can join in game, dev builds read it from the registry.
+// Wanted number of views: the co-op session's players (front-end CO-OP screen); dev builds can force a count.
 int WantedPlayers() {
+    if (features::CoopPlayers() >= 2) return features::CoopPlayers();
 #ifndef DS_DIST
     DWORD v = 0, size = sizeof v;
     if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "SplitPlayers", RRF_RT_REG_DWORD, nullptr,
@@ -206,6 +208,19 @@ void __fastcall AssignPlayers(uintptr_t block0) {
         *reinterpret_cast<uint32_t*>(block + kBlockPlayer) = reinterpret_cast<uint32_t*>(kPlayerTable)[i];
         *reinterpret_cast<uint32_t*>(block + kBlockDevices) &= ~1u;  // pad only
         reinterpret_cast<Pick>(kPickSoldier)(block);
+    }
+    // Co-op session: each player's own device (the pad they joined with, or keyboard & mouse).
+    if (features::CoopPlayers() >= 2) {
+        for (uint32_t i = 0; i < players && i < kMaxPlayers; ++i) {
+            uintptr_t block = kInputBlocks + i * kInputBlockSize;
+            const int joystick = features::CoopJoystick(static_cast<int>(i));
+            // Pad players: pad only (bit 2) on their joystick. Keyboard players: keyboard & mouse only (bit 1) - they
+            // keep a joystick index (their player number, like the game sets it): FUN_00450770 ignores a block with
+            // joystick -1 entirely, keyboard included; with the pad bit clear no pad is read for them.
+            *reinterpret_cast<uint32_t*>(block + kBlockDevices) = joystick >= 0 ? 2u : 1u;
+            *reinterpret_cast<int32_t*>(block + kBlockJoystick) = joystick >= 0 ? joystick : static_cast<int32_t>(i);
+            dslog::Write("Split screen: player %u uses %s %d", i + 1, joystick >= 0 ? "joystick" : "keyboard", joystick);
+        }
     }
     dslog::Write("Split screen: %u players assigned", players);
 }
@@ -493,6 +508,14 @@ bool IsMenuLevel(const char* name) {
 }  // namespace
 
 int features::SplitScreenPlayers() { return g_builtPlayers; }
+
+// Offset of the view whose HUD is being drawn (its 2D is drawn in view-local coordinates and moved here).
+bool features::SplitHudOffset(float& x, float& y) {
+    if (!g_hud.active) return false;
+    x = g_hud.ox;
+    y = g_hud.oy;
+    return true;
+}
 
 void features::ApplySplitScreen() {
     static bool hooked = false;

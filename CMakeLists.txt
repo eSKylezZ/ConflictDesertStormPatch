@@ -34,7 +34,13 @@ add_library(dinput8 SHARED
     src/features/splitscreen.cpp
     src/features/dev.cpp
     src/features/discord.cpp
+    src/features/display.cpp
+    src/features/cinematics.cpp
+    src/features/graphics.cpp
+    src/features/coop.cpp
+    src/features/overlay.cpp
     ${CMAKE_BINARY_DIR}/version.rc
+    src/game_icons.rc
 )
 target_include_directories(dinput8 PRIVATE src)
 target_compile_definitions(dinput8 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS

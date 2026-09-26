@@ -1,0 +1,2 @@
+// In-game button icons (scripts/gen_game_icons.py) - loaded by src/features/overlay.cpp.
+300 RCDATA "generated/game_icons.bin"

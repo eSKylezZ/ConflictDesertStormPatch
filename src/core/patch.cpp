@@ -99,6 +99,20 @@ bool patch::HookCall(uint32_t site, const void* fn, uint32_t expectedTarget) {
     return Write(site, code, 5);
 }
 
+bool patch::HookIndirectCall(uint32_t site, const void* fn, uint32_t iatSlot) {
+    uint8_t code[6] = {0xFF, 0x15};
+    std::memcpy(code + 2, &iatSlot, 4);
+    if (!Matches(site, code, 6)) {
+        dslog::Write("[fail] call hook at 0x%08X: does not call [0x%08X]", site, iatSlot);
+        return false;
+    }
+    uint8_t rel[5];
+    EncodeRel(rel, 0xE8, site, reinterpret_cast<uint32_t>(fn));
+    std::memcpy(code, rel, 5);
+    code[5] = 0x90;
+    return Write(site, code, 6);
+}
+
 bool patch::WriteJump(uint32_t site, const void* fn) {
     uint8_t code[5];
     EncodeRel(code, 0xE9, site, reinterpret_cast<uint32_t>(fn));

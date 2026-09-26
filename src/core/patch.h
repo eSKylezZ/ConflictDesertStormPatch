@@ -37,6 +37,8 @@ bool WriteValue(uint32_t va, const T& value) { return Write(va, &value, sizeof v
 
 // Redirects the `call rel32` at `site` (which must currently call `expectedTarget`) to `fn`.
 bool HookCall(uint32_t site, const void* fn, uint32_t expectedTarget);
+// Replaces the 6-byte `call dword ptr [iatSlot]` at `site` with `call fn; nop` (fn has the API's signature).
+bool HookIndirectCall(uint32_t site, const void* fn, uint32_t iatSlot);
 // Writes `jmp rel32` to `fn` at `site`.
 bool WriteJump(uint32_t site, const void* fn);
 }  // namespace patch

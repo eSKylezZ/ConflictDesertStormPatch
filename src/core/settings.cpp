@@ -42,13 +42,20 @@ void settings::Load() {
         Read(key, "FpsCapToRefresh", g_values.fpsCapToRefresh);
         Read(key, "SplitScreenLayout", g_values.splitScreenLayout, 0, 1);
         Read(key, "DiscordPresence", g_values.discordPresence);
+        Read(key, "DisplayMode", g_values.displayMode, 0, 2);
+        Read(key, "SkipIntro", g_values.skipIntro);
+        Read(key, "SkipCutscenes", g_values.skipCutscenes);
+        Read(key, "Antialiasing", g_values.antialiasing, 0, 16);
+        Read(key, "Anisotropy", g_values.anisotropy, 0, 16);
         RegCloseKey(key);
     }
     const Values& v = g_values;
     dslog::Write("Settings: HudScaling=%d HudScalePercent=%u Controller=%d PadDeadzone=%u FpsCap=%u FpsCapToRefresh=%d "
-                "SplitScreenLayout=%u DiscordPresence=%d",
+                "SplitScreenLayout=%u DiscordPresence=%d DisplayMode=%u SkipIntro=%d SkipCutscenes=%d "
+                "Antialiasing=%u Anisotropy=%u",
                 v.hudScaling, v.hudScalePercent, v.controller, v.padDeadzone, v.fpsCap, v.fpsCapToRefresh,
-                v.splitScreenLayout, v.discordPresence);
+                v.splitScreenLayout, v.discordPresence, v.displayMode, v.skipIntro, v.skipCutscenes,
+                v.antialiasing, v.anisotropy);
 }
 
 bool settings::Save(const Values& v) {
@@ -60,7 +67,10 @@ bool settings::Save(const Values& v) {
     bool ok = Put(key, "HudScaling", v.hudScaling) && Put(key, "HudScalePercent", v.hudScalePercent) &&
               Put(key, "Controller", v.controller) && Put(key, "PadDeadzone", v.padDeadzone) &&
               Put(key, "FpsCap", v.fpsCap) && Put(key, "FpsCapToRefresh", v.fpsCapToRefresh) &&
-              Put(key, "SplitScreenLayout", v.splitScreenLayout) && Put(key, "DiscordPresence", v.discordPresence);
+              Put(key, "SplitScreenLayout", v.splitScreenLayout) && Put(key, "DiscordPresence", v.discordPresence) &&
+              Put(key, "DisplayMode", v.displayMode) && Put(key, "SkipIntro", v.skipIntro) &&
+              Put(key, "SkipCutscenes", v.skipCutscenes) && Put(key, "Antialiasing", v.antialiasing) &&
+              Put(key, "Anisotropy", v.anisotropy);
     RegCloseKey(key);
     if (ok) g_values = v;
     return ok;

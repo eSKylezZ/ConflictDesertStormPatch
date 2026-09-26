@@ -68,3 +68,6 @@ desktop.ini
 
 # Files extracted from Xbox disc images
 xbox/
+
+# Screenshots / videos for the mod page (show game content) – kept local
+media/

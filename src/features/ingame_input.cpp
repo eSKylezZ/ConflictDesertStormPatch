@@ -26,6 +26,7 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/overlay.h"
 
 namespace {
 constexpr uint32_t kCursorFlagSite = 0x40F3A5;  // mov eax,[0x5e6cb4] (5 bytes)
@@ -55,21 +56,22 @@ void SetInput(Input input) {
 // ---- prompts ----
 struct Prompt {
     uint32_t hash;
-    int button;  // game joystick button (default.key numbering), -1 = D-pad
+    int button;           // game joystick button (default.key numbering), -1 = D-pad
+    overlay::Icon key;    // the keyboard key the text names
 };
 // Hashes from catalog.dat (PC_*_PROMPT). PC_TAB_KEY_PROMPT has no known pad equivalent and stays as it is.
 constexpr Prompt kPrompts[] = {
-    {3812760437u, 2},   // PC_ACCEPT_PROMPT        Return: Accept
-    {1376302336u, 2},   // PC_SELECT_PROMPT        Return: Select
-    {620529314u, 2},    // PC_MORE_INFO_PROMPT     Return: More information
-    {2426184306u, 0},   // PC_BACK_PROMPT          Esc: Back
-    {745684578u, 0},    // PC_CANCEL_PROMPT        Esc: Cancel
-    {799972218u, 0},    // PC_ESC_FE_PROMPT        Esc: Main Menu
-    {2484684419u, 0},   // PC_ESC_CONTINUE_PROMPT  Esc: Continue
-    {4068979723u, 11},  // PC_ESC_RETURN_PROMPT    Esc: Return to mission (pause)
-    {947741146u, 8},    // PC_F1_RETURN_PROMPT     F1: Return to mission (objectives)
-    {2393634237u, -1},  // PC_DEBRIEF_PROMPT       Arrow Keys: Change soldier/screen
-    {2522449822u, -1},  // PC_LR_SELECT_PROMPT     Left/Right: Select
+    {3812760437u, 2, overlay::Icon::KbEnter},             // PC_ACCEPT_PROMPT        Return: Accept
+    {1376302336u, 2, overlay::Icon::KbEnter},             // PC_SELECT_PROMPT        Return: Select
+    {620529314u, 2, overlay::Icon::KbEnter},              // PC_MORE_INFO_PROMPT     Return: More information
+    {2426184306u, 0, overlay::Icon::KbEscape},            // PC_BACK_PROMPT          Esc: Back
+    {745684578u, 0, overlay::Icon::KbEscape},             // PC_CANCEL_PROMPT        Esc: Cancel
+    {799972218u, 0, overlay::Icon::KbEscape},             // PC_ESC_FE_PROMPT        Esc: Main Menu
+    {2484684419u, 0, overlay::Icon::KbEscape},            // PC_ESC_CONTINUE_PROMPT  Esc: Continue
+    {4068979723u, 11, overlay::Icon::KbEscape},           // PC_ESC_RETURN_PROMPT    Esc: Return to mission
+    {947741146u, 8, overlay::Icon::KbF1},                 // PC_F1_RETURN_PROMPT     F1: Return to mission
+    {2393634237u, -1, overlay::Icon::KbArrows},           // PC_DEBRIEF_PROMPT       Arrow Keys: Change soldier
+    {2522449822u, -1, overlay::Icon::KbArrowsHorizontal}, // PC_LR_SELECT_PROMPT     Left/Right: Select
 };
 
 // Game button n after our remap -> physical button name.
@@ -80,6 +82,148 @@ const char* ButtonName(Input input, int button) {
     if (button < 0) return "D-pad";
     if (button > 11) return "?";
     return input == Input::Xbox ? xb[button] : ps[button];
+}
+
+// ---- button icons ----
+// Pad style for icons: the pad in use, else the last pad seen, else PlayStation (the in-game remap is DualShock).
+// g_forceXbox: set while a co-op player's own style is being used (context prompts).
+int g_forceStyle = -1;  // -1 none, 1 PlayStation, 2 Xbox
+bool XboxStyle() { return g_forceStyle >= 0 ? g_forceStyle == 2 : g_input == Input::Xbox; }
+
+overlay::Icon PadIcon(int button) {  // game joystick button 0-15 (default.key numbering), -1 = D-pad
+    using overlay::Icon;
+    if (button < 0) return XboxStyle() ? Icon::XbDpadHorizontal : Icon::PsDpadHorizontal;
+    const int base = static_cast<int>(XboxStyle() ? Icon::XbTriangle : Icon::PsTriangle);
+    return static_cast<Icon>(base + (button & 15));
+}
+
+// DirectInput scan code -> keyboard icon (Count = none).
+overlay::Icon KeyIcon(uint32_t dik) {
+    using overlay::Icon;
+    static const char row1[] = "1234567890", qwerty[] = "QWERTYUIOP", asdf[] = "ASDFGHJKL", zxcv[] = "ZXCVBNM";
+    auto letter = [](char c) { return static_cast<Icon>(static_cast<int>(Icon::KbA) + (c - 'A')); };
+    auto digit = [](char c) { return static_cast<Icon>(static_cast<int>(Icon::Kb0) + (c - '0')); };
+    if (dik >= 0x02 && dik <= 0x0B) return digit(row1[dik - 0x02]);
+    if (dik >= 0x10 && dik <= 0x19) return letter(qwerty[dik - 0x10]);
+    if (dik >= 0x1E && dik <= 0x26) return letter(asdf[dik - 0x1E]);
+    if (dik >= 0x2C && dik <= 0x32) return letter(zxcv[dik - 0x2C]);
+    if (dik >= 0x3B && dik <= 0x44) return static_cast<Icon>(static_cast<int>(Icon::KbF1) + (dik - 0x3B));
+    switch (dik) {
+        case 0x01: return Icon::KbEscape;
+        case 0x0C: return Icon::KbMinus;
+        case 0x0D: return Icon::KbEquals;
+        case 0x0E: return Icon::KbBackspace;
+        case 0x0F: return Icon::KbTab;
+        case 0x1A: return Icon::KbBracketOpen;
+        case 0x1B: return Icon::KbBracketClose;
+        case 0x1C: return Icon::KbEnter;
+        case 0x1D: case 0x9D: return Icon::KbCtrl;
+        case 0x27: return Icon::KbSemicolon;
+        case 0x28: return Icon::KbApostrophe;
+        case 0x29: return Icon::KbTilde;
+        case 0x2A: case 0x36: return Icon::KbShift;
+        case 0x2B: return Icon::KbBackslash;
+        case 0x33: return Icon::KbComma;
+        case 0x34: return Icon::KbPeriod;
+        case 0x35: return Icon::KbSlash;
+        case 0x37: return Icon::KbAsterisk;
+        case 0x38: case 0xB8: return Icon::KbAlt;
+        case 0x39: return Icon::KbSpace;
+        case 0x3A: return Icon::KbCapslock;
+        case 0x4E: return Icon::KbNumpadPlus;
+        case 0x57: return Icon::KbF11;
+        case 0x58: return Icon::KbF12;
+        case 0x9C: return Icon::KbNumpadEnter;
+        case 0xC7: return Icon::KbHome;
+        case 0xC8: return Icon::KbArrowUp;
+        case 0xC9: return Icon::KbPageUp;
+        case 0xCB: return Icon::KbArrowLeft;
+        case 0xCD: return Icon::KbArrowRight;
+        case 0xCF: return Icon::KbEnd;
+        case 0xD0: return Icon::KbArrowDown;
+        case 0xD1: return Icon::KbPageDown;
+        case 0xD2: return Icon::KbInsert;
+        case 0xD3: return Icon::KbDelete;
+        default: return Icon::Count;
+    }
+}
+
+// Binding code (type << 16 | n: 0 key, 1 joystick axis, 2 joystick button, 4 mouse button) -> icon (Count = none).
+overlay::Icon BindingIcon(uint32_t code) {
+    using overlay::Icon;
+    const uint32_t n = code & 0xFFFF;
+    switch (code >> 16) {
+        case 0: return KeyIcon(n);
+        case 1: return n < 6 ? (XboxStyle() ? Icon::XbStickL : Icon::PsStickL) : (XboxStyle() ? Icon::XbStickR : Icon::PsStickR);
+        case 2: return n < 16 ? PadIcon(static_cast<int>(n)) : Icon::Count;
+        case 4: return n == 0 ? Icon::MouseLeft : n == 1 ? Icon::MouseRight : n == 2 ? Icon::MouseMiddle : Icon::Mouse;
+        default: return Icon::Count;
+    }
+}
+
+// Context prompts over objects (FUN_00450560 picks one per action type: MOUNT, UNMOUNT, PICK UP, EMBARK, CLIMB ...;
+// all done with the ACTION control): "[button] MOUNT". The button is the ACTION binding (action 2 in the binding
+// table [0x60687c], FUN_0040a110(set, slot, action)) of the player whose HUD is drawn - in co-op the device and icon
+// style they joined with, otherwise the device in use.
+constexpr uint32_t kActionPrompts[] = {
+    0x14D74E2B, 0x94CE0B19, 0x43C36EAC, 0x38C30DC3, 0x0205AF3C, 0x935F10D6, 0x725DC0BB, 0x1DEA6EED, 0xA009940C,
+    0x7E276392, 0x9A21D90F, 0xDAF2188F, 0x1DDF138C, 0x88DEF646, 0x6A00298D, 0x207F169C, 0x6E35CC74, 0x0153D382};
+constexpr uint32_t kBindings = 0x60687C, kBindingLookup = 0x40A110;
+constexpr uint32_t kActionPrompt = 0x450540, kActionPromptCall = 0x40F304;  // FUN_00450540(block), one caller
+constexpr uint32_t kInputBlocks = 0x60F5B8, kInputBlockSize = 0x478;
+int g_promptPlayer = 0;  // player whose context prompt is being drawn (drawn after the per-view loop)
+#ifndef DS_DIST
+DWORD g_forcedAction = 0;  // dev: Dev\ForceActionPrompt = action type (block +0x374; 13 UNMOUNT, 16 PICK UP ...)
+#endif
+
+void __fastcall ActionPrompt(uint8_t* block) {
+    g_promptPlayer = static_cast<int>((reinterpret_cast<uintptr_t>(block) - kInputBlocks) / kInputBlockSize) & 3;
+#ifndef DS_DIST
+    if (g_forcedAction) *reinterpret_cast<int32_t*>(block + 0x374) = static_cast<int32_t>(g_forcedAction);
+#endif
+    reinterpret_cast<void(__fastcall*)(uint8_t*)>(kActionPrompt)(block);
+    g_promptPlayer = 0;
+}
+constexpr uint32_t kActionControl = 2;
+
+overlay::Icon BindingIcon(uint32_t code);
+
+// The ACTION button of the player being drawn, or Count.
+overlay::Icon ActionIcon() {
+    void* table = *reinterpret_cast<void**>(kBindings);
+    if (!table) return overlay::Icon::Count;
+    int player = 0, style;
+    if (features::SplitScreenPlayers() > 1) player = g_promptPlayer;
+    const int coopStyle = features::CoopPromptStyle(player);
+    if (coopStyle >= 0) style = coopStyle;
+    else style = (g_enabled && g_input != Input::Keyboard) ? (g_input == Input::Xbox ? 2 : 1) : 0;
+    const int set = features::SplitScreenPlayers() > 1 ? player : 0;  // binding set = block +0x3c0 = player
+
+    const int slots = reinterpret_cast<const int*>(table)[1];
+    using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
+    for (int slot = 0; slot < slots; ++slot) {
+        const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, kActionControl);
+        if (code == 0xFFFFFFFF) continue;
+        const uint32_t type = code >> 16;
+        const bool padCode = type == 1 || type == 2;
+        if (padCode != (style != 0)) continue;
+        g_forceStyle = style ? style : -1;
+        const overlay::Icon icon = BindingIcon(code);
+        g_forceStyle = -1;
+        if (icon != overlay::Icon::Count) return icon;
+    }
+    return overlay::Icon::Count;
+}
+
+// Replaces the call of FUN_004722c0 (binding code -> name) where the game fills the "%s" of its tutorial / tip
+// texts with an action's bindings ("Crouch (%s)" -> "Crouch (C / Joy 3)"): an icon character instead of the name.
+constexpr uint32_t kBindingName = 0x4722C0, kTutorialBindingCall = 0x486BA8;
+const char* __fastcall BindingName(void* table, void*, uint32_t code) {
+    if (code != 0xFFFFFFFF && overlay::GlyphsReady()) {
+        const overlay::Icon icon = BindingIcon(code);
+        if (icon != overlay::Icon::Count) return overlay::IconChar(icon);
+    }
+    return reinterpret_cast<const char*(__thiscall*)(void*, uint32_t)>(kBindingName)(table, code);
 }
 
 // Same as FUN_004f6730: prepare the table if needed, then binary-search it through globals.
@@ -96,21 +240,40 @@ const char* GameLookup(void* table, uint32_t hash) {
 }
 
 const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
+    if (const char* own = features::CoopText(hash)) return own;
     const char* text = GameLookup(table, hash);
-    if (!g_enabled || g_input == Input::Keyboard || !text) return text;
+    if (!text) return text;
+    const bool pad = g_enabled && g_input != Input::Keyboard;
+    const bool icons = overlay::GlyphsReady();
+    if (icons)
+        for (uint32_t h : kActionPrompts) {
+            if (h != hash) continue;
+            const overlay::Icon icon = ActionIcon();
+            if (icon == overlay::Icon::Count) return text;
+            static char ring[16][96];
+            static int next = 0;
+            char* out = ring[next];
+            next = (next + 1) % 16;
+            snprintf(out, sizeof ring[0], "%s %s", overlay::IconChar(icon), text);
+            return out;
+        }
+    if (!pad && !icons) return text;
     for (const Prompt& p : kPrompts) {
         if (p.hash != hash) continue;
-        // One string per (language text, device) kept forever, so pointers handed to the game stay valid.
-        static std::unordered_map<std::string, std::string> cache;
-        std::string key = std::string(g_input == Input::Xbox ? "X" : "P") + text;
-        auto it = cache.find(key);
-        if (it == cache.end()) {
-            const char* colon = strchr(text, ':');
-            const char* action = colon ? colon + 1 : text;
-            while (*action == ' ') ++action;
-            it = cache.emplace(key, std::string(ButtonName(g_input, p.button)) + ": " + action).first;
-        }
-        return it->second.c_str();
+        const char* colon = strchr(text, ':');
+        const char* action = colon ? colon + 1 : text;
+        while (*action == ' ') ++action;
+        // Built per call (the icon characters are handed out on demand); a ring of buffers keeps the pointers the
+        // game holds for this frame valid.
+        static char ring[32][160];
+        static int next = 0;
+        char* out = ring[next];
+        next = (next + 1) % 32;
+        if (icons)
+            snprintf(out, sizeof ring[0], "%s  %s", overlay::IconChar(pad ? PadIcon(p.button) : p.key), action);
+        else
+            snprintf(out, sizeof ring[0], "%s: %s", ButtonName(g_input, p.button), action);
+        return out;
     }
     return text;
 }
@@ -121,6 +284,11 @@ uint32_t __cdecl CursorFlag() {
     return (g_enabled && g_input != Input::Keyboard) ? 0 : flag;
 }
 }  // namespace
+
+const char* features::GameText(uint32_t hash) {
+    void* table = *reinterpret_cast<void**>(0x60EDCC);
+    return table ? GameLookup(table, hash) : nullptr;
+}
 
 void features::OnFrameInput() {
     if (!g_enabled) return;
@@ -152,7 +320,7 @@ void features::OnFrameInput() {
 void features::ApplyInGameInput() {
     g_enabled = settings::Get().controller;
     static bool hooked = false;
-    if (hooked || !g_enabled) return;
+    if (hooked) return;  // installed even with the pad option off: Lookup also serves the co-op screen's texts
     static const uint8_t cursorSite[] = {0xA1, 0xB4, 0x6C, 0x5E, 0x00};
     static const uint8_t lookupHead[] = {0x56, 0x8B, 0xF1, 0x8B, 0x46, 0x60, 0x85, 0xC0, 0x75, 0x05, 0xE8, 0xC1,
                                          0xFF, 0xFF, 0xFF, 0x8B, 0x46, 0x4C, 0x85, 0xC0, 0x76, 0x28};
@@ -166,6 +334,20 @@ void features::ApplyInGameInput() {
     memcpy(call + 1, &rel, 4);
     patch::Write(kCursorFlagSite, call, sizeof call);
     patch::WriteJump(kLookup, reinterpret_cast<const void*>(&Lookup));
+    if (overlay::Install()) {
+        patch::HookCall(kTutorialBindingCall, reinterpret_cast<const void*>(&BindingName), kBindingName);
+        patch::HookCall(kActionPromptCall, reinterpret_cast<const void*>(&ActionPrompt), kActionPrompt);
+#ifndef DS_DIST
+        DWORD v = 0, size = sizeof v;
+        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "ForceActionPrompt", RRF_RT_REG_DWORD,
+                         nullptr, &v, &size) == ERROR_SUCCESS && v) {
+            g_forcedAction = v;  // and skip the "no action available" check (je at 0x45055E)
+            static const uint8_t nops[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+            patch::Write(0x45055E, nops, sizeof nops);
+            dslog::Write("[dev]  Action prompt forced to type %lu", v);
+        }
+#endif
+    }
     hooked = true;
     dslog::Write("[ok]   In-game pad prompts + cursor hiding");
 }

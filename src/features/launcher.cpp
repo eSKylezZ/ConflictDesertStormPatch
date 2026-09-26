@@ -19,6 +19,7 @@
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/launcher_pad.h"
+#include "features/overlay.h"
 #include "features/splitscreen_layout.h"
 
 namespace {
@@ -36,10 +37,13 @@ constexpr int kIdSettingsButton = 1029;
 // Ours
 constexpr int kIdGroup = 1200, kIdFpsLabel = 1201, kIdFps = 1202, kIdHud = 1203, kIdHudSizeLabel = 1204,
               kIdHudSize = 1205, kIdPad = 1206, kIdDeadzoneLabel = 1207, kIdDeadzone = 1208, kIdNote = 1209,
-              kIdSplitLabel = 1210, kIdSplit = 1211, kIdSplitPreview = 1212, kIdDiscord = 1213;
+              kIdSplitLabel = 1210, kIdSplit = 1211, kIdSplitPreview = 1212, kIdDiscord = 1213,
+              kIdDisplayLabel = 1214, kIdDisplay = 1215, kIdSkipIntro = 1216, kIdSkipCutscenes = 1217,
+              kIdAaLabel = 1218, kIdAa = 1219, kIdAfLabel = 1220, kIdAf = 1221;
 
 constexpr int kDialogW = 221;                  // original client width, dialog units
 constexpr int kColumnX = 228, kColumnW = 207;  // our column; 7 DLU margin on both sides
+constexpr int kExtraH = 76;                    // dialog grows by this (DLU) for our rows
 
 struct FpsChoice {
     const char* label;
@@ -57,6 +61,9 @@ constexpr FpsChoice kFps[] = {
     {"240 fps", 240, false},
     {"Unlimited (not recommended)", 0, false},
 };
+constexpr const char* kDisplayModes[] = {"Fullscreen", "Windowed", "Borderless window"};
+constexpr uint32_t kAntialiasing[] = {0, 2, 4, 8};
+constexpr uint32_t kAnisotropy[] = {0, 2, 4, 8, 16};
 constexpr uint32_t kHudSizes[] = {75, 85, 100, 115, 125, 150};
 constexpr uint32_t kDeadzones[] = {10, 15, 20, 25, 30, 40, 50};
 constexpr const char* kSplitLayouts[splitscreen::kLayoutCount] = {"Horizontal (top / bottom)",
@@ -166,6 +173,11 @@ void Fill(HWND dlg, const settings::Values& v) {
     SelectData(GetDlgItem(dlg, kIdDeadzone), v.padDeadzone, "%");
     SelectData(GetDlgItem(dlg, kIdSplit), v.splitScreenLayout, "");
     CheckDlgButton(dlg, kIdDiscord, v.discordPresence ? BST_CHECKED : BST_UNCHECKED);
+    SelectData(GetDlgItem(dlg, kIdDisplay), v.displayMode, "");
+    CheckDlgButton(dlg, kIdSkipIntro, v.skipIntro ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(dlg, kIdSkipCutscenes, v.skipCutscenes ? BST_CHECKED : BST_UNCHECKED);
+    SelectData(GetDlgItem(dlg, kIdAa), v.antialiasing, "x");
+    SelectData(GetDlgItem(dlg, kIdAf), v.anisotropy, "x");
     InvalidateRect(GetDlgItem(dlg, kIdSplitPreview), nullptr, FALSE);
     UpdateEnabled(dlg);
 }
@@ -181,15 +193,20 @@ void Save(HWND dlg) {
     v.padDeadzone = static_cast<uint32_t>(SelectedData(dlg, kIdDeadzone));
     v.splitScreenLayout = static_cast<uint32_t>(SelectedData(dlg, kIdSplit));
     v.discordPresence = IsDlgButtonChecked(dlg, kIdDiscord) == BST_CHECKED;
+    v.displayMode = static_cast<uint32_t>(SelectedData(dlg, kIdDisplay));
+    v.skipIntro = IsDlgButtonChecked(dlg, kIdSkipIntro) == BST_CHECKED;
+    v.skipCutscenes = IsDlgButtonChecked(dlg, kIdSkipCutscenes) == BST_CHECKED;
+    v.antialiasing = static_cast<uint32_t>(SelectedData(dlg, kIdAa));
+    v.anisotropy = static_cast<uint32_t>(SelectedData(dlg, kIdAf));
     if (settings::Save(v)) features::OnSettingsChanged();
 }
 
-void MoveBy(HWND dlg, int id, int dx) {
+void MoveBy(HWND dlg, int id, int dx, int dy) {
     HWND c = GetDlgItem(dlg, id);
     RECT r;
     GetWindowRect(c, &r);
     MapWindowPoints(nullptr, dlg, reinterpret_cast<POINT*>(&r), 2);
-    SetWindowPos(c, nullptr, r.left + dx, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(c, nullptr, r.left + dx, r.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 // Tab / arrow-key order is the controls' z-order, which in the game's resources does not follow the layout
@@ -204,51 +221,75 @@ void MoveToEndOfTabOrder(HWND dlg, std::initializer_list<int> ids) {
 void Build(HWND dlg) {
     g_font = reinterpret_cast<HFONT>(SendMessageA(dlg, WM_GETFONT, 0, 0));
 
-    // Widen the dialog by one column, keep it centred, and move OK/Cancel to the new bottom-right corner.
-    RECT extra = Dlu(dlg, 0, 0, kColumnX + kColumnW + 7 - kDialogW, 0);
-    int dx = extra.right;
+    // Widen the dialog by one column and make it taller, keep it centred, and move the bottom row down / OK and
+    // Cancel to the new bottom-right corner.
+    RECT extra = Dlu(dlg, 0, 0, kColumnX + kColumnW + 7 - kDialogW, kExtraH);
+    const int dx = extra.right, dy = extra.bottom;
     RECT wr;
     GetWindowRect(dlg, &wr);
-    SetWindowPos(dlg, nullptr, wr.left - dx / 2, wr.top, wr.right - wr.left + dx, wr.bottom - wr.top,
+    SetWindowPos(dlg, nullptr, wr.left - dx / 2, wr.top - dy / 2, wr.right - wr.left + dx, wr.bottom - wr.top + dy,
                  SWP_NOZORDER | SWP_NOACTIVATE);
-    MoveBy(dlg, kIdOk, dx);
-    MoveBy(dlg, kIdCancel, dx);
+    MoveBy(dlg, kIdOk, dx, dy);
+    MoveBy(dlg, kIdCancel, dx, dy);
+    MoveBy(dlg, kIdDefaults, 0, dy);
 
     const int x = kColumnX + 6, w = kColumnW - 12, lx = x + 12, cx = x + 72, cw = w - 72;
-    Add(dlg, "BUTTON", "Enhancements", BS_GROUPBOX, kIdGroup, kColumnX, 7, kColumnW, 215);
+    Add(dlg, "BUTTON", "Enhancements", BS_GROUPBOX, kIdGroup, kColumnX, 7, kColumnW, 215 + kExtraH);
 
     Add(dlg, "STATIC", "&Frame rate limit:", SS_LEFT, kIdFpsLabel, x, 22, 70, 8);
     HWND fps = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdFps, cx, 20, cw, 120);
     for (const auto& c : kFps) AddItem(fps, c.label, FpsData(c.cap, c.toRefresh));
 
-    Add(dlg, "BUTTON", "Scale &HUD and menus to the resolution", BS_AUTOCHECKBOX | WS_TABSTOP, kIdHud, x, 44, w, 10);
-    Add(dlg, "STATIC", "HUD s&ize:", SS_LEFT, kIdHudSizeLabel, lx, 61, 58, 8);
-    HWND hud = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdHudSize, cx, 59, cw, 120);
+    Add(dlg, "STATIC", "Displa&y mode:", SS_LEFT, kIdDisplayLabel, x, 38, 70, 8);
+    HWND display = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdDisplay, cx, 36, cw, 60);
+    for (uint32_t i = 0; i < std::size(kDisplayModes); ++i) AddItem(display, kDisplayModes[i], i);
+    Add(dlg, "BUTTON", "S&kip the intro (logos and opening film)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdSkipIntro, x, 55, w, 10);
+    Add(dlg, "BUTTON", "Skip mission c&utscenes automatically", BS_AUTOCHECKBOX | WS_TABSTOP, kIdSkipCutscenes, x,
+        69, w, 10);
+
+    Add(dlg, "STATIC", "Anti-a&liasing:", SS_LEFT, kIdAaLabel, x, 88, 70, 8);
+    HWND aa = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdAa, cx, 86, cw, 80);
+    for (uint32_t a : kAntialiasing) {
+        char t[16];
+        snprintf(t, sizeof t, a ? "%ux MSAA" : "Off", a);
+        AddItem(aa, t, a);
+    }
+    Add(dlg, "STATIC", "Te&xture filtering:", SS_LEFT, kIdAfLabel, x, 104, 70, 8);
+    HWND af = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdAf, cx, 102, cw, 80);
+    for (uint32_t a : kAnisotropy) {
+        char t[32];
+        snprintf(t, sizeof t, a ? "%ux anisotropic%s" : "Game default", a, a == 16 ? " (default)" : "");
+        AddItem(af, t, a);
+    }
+
+    Add(dlg, "BUTTON", "Scale &HUD and menus to the resolution", BS_AUTOCHECKBOX | WS_TABSTOP, kIdHud, x, 120, w, 10);
+    Add(dlg, "STATIC", "HUD s&ize:", SS_LEFT, kIdHudSizeLabel, lx, 137, 58, 8);
+    HWND hud = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdHudSize, cx, 135, cw, 120);
     for (uint32_t s : kHudSizes) {
         char t[16];
         snprintf(t, sizeof t, "%u%%%s", s, s == 100 ? " (default)" : "");
         AddItem(hud, t, s);
     }
 
-    Add(dlg, "BUTTON", "&Controller support (DualShock 4 / DualSense)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdPad, x, 84,
+    Add(dlg, "BUTTON", "&Controller support (DualShock 4 / DualSense)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdPad, x, 160,
         w, 10);
-    Add(dlg, "STATIC", "Stick dead&zone:", SS_LEFT, kIdDeadzoneLabel, lx, 101, 58, 8);
-    HWND dz = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdDeadzone, cx, 99, cw, 120);
+    Add(dlg, "STATIC", "Stick dead&zone:", SS_LEFT, kIdDeadzoneLabel, lx, 177, 58, 8);
+    HWND dz = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdDeadzone, cx, 175, cw, 120);
     for (uint32_t d : kDeadzones) {
         char t[16];
         snprintf(t, sizeof t, "%u%%%s", d, d == 40 ? " (default)" : "");
         AddItem(dz, t, d);
     }
 
-    Add(dlg, "BUTTON", "Show the game in my Discord st&atus", BS_AUTOCHECKBOX | WS_TABSTOP, kIdDiscord, x, 116, w,
+    Add(dlg, "BUTTON", "Show the game in my Discord st&atus", BS_AUTOCHECKBOX | WS_TABSTOP, kIdDiscord, x, 192, w,
         10);
 
-    Add(dlg, "STATIC", "Spli&t screen:", SS_LEFT, kIdSplitLabel, x, 133, 70, 8);
-    HWND split = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdSplit, cx, 131, cw, 60);
+    Add(dlg, "STATIC", "Spli&t screen:", SS_LEFT, kIdSplitLabel, x, 209, 70, 8);
+    HWND split = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdSplit, cx, 207, cw, 60);
     for (uint32_t i = 0; i < splitscreen::kLayoutCount; ++i) AddItem(split, kSplitLayouts[i], i);
-    Add(dlg, "STATIC", "", SS_OWNERDRAW, kIdSplitPreview, cx, 147, cw, 30);
+    Add(dlg, "STATIC", "", SS_OWNERDRAW, kIdSplitPreview, cx, 223, cw, 30);
 
-    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 212, w, 8);
+    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 288, w, 8);
     Fill(dlg, settings::Get());
     // Left column, our column, then the bottom row left to right.
     MoveToEndOfTabOrder(dlg, {kIdDefaults, kIdOk, kIdCancel});
@@ -271,7 +312,7 @@ INT_PTR CALLBACK DetailProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     INT_PTR result = g_gameProc(dlg, msg, wp, lp);
     if (msg == WM_INITDIALOG) {
         Build(dlg);
-        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, 179, kColumnW - 12, 29);
+        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, 179 + kExtraH, kColumnW - 12, 29);
     }
     if (msg == WM_COMMAND && LOWORD(wp) == kIdDefaults) Fill(dlg, settings::Values{});
     return result;
@@ -307,9 +348,11 @@ void features::ApplyLauncher() {
 }
 
 void features::OnFrame() {
+    overlay::OnFrame();
     OnFrameInput();
     OnFrameSplitScreen();
     OnFrameDiscord();
+    OnFrameCoop();
 }
 
 void features::OnSettingsChanged() {
@@ -318,4 +361,6 @@ void features::OnSettingsChanged() {
     ApplyInGameInput();
     ApplyFrameCap();
     ApplyDiscord();
+    ApplyDisplay();
+    ApplyCinematics();
 }

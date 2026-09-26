@@ -49,6 +49,10 @@ void Init() {
     features::ApplyInGameInput();
     features::ApplySplitScreen();
     features::ApplyDiscord();
+    features::ApplyDisplay();
+    features::ApplyCinematics();
+    features::ApplyGraphics();
+    features::ApplyCoop();
     features::ApplyDevHooks();
 }
 
