@@ -53,6 +53,12 @@ void Init() {
     features::ApplyCinematics();
     features::ApplyGraphics();
     features::ApplyCoop();
+    features::ApplyFontSharp();
+    features::ApplyControls();
+    features::ApplyMouse();
+    features::ApplyTooltips();
+    features::ApplyRumble();
+    features::ApplyAudio();
     features::ApplyDevHooks();
 }
 

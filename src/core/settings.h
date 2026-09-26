@@ -19,6 +19,7 @@ struct Values {
     bool skipCutscenes = false;      // mission cutscenes end as soon as they start (Esc / pad skip them anyway)
     uint32_t antialiasing = 0;       // MSAA samples (0 = off; the highest supported count <= this is used)
     uint32_t anisotropy = 16;        // anisotropic filtering level for linear-filtered textures (0 = off)
+    bool mouseAcceleration = false;  // the game's MOUSE OPTIONS -> ACCELERATION (its own default was on)
 };
 
 const Values& Get();

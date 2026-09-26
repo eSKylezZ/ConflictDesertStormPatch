@@ -16,6 +16,7 @@ groups = {
     "kHud": d.HUD + clamps,
     "kPad": d.CONTROLLER,
     "kTiming": d.TIMING,
+    "kAudio": d.AUDIO,
 }
 
 

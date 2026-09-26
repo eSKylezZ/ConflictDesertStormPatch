@@ -37,6 +37,7 @@
 //    GetViewport(j)), run once per view - replaced by the current view's player only;
 //  - 0x40E827 FUN_004773d0(i) (compass, texts) and 0x40E852 FUN_004dbd60;
 //  - 0x40F143 FUN_004d25d0: the view's render-list flush at the end of the loop iteration;
+//  - 0x40F1DC SetViewport(full screen) after the loop: grey divider lines between the views (SetFullViewport);
 //  - the soldier panel callback 0x48d9c0 -> FUN_0048d9e0 (registered with `push 0x48D9C0` at 0x48D79A for each
 //    squad member; its `this` = 7th stack arg = the player's panel list: viewer block at +0x20, view index at
 //    block+0x474, position at +0x24/+0x26 in screen coordinates, row height at [+8]+0x38). Called for all players
@@ -62,6 +63,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 
@@ -69,6 +71,8 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/overlay.h"
+#include "features/padlayout.h"
 #include "features/splitscreen_layout.h"
 
 namespace {
@@ -76,6 +80,8 @@ constexpr uint32_t kRenderer = 0x63C924;           // renderer object pointer
 constexpr uint32_t kViewportCount = 0x20;          // renderer + 0x20
 constexpr uint32_t kBuildSplitViewports = 0x547B30;  // thiscall (renderer, table), ret 4
 constexpr uint32_t kResetViewports = 0x542E50;       // thiscall (renderer): one full-screen viewport
+constexpr uint32_t kSetViewport = 0x542F40, kSetFullViewportSite = 0x40F1DC;  // thiscall (renderer, D3DVIEWPORT8*)
+constexpr uint32_t kSplitActive = 0x40E080;         // cdecl: 0 while a cutscene renders full screen
 constexpr uint32_t kLoadPending = 0x60EC8C;        // byte: 1 = the dispatcher loads a level this frame
 constexpr uint32_t kNextLevel = 0x5E7028;          // char* name of the level to load ("mission1.dll")
 constexpr uint32_t kMultiplayer = 0x606410;        // local multiplayer on
@@ -94,6 +100,7 @@ constexpr uint32_t kMaxPlayers = 4;
 constexpr uint32_t kOrientation = 0x60641C;        // split object +0xc: 1 = views stacked top/bottom
 constexpr uint32_t kHudLayoutTable = 0x606420;     // split object +0x10: HUD layout table (see HudTable)
 constexpr uint32_t kHudTable1p = 0x5E6A48;         // the game's full-screen table
+constexpr uint32_t kHudScaleVa = 0x5D7B00;          // float: the user's HUD size (HUD cave)
 constexpr uint32_t kHudAnchors = 0x619A30;         // float[variant][9][2], fractions of the view (filled at run time)
 constexpr int kAnchorWeapon = 1;                   // weapon icon + ammo + rank
 constexpr int kAnchorPanel = 0;                    // soldier panel (top of the last panel in the stack)
@@ -119,9 +126,11 @@ constexpr uint32_t kViewports = 0x24, kViewportStride = 0x18;       // renderer 
 constexpr uint32_t kReticle = 0x48BFC0, kReticleSite = 0x40E512;    // cdecl (block) -> target
 constexpr uint32_t kHudDraw = 0x4773D0, kHudDrawSite = 0x40E827;    // cdecl (player)
 constexpr uint32_t kHudDraw2 = 0x4DBD60, kHudDraw2Site = 0x40E852;  // thiscall (this, player, x) ret 8
-// Globals -> 2D image sheets (scale +0x24/+0x28): GWInt HUD, HUD art, GWInt, NewLogo, CDSFont. Not Effects
-// [0x60EE28] (3D texture). A sheet the game re-scales while drawing gets the view's k from the HUD cave anyway.
-constexpr uint32_t kScaledSheets[] = {0x60EE18, 0x60EE1C, 0x60EE20, 0x60EE24, 0x60EDB0};
+// Globals -> 2D image sheets (scale +0x24/+0x28): GWInt HUD, HUD art, GWInt, NewLogo, CDSFont, Effects (also the
+// zoom / crosshair art: the game re-sets its scale now and then, through the HUD cave, which gives the view's k
+// inside a HUD pass and the full screen's outside - without it in this list the crosshair flipped between the two
+// sizes). A sheet re-scaled while drawing gets the view's k; the pass restores the value from before it.
+constexpr uint32_t kScaledSheets[] = {0x60EE18, 0x60EE1C, 0x60EE20, 0x60EE24, 0x60EDB0, 0x60EE28};
 
 // Table read by FUN_00547b30: up to 4 entries {flag, x, y, w, h} (fractions of the screen), flag 0 ends it.
 struct Entry {
@@ -209,6 +218,19 @@ void __fastcall AssignPlayers(uintptr_t block0) {
         *reinterpret_cast<uint32_t*>(block + kBlockDevices) &= ~1u;  // pad only
         reinterpret_cast<Pick>(kPickSoldier)(block);
     }
+#ifndef DS_DIST
+    // Dev\SplitKeyboardPlayer = n (1-4): in a test split (no co-op session) player n is keyboard & mouse only and
+    // the others pad only - like a co-op session with a keyboard player.
+    DWORD kbPlayer = 0, kbSize = sizeof kbPlayer;
+    RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "SplitKeyboardPlayer", RRF_RT_REG_DWORD, nullptr,
+                 &kbPlayer, &kbSize);
+    if (kbPlayer >= 1 && kbPlayer <= players && features::CoopPlayers() < 2)
+        for (uint32_t i = 0; i < players && i < kMaxPlayers; ++i) {
+            uintptr_t block = kInputBlocks + i * kInputBlockSize;
+            *reinterpret_cast<uint32_t*>(block + kBlockDevices) = i + 1 == kbPlayer ? 1u : 2u;
+            dslog::Write("[dev]  player %u: %s", i + 1, i + 1 == kbPlayer ? "keyboard & mouse" : "pad");
+        }
+#endif
     // Co-op session: each player's own device (the pad they joined with, or keyboard & mouse).
     if (features::CoopPlayers() >= 2) {
         for (uint32_t i = 0; i < players && i < kMaxPlayers; ++i) {
@@ -223,6 +245,186 @@ void __fastcall AssignPlayers(uintptr_t block0) {
         }
     }
     dslog::Write("Split screen: %u players assigned", players);
+}
+
+// ---- analog controls ----
+// FUN_00450920 (block, action, opposite action) -> -1..1: the value of an axis action (move, turn, aim, ...) from the
+// block's joystick axes (type 1 bindings, float per axis code at 0x754268 + (code + joystick * 0x54) * 4), or 1 for a
+// held key (type 0, FUN_00539da0), without looking at the block's devices (+0x38: bit 0 keyboard/mouse, bit 1 pad) -
+// the button path FUN_00450770 does. In co-op every player moved with the keyboard, and a keyboard player (whose
+// block keeps a joystick index) with that pad's sticks. Replaced by the same logic with the device checks.
+constexpr uint32_t kAxisValue = 0x450920;
+constexpr uint32_t kBindingLookup = 0x40A110, kKeyHeld = 0x539DA0, kAxisTable = 0x754268, kKeyboardUsed = 0x60F5B0;
+
+float __fastcall AxisValue(uint8_t* block, void*, int action, int opposite) {
+    const int joystick = *reinterpret_cast<int32_t*>(block + 0x3C8);
+    if (joystick == -1) return 0.0f;
+    auto* table = *reinterpret_cast<uint8_t**>(kBindingTable);
+    const int set = *reinterpret_cast<int32_t*>(block + 0x3C0);
+    const uint32_t slots = *reinterpret_cast<uint32_t*>(table + 4);
+    const uint32_t devices = *reinterpret_cast<uint32_t*>(block + 0x38);
+    using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
+    auto axis = [&](int act, float& value) {
+        if (!(devices & 2)) return;
+        for (uint32_t slot = 0; slot < slots; ++slot) {
+            const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, act);
+            if (code == 0xFFFFFFFF || (code & 0xFFFF0000) != 0x10000) continue;
+            value = reinterpret_cast<const float*>(kAxisTable)[(code & 0xFFFF) + joystick * 0x54];
+            if (value != 0.0f) *reinterpret_cast<uint32_t*>(block + 0x458) = 0;
+        }
+    };
+    auto key = [&](int act) {
+        if (!(devices & 1)) return false;
+        bool held = false;
+        for (uint32_t slot = 0; slot < slots; ++slot) {
+            const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, act);
+            if (code != 0xFFFFFFFF && (code & 0xFFFF0000) == 0 &&
+                reinterpret_cast<int(__cdecl*)(uint32_t)>(kKeyHeld)(code & 0xFFFF)) {
+                held = true;
+                *reinterpret_cast<uint32_t*>(kKeyboardUsed) = 1;
+            }
+        }
+        return held;
+    };
+    float value = 0.0f;
+    axis(action, value);
+    if (opposite != 0x50) {
+        if (value == 0.0f) axis(opposite, value);
+        else value = -value;
+    }
+    if (value == 0.0f) {
+        if (key(action)) value = 1.0f;
+        if (opposite != 0x50) {
+            if (value != 0.0f) return -value;
+            if (key(opposite)) value = 1.0f;
+        }
+    }
+    return value;
+}
+
+// Mouse look: the smoothed mouse movement (FUN_00538080 on the mouse smoother 0x754BEC, thiscall (&dx, &dy) ret 8) is
+// read for turning / aiming at 0x44B396 and 0x44F8D7 with esi = the player's input block, again without its device
+// check - the mouse turned every player. A block without keyboard & mouse (+0x38 bit 0) now gets no movement.
+constexpr uint32_t kMouseDelta = 0x538080;
+constexpr uint32_t kMouseDeltaSites[] = {0x44B396, 0x44F8D7};
+
+__declspec(naked) void MouseDeltaStub() {
+    __asm {
+        test byte ptr [esi + 0x38], 1
+        jnz read
+        mov eax, [esp + 4]
+        mov dword ptr [eax], 0
+        mov eax, [esp + 8]
+        mov dword ptr [eax], 0
+        ret 8
+    read:
+        mov eax, kMouseDelta
+        jmp eax
+    }
+}
+
+// Downed soldier: FUN_0044eee0 (per player block, every frame) gives a player whose soldier went down 5 s before
+// switching them to another living squad member, and meanwhile slows the whole game down (tail jump at 0x44EFAB to the
+// "Slow down time" ramp FUN_00443d00: time scale -0.5/s down to 0.2). In split screen a player may own no other
+// soldier (Mission 1: Bradley alone) - the switch never happens and the game stayed slow for everyone while the other
+// players could still revive him. In split screen there is no slow-down; the downed player waits.
+constexpr uint32_t kSlowDownJump = 0x44EFAB, kSlowDown = 0x443D00;
+
+__declspec(naked) void SlowDownStub() {
+    __asm {
+        mov eax, g_builtPlayers
+        cmp eax, 2
+        jl slow
+        ret
+    slow:
+        mov eax, kSlowDown
+        jmp eax
+    }
+}
+
+// Soldier panels: the in-game HUD screen ([0x617A04], state 0xE; vtable 0x5D9428) builds its panel list in its
+// set-up (vtable +0xC, FUN_0048d4e0) only when the screen is entered: it walks the squad's team list (character
+// manager [0x63C9A0], FUN_004c9720(team [0x5F9B94], 1) = ((u32*)mgr[+4])[team * mgr.b[+0x11] + 1], linked by +0x14)
+// and takes up to 4 soldiers passing InSquad. A soldier who joins mid-mission (Foley rescued in Mission 1: added to the
+// list only then) got no panel until a save was loaded. The same walk runs every frame; a soldier new to that set
+// re-runs the set-up (it clears the list first).
+constexpr uint32_t kHudScreen = 0x617A04, kFrontEndState = 0x617C18;
+constexpr uint32_t kCharacters = 0x63C9A0, kSquadTeam = 0x5F9B94;
+uintptr_t g_panelSoldiers[4];
+
+// The set-up's rule (0x48D681..0x48D6CA): game mode [0x610F5C] 0 - state [[s+0x24]+0x8C] 0, 3 or 4 and not flag
+// 0x20000 in [[s+0x2C]+0xC]; mode 1 - vtable +0x4C(1).
+bool InSquad(uintptr_t soldier) {
+    if (!soldier) return false;
+    const uint32_t mode = *reinterpret_cast<uint32_t*>(0x610F5C);
+    if (mode == 0) {
+        const uintptr_t info = *reinterpret_cast<uintptr_t*>(soldier + 0x24), flags = *reinterpret_cast<uintptr_t*>(soldier + 0x2C);
+        if (!info || !flags) return false;
+        const uint32_t state = *reinterpret_cast<uint32_t*>(info + 0x8C);
+        return (state == 0 || state == 3 || state == 4) && !(*reinterpret_cast<uint32_t*>(flags + 0xC) & 0x20000);
+    }
+    if (mode != 1) return false;
+    using Query = int(__thiscall*)(uintptr_t, int);
+    return reinterpret_cast<Query>((*reinterpret_cast<void***>(soldier))[0x4C / 4])(soldier, 1) != 0;
+}
+
+int PanelSoldiers(uintptr_t (&out)[4]) {
+    int n = 0;
+    auto mgr = *reinterpret_cast<const uint8_t* const*>(kCharacters);
+    if (!mgr) return 0;
+    const uint8_t team = *reinterpret_cast<const uint8_t*>(kSquadTeam);
+    if (team >= mgr[0x10] || 1 >= mgr[0x11]) return 0;
+    auto lists = *reinterpret_cast<const uintptr_t* const*>(mgr + 4);
+    if (!lists) return 0;
+    for (uintptr_t s = lists[team * mgr[0x11] + 1]; s && n < 4; s = *reinterpret_cast<uintptr_t*>(s + 0x14))
+        if (InSquad(s)) out[n++] = s;
+    return n;
+}
+
+// Split screen: every player's own soldier gets a panel from the start, squad member or not (captive Foley in
+// Mission 1). The set-up's walk ends at 0x48D6D5 (mov byte ptr [esp+0x10], 0) with up to 4 soldiers in [esp+0x1C..]
+// and their count in bx; the players' soldiers missing there are appended (sorted by squad slot afterwards).
+constexpr uint32_t kPanelWalkEnd = 0x48D6D5;
+int __stdcall AddPlayerSoldiers(uintptr_t* soldiers, int count) {
+    if (g_builtPlayers < 2) return count;
+    for (int i = 0; i < g_builtPlayers && i < static_cast<int>(kMaxPlayers) && count < 4; ++i) {
+        const uintptr_t s = *reinterpret_cast<uintptr_t*>(kInputBlocks + i * kInputBlockSize + 0x310);
+        if (!s || !*reinterpret_cast<uintptr_t*>(s + 0x24)) continue;
+        bool known = false;
+        for (int j = 0; j < count; ++j) known = known || soldiers[j] == s;
+        if (!known) soldiers[count++] = s;
+    }
+    return count;
+}
+__declspec(naked) void PanelWalkEndStub() {
+    __asm {
+        movsx eax, bx
+        lea ecx, [esp + 0x20]  // caller's [esp+0x1c]
+        push eax
+        push ecx
+        call AddPlayerSoldiers
+        mov ebx, eax
+        mov byte ptr [esp + 0x14], 0  // the replaced instruction (caller's [esp+0x10])
+        ret
+    }
+}
+
+void RebuildPanelsOnSquadChange() {
+    if (g_builtPlayers < 2 || *reinterpret_cast<uint32_t*>(kFrontEndState) != 0xE) return;
+    uintptr_t now[4] = {};
+    const int n = PanelSoldiers(now);
+    bool joined = false;
+    for (int i = 0; i < n; ++i) {
+        bool known = false;
+        for (uintptr_t old : g_panelSoldiers) known = known || old == now[i];
+        joined = joined || !known;
+    }
+    memcpy(g_panelSoldiers, now, sizeof now);
+    void* screen = *reinterpret_cast<void**>(kHudScreen);
+    if (joined && screen) {
+        reinterpret_cast<void(__thiscall*)(void*)>((*reinterpret_cast<void***>(screen))[3])(screen);
+        dslog::Write("Split screen: squad changed (%d soldiers) - soldier panels rebuilt", n);
+    }
 }
 
 // ---- HUD pass ----
@@ -246,40 +448,54 @@ float CaveK(uint32_t w, uint32_t h) {
     return std::max(1.0f, k);
 }
 
-// Bottom HUD line of the split variants 1-3, like the full-screen layout (variant 0): the weapon display (anchor 1)
-// at its bottom-right spot, and the soldier panel (anchor 0, the panel's top) above it by variant 0's gap, converted
-// to the variant's view size and HUD scale - so panel and weapon display end on the same line. The game's anchors
-// come back when split screen ends.
-void PlaceBottomHud(bool split) {
-    static float saved[3][2][2];  // [variant 1-3][anchor 0/1][x, y]
-    static bool moved = false;
+// HUD anchors (table 0x619A30, float[variant][9][2], fractions of the view; filled by the game with constants):
+// - the weapon display (anchor 1: icon + ammo + rank, drawn from the anchor to 113 art px right of it) mirrors the
+//   soldier panel (anchor 0, whose frame starts 4.5 art px left of it): the art scales with the screen height, the
+//   anchors with the width, so on a wide screen the weapon display sat far from the right edge.
+// - split variants 1-3 (the Xbox layouts put the compass top left): the panel lines up under the compass (anchor
+//   5 = its centre, radius 55 art px), on variant 0's bottom line - weapon display at its height, the panel's top
+//   above it by variant 0's gap, converted to the view's size and HUD scale.
+// Recomputed every frame from the game's values (saved once), so resolution / HUD size changes follow.
+constexpr int kAnchorCompass = 5;
+constexpr float kPanelFrame = 4.5f, kWeaponWidth = 113.3f, kCompassRadius = 55.0f;  // art px at 800x600
+
+void PlaceHud(bool split) {
+    static float orig[4][9][2];
+    static bool haveOrig = false;
     auto anchors = reinterpret_cast<float(*)[9][2]>(kHudAnchors);
+    auto renderer = *reinterpret_cast<uintptr_t*>(kRenderer);
+    if (!haveOrig) {
+        if (anchors[0][kAnchorWeapon][0] == 0 && anchors[0][kAnchorWeapon][1] == 0) return;  // not filled yet
+        memcpy(orig, anchors, sizeof orig);
+        haveOrig = true;
+    }
+    if (!renderer) return;
+    const uint32_t W = *reinterpret_cast<uint32_t*>(renderer + kScreenW), H = *reinterpret_cast<uint32_t*>(renderer + kScreenH);
+    if (W == 0 || H == 0 || g_hud.active) return;  // inside a HUD pass W/H are a view's
+    const bool scaling = settings::Get().hudScaling;
+    const float kFull = scaling ? CaveK(W, H) * *reinterpret_cast<const float*>(kHudScaleVa) : 1.0f;
+    // anchor x of the weapon display for a panel frame starting `panelLeft` px into a view `vw` wide at scale k
+    auto mirror = [](float panelLeft, float vw, float k) { return (vw - panelLeft - kWeaponWidth * k) / vw; };
+
+    const float* panel0 = orig[0][kAnchorPanel];
+    anchors[0][kAnchorWeapon][0] = mirror(panel0[0] * W - kPanelFrame * kFull, static_cast<float>(W), kFull);
+
     if (!split) {
-        if (!moved) return;
-        for (int v = 1; v <= 3; ++v)
-            for (int a = 0; a < 2; ++a) anchors[v][a][0] = saved[v - 1][a][0], anchors[v][a][1] = saved[v - 1][a][1];
-        moved = false;
+        memcpy(anchors[1], orig[1], sizeof orig[1] * 3);
         return;
     }
-    auto renderer = *reinterpret_cast<uintptr_t*>(kRenderer);
-    const float* weapon = anchors[0][kAnchorWeapon];
-    const float* panel = anchors[0][kAnchorPanel];
-    if (!renderer || (weapon[0] == 0 && weapon[1] == 0)) return;  // table not filled yet
-    if (!moved) {
-        for (int v = 1; v <= 3; ++v)
-            for (int a = 0; a < 2; ++a) saved[v - 1][a][0] = anchors[v][a][0], saved[v - 1][a][1] = anchors[v][a][1];
-        moved = true;
-    }
-    const uint32_t W = *reinterpret_cast<uint32_t*>(renderer + kScreenW), H = *reinterpret_cast<uint32_t*>(renderer + kScreenH);
-    const float gap = weapon[1] - panel[1];  // fraction of the full screen, at full-screen HUD scale
+    const float* weapon0 = orig[0][kAnchorWeapon];
+    const float gap = weapon0[1] - panel0[1];  // fraction of the full screen, at full-screen HUD scale
     const uint32_t size[4][2] = {{W, H}, {W, H / 2}, {W / 2, H}, {W / 2, H / 2}};  // view size per variant
     for (int v = 1; v <= 3; ++v) {
-        const uint32_t vw = size[v][0], vh = size[v][1];
-        const float scale = settings::Get().hudScaling ? CaveK(vw, vh) / CaveK(W, H) : 1.0f;
-        anchors[v][kAnchorWeapon][0] = weapon[0];
-        anchors[v][kAnchorWeapon][1] = weapon[1];
-        anchors[v][kAnchorPanel][0] = saved[v - 1][kAnchorPanel][0];  // keep the split layout's left margin
-        anchors[v][kAnchorPanel][1] = weapon[1] - gap * scale * static_cast<float>(H) / static_cast<float>(vh);
+        const float vw = static_cast<float>(size[v][0]), vh = static_cast<float>(size[v][1]);
+        const float r = scaling ? CaveK(size[v][0], size[v][1]) / CaveK(W, H) : 1.0f;
+        const float k = kFull * r;
+        const float panelLeft = orig[v][kAnchorCompass][0] * vw - kCompassRadius * k;
+        anchors[v][kAnchorPanel][0] = (panelLeft + kPanelFrame * k) / vw;
+        anchors[v][kAnchorPanel][1] = weapon0[1] - gap * r * static_cast<float>(H) / vh;
+        anchors[v][kAnchorWeapon][0] = mirror(panelLeft, vw, k);
+        anchors[v][kAnchorWeapon][1] = weapon0[1];
     }
 }
 
@@ -301,7 +517,8 @@ bool BeginHud(D3DViewport* view = nullptr) {
             if (!sheet) continue;
             auto scale = reinterpret_cast<float*>(sheet + 0x24);
             g_hud.savedScale[i][0] = scale[0], g_hud.savedScale[i][1] = scale[1];
-            scale[0] *= r, scale[1] *= r;
+            const float f = kScaledSheets[i] == 0x60EE28 ? std::sqrt(std::sqrt(r)) : r;  // crosshair / zoom: less reduced
+            scale[0] *= f, scale[1] *= f;
         }
     }
     W = view->w, H = view->h;
@@ -333,6 +550,73 @@ void __fastcall Panels(uintptr_t inputManager) {
         return;
     }
     reinterpret_cast<void(__thiscall*)(uintptr_t)>(kPanels)(inputManager);
+}
+
+// Inventory / orders / give-take menus: opened (and laid out: list area, rows, box size from the HUD sheet and the
+// view's anchors) by FUN_004515f0 / FUN_00451800 / FUN_00451a30 (thiscall block, open; flags block +0x40c/+0x410/+0x414,
+// they close each other) and drawn by FUN_004544e0 (loop at 0x48D974, after the view loop) - at full-screen HUD size,
+// so in split screen a few huge boxes filled the view. The three open functions (entry jump, 7-byte trampoline) and
+// the draw run in the owning player's HUD pass (block +0x474 = view): laid out and scaled like that view's HUD.
+constexpr uint32_t kInventoryDraw = 0x4544E0, kInventoryDrawSite = 0x48D974;
+constexpr uint32_t kMenuOpen[3] = {0x4515F0, 0x451800, 0x451A30};
+constexpr uint8_t kMenuOpenEntry[7] = {0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x10};  // mov eax,[esp+4]; sub esp,0x10
+
+D3DViewport* ViewOfBlock(uintptr_t block) {
+    auto renderer = *reinterpret_cast<uintptr_t*>(kRenderer);
+    if (!renderer) return nullptr;
+    const uint32_t index = *reinterpret_cast<uint32_t*>(block + kBlockViewport);
+    if (index >= *reinterpret_cast<uint32_t*>(renderer + kViewportCount)) return nullptr;
+    return reinterpret_cast<D3DViewport*>(renderer + kViewports + index * kViewportStride);
+}
+
+void __fastcall InventoryDraw(uintptr_t block) {
+    D3DViewport* view = ViewOfBlock(block);
+    const bool pass = view && BeginHud(view);
+    reinterpret_cast<void(__fastcall*)(uintptr_t)>(kInventoryDraw)(block);
+    if (pass) EndHud();
+}
+
+// The originals minus their first 7 bytes (run here), called like the originals: thiscall (block, open), ret 4.
+__declspec(naked) void OpenInventoryOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x4515F7 __asm ret } }
+__declspec(naked) void OpenOrdersOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x451807 __asm ret } }
+__declspec(naked) void OpenGiveOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x451A37 __asm ret } }
+
+// The inventory list (block +0x3fc; list +0x38 row pitch, +0x3c top, +0x40 area height, +0x42 visible rows, int16)
+// shows 4 rows at the scaled HUD size: up to 3 more while it stays in the upper three quarters of the (view) screen.
+void MoreInventoryRows(uintptr_t block) {
+    auto* list = *reinterpret_cast<uint8_t**>(block + 0x3FC);
+    auto renderer = *reinterpret_cast<uintptr_t*>(kRenderer);
+    if (!list || !renderer || !settings::Get().hudScaling) return;
+    auto& pitch = *reinterpret_cast<int16_t*>(list + 0x38);
+    auto& top = *reinterpret_cast<int16_t*>(list + 0x3C);
+    auto& area = *reinterpret_cast<int16_t*>(list + 0x40);
+    auto& rows = *reinterpret_cast<int16_t*>(list + 0x42);
+    const int limit = static_cast<int>(*reinterpret_cast<uint32_t*>(renderer + kScreenH) * 3 / 4);
+    if (pitch <= 0 || rows <= 0) return;
+    int extra = 0;
+    while (extra < 3 && top + area + (extra + 1) * pitch <= limit) ++extra;
+    area = static_cast<int16_t>(area + extra * pitch);
+    rows = static_cast<int16_t>(rows + extra);
+}
+
+template <void (*Original)()>
+void __fastcall OpenMenuInView(uintptr_t block, void*, int open) {
+    D3DViewport* view = ViewOfBlock(block);
+    const bool pass = view && BeginHud(view);
+    reinterpret_cast<void(__thiscall*)(uintptr_t, int)>(Original)(block, open);
+    if (open && Original == &OpenInventoryOriginal) MoreInventoryRows(block);
+    if (pass) EndHud();
+}
+
+bool HookMenuOpen() {
+    for (uint32_t va : kMenuOpen)
+        if (!patch::Matches(va, kMenuOpenEntry, sizeof kMenuOpenEntry)) return false;
+    const void* hooks[3] = {reinterpret_cast<const void*>(&OpenMenuInView<&OpenInventoryOriginal>),
+                            reinterpret_cast<const void*>(&OpenMenuInView<&OpenOrdersOriginal>),
+                            reinterpret_cast<const void*>(&OpenMenuInView<&OpenGiveOriginal>)};
+    bool ok = true;
+    for (int i = 0; i < 3; ++i) ok = patch::WriteJump(kMenuOpen[i], hooks[i]) && ok;
+    return ok;
 }
 
 void __fastcall FlushView(uintptr_t viewController) {
@@ -380,6 +664,27 @@ int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32
 
 uint32_t __cdecl Reticle(uintptr_t block) {
     const bool pass = BeginHud();
+#ifndef DS_DIST
+    {  // play-test: the HUD sheets' scale when the crosshair is drawn, per player, when it changes
+        static float last[4][6];
+        const int p = static_cast<int>((block - kInputBlocks) / kInputBlockSize) & 3;
+        static const uint32_t sheets[6] = {0x60EE18, 0x60EE1C, 0x60EE20, 0x60EE24, 0x60EE28, 0x60EDB0};
+        float now[6];
+        bool changed = false;
+        for (int i = 0; i < 6; ++i) {
+            auto sheet = *reinterpret_cast<uintptr_t*>(sheets[i]);
+            now[i] = sheet ? *reinterpret_cast<float*>(sheet + 0x24) : 0.0f;
+            changed = changed || now[i] != last[p][i];
+            last[p][i] = now[i];
+        }
+        static int logged = 0;
+        if (changed && logged < 300) {
+            ++logged;
+            dslog::Write("[dev]  crosshair P%d pass %d scales %.2f %.2f %.2f %.2f effects %.2f font %.2f", p + 1, pass,
+                         now[0], now[1], now[2], now[3], now[4], now[5]);
+        }
+    }
+#endif
     uint32_t target = reinterpret_cast<uint32_t(__cdecl*)(uintptr_t)>(kReticle)(block);
     if (pass) EndHud();
     return target;
@@ -413,6 +718,30 @@ void __fastcall DrawFan(uintptr_t renderer, void* /*edx*/, uint32_t prims, const
         return;
     }
     reinterpret_cast<Draw>(kDrawFan)(renderer, prims, verts, stride);
+}
+
+// Divider lines between the views, like the Xbox's Split_DrawDivider (0xe8610: 2 px of 50% grey on a 480-line
+// screen, centred on the edge) - drawn after the view loop, when the loop sets the full-screen viewport again
+// (0x40F1DC), so the full-screen 2D after it (pause menu, messages) still covers them. Not during cutscenes
+// (FUN_0040e080 = 0: the loop drew one full-screen view).
+void __fastcall SetFullViewport(uintptr_t renderer, void* /*edx*/, const D3DViewport* full) {
+    reinterpret_cast<void(__thiscall*)(uintptr_t, const D3DViewport*)>(kSetViewport)(renderer, full);
+    const uint32_t count = *reinterpret_cast<uint32_t*>(renderer + kViewportCount);
+    if (g_builtPlayers < 2 || count < 2 || count > 4 || !reinterpret_cast<int(__cdecl*)()>(kSplitActive)()) return;
+    const uint32_t sw = *reinterpret_cast<uint32_t*>(renderer + kScreenW), sh = *reinterpret_cast<uint32_t*>(renderer + kScreenH);
+    const float t = std::max(2.0f, std::round(sh / 240.0f));  // 2 px at 480 lines
+    float lines[8][4];
+    int n = 0;
+    auto add = [&](float x, float y, float w, float h) {
+        lines[n][0] = x, lines[n][1] = y, lines[n][2] = w, lines[n][3] = h;
+        ++n;
+    };
+    for (uint32_t i = 0; i < count; ++i) {  // each view's right and bottom edge, unless it is the screen's
+        const auto* v = reinterpret_cast<const D3DViewport*>(renderer + kViewports + i * kViewportStride);
+        if (v->x + v->w + 1 < sw) add(float(v->x + v->w) - t / 2, float(v->y), t, float(v->h));
+        if (v->y + v->h + 1 < sh) add(float(v->x), float(v->y + v->h) - t / 2, float(v->w), t);
+    }
+    overlay::FillRects(lines, n, 0xFF808080);
 }
 
 #ifndef DS_DIST
@@ -526,6 +855,32 @@ void features::ApplySplitScreen() {
         return;
     }
     hooked = patch::HookCall(kPickSoldierSite, reinterpret_cast<const void*>(&AssignPlayers), kPickSoldier);
+    for (uint32_t site : kMouseDeltaSites)
+        if (!patch::HookCall(site, reinterpret_cast<const void*>(&MouseDeltaStub), kMouseDelta))
+            dslog::Write("[fail] Split screen: mouse read at 0x%08X not recognised - the mouse turns every player", site);
+    {
+        uint8_t jump[5] = {0xE9};
+        const int32_t rel = static_cast<int32_t>(kSlowDown - (kSlowDownJump + 5));
+        memcpy(jump + 1, &rel, 4);
+        if (patch::Matches(kSlowDownJump, jump, sizeof jump))
+            patch::WriteJump(kSlowDownJump, reinterpret_cast<const void*>(&SlowDownStub));
+        else
+            dslog::Write("[fail] Split screen: downed-soldier slow motion not recognised at 0x%08X", kSlowDownJump);
+    }
+    {
+        static const uint8_t walkEnd[] = {0xC6, 0x44, 0x24, 0x10, 0x00};
+        uint8_t call[5] = {0xE8};
+        const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&PanelWalkEndStub) - (kPanelWalkEnd + 5));
+        memcpy(call + 1, &rel, 4);
+        if (patch::Matches(kPanelWalkEnd, walkEnd, sizeof walkEnd)) patch::Write(kPanelWalkEnd, call, sizeof call);
+        else if (!patch::Matches(kPanelWalkEnd, call, sizeof call))
+            dslog::Write("[fail] Split screen: soldier panel set-up not recognised at 0x%08X", kPanelWalkEnd);
+    }
+    static const uint8_t axisEntry[] = {0x51, 0x53, 0x55, 0x56, 0x8B, 0xF1};  // push ecx/ebx/ebp/esi; mov esi, ecx
+    if (patch::Matches(kAxisValue, axisEntry, sizeof axisEntry))
+        patch::WriteJump(kAxisValue, reinterpret_cast<const void*>(&AxisValue));
+    else
+        dslog::Write("[fail] Split screen: analog input function not recognised - keyboard moves every player");
     if (!hooked) {
         dslog::Write("[fail] Split screen: unexpected code at 0x%08X", kPickSoldierSite);
         return;
@@ -538,7 +893,10 @@ void features::ApplySplitScreen() {
                patch::HookCall(kFlushViewSite, reinterpret_cast<const void*>(&FlushView), kFlushView) &&
                patch::HookCall(kReticleSite, reinterpret_cast<const void*>(&Reticle), kReticle) &&
                patch::HookCall(kHudDrawSite, reinterpret_cast<const void*>(&HudDraw), kHudDraw) &&
-               patch::HookCall(kHudDraw2Site, reinterpret_cast<const void*>(&HudDraw2), kHudDraw2);
+               patch::HookCall(kHudDraw2Site, reinterpret_cast<const void*>(&HudDraw2), kHudDraw2) &&
+               patch::HookCall(kInventoryDrawSite, reinterpret_cast<const void*>(&InventoryDraw), kInventoryDraw) &&
+               HookMenuOpen();
+    const bool dividers = patch::HookCall(kSetFullViewportSite, reinterpret_cast<const void*>(&SetFullViewport), kSetViewport);
     uint8_t push[5] = {0x68};  // push kPanelCallback
     memcpy(push + 1, &kPanelCallback, 4);
     if (patch::Matches(kPanelCallbackPush, push, sizeof push)) {
@@ -549,8 +907,9 @@ void features::ApplySplitScreen() {
     }
     for (uint32_t site : kDrawFanCallers)
         hud = patch::HookCall(site, reinterpret_cast<const void*>(&DrawFan), kDrawFan) && hud;
-    dslog::Write("[ok]   Split screen: player set-up for 2-4 players, 4 binding sets%s",
-                 hud ? ", HUD per view" : " (HUD per view: unexpected code, skipped)");
+    dslog::Write("[ok]   Split screen: player set-up for 2-4 players, 4 binding sets%s%s",
+                 hud ? ", HUD per view" : " (HUD per view: unexpected code, skipped)",
+                 dividers ? ", divider lines" : " (divider lines: unexpected code, skipped)");
 }
 
 void features::OnFrameSplitScreen() {
@@ -570,10 +929,14 @@ void features::OnFrameSplitScreen() {
         } else if (g_builtPlayers > 1) {
             *reinterpret_cast<uint32_t*>(kMultiplayer) = 0;  // back to single player (e.g. next mission)
         }
+        padlayout::ApplyToGame();          // each player's controller layout into their binding set
+        features::ApplyCoopKeyProfiles();  // co-op keyboard player's chosen key profile
         if (players != g_builtPlayers || count != static_cast<uint32_t>(players)) Build(renderer, players, layout);
+        memset(g_panelSoldiers, 0, sizeof g_panelSoldiers);
         return;
     }
-    PlaceBottomHud(g_builtPlayers > 1);
+    PlaceHud(g_builtPlayers > 1);
+    RebuildPanelsOnSquadChange();
     // Mid-level: only restore what something else reset (device reset after Alt+Tab), or a new orientation.
     if (g_builtPlayers > 1 && (count != static_cast<uint32_t>(g_builtPlayers) || layout != g_builtLayout))
         Build(renderer, g_builtPlayers, layout);

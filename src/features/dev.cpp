@@ -9,6 +9,8 @@
 // (float seconds, timer+0xA8) get at least 1/120 s - used to bisect which system breaks below 8 ms steps.
 #include <windows.h>
 
+#include <intrin.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -68,7 +70,52 @@ int __fastcall LoggedMover(float* m, void*, int a2, void* a3, int a4, int a5, fl
     return r;
 }
 
+// TextProbe (DWORD 1): logs each distinct caller of the text draw FUN_0053a7b0 (font, text, x, baseline y, flag)
+// with its text and position, and the font's sheet scale - to find which code draws a piece of text.
+constexpr uint32_t kTextDraw = 0x53A7B0, kTextDrawCont = 0x53A7B5;
+uint32_t g_textCallers[256];
+int g_textCallerCount = 0;
+
+void __cdecl TextProbe(uint32_t caller, const uint8_t* font, const char* text, int x, int y) {
+    static char seen[64][48];
+    static int seenCount = 0;
+    if (caller - 5 == 0x508027 && text) {  // the text queue: every distinct string
+        for (int i = 0; i < seenCount; ++i)
+            if (strncmp(seen[i], text, 47) == 0) return;
+        if (seenCount < 64) strncpy_s(seen[seenCount++], text, 47);
+        const uint8_t* sheet = font ? *reinterpret_cast<const uint8_t* const*>(font) : nullptr;
+        dslog::Write("[dev]  queued text font %p scale %.2f at %d,%d \"%.40s\"", font,
+                     sheet ? *reinterpret_cast<const float*>(sheet + 0x24) : 0.0f, x, y, text);
+        return;
+    }
+    for (int i = 0; i < g_textCallerCount; ++i)
+        if (g_textCallers[i] == caller) return;
+    if (g_textCallerCount >= 256) return;
+    g_textCallers[g_textCallerCount++] = caller;
+    const uint8_t* sheet = font ? *reinterpret_cast<const uint8_t* const*>(font) : nullptr;
+    dslog::Write("[dev]  text 0x%06X font %p scale %.2f at %d,%d \"%.40s\"", caller - 5, font,
+                 sheet ? *reinterpret_cast<const float*>(sheet + 0x24) : 0.0f, x, y, text ? text : "(null)");
+}
+
+__declspec(naked) void TextDrawStub() {
+    __asm {
+        pushad
+        push dword ptr [esp + 0x2C]  // y
+        push dword ptr [esp + 0x2C]  // x
+        push dword ptr [esp + 0x2C]  // text
+        push ecx                     // font (ecx unchanged by pushad)
+        push dword ptr [esp + 0x30]  // return address
+        call TextProbe
+        add esp, 20
+        popad
+        mov eax, dword ptr ds:[0x5FCCAC]
+        push kTextDrawCont
+        ret
+    }
+}
+
 void ApplyDtClamp() {
+    if (DevDword("TextProbe", 0)) patch::WriteJump(kTextDraw, reinterpret_cast<const void*>(&TextDrawStub));
     if (DevDword("MoverLog", 0))
         for (uint32_t site : kMoverCalls) patch::HookCall(site, &LoggedMover, kMover);
     const DWORD lo = DevDword("DtClampLo", 0), hi = std::min<DWORD>(DevDword("DtClampHi", 0), std::size(kDtSites));
@@ -78,9 +125,66 @@ void ApplyDtClamp() {
 }  // namespace
 #endif
 
+#ifndef DS_DIST
+namespace {
+// PlayLog (DWORD 1): play-test logging - every time-scale change (FUN_004ba4e0 replaced: timer +0xd8 = 0,
+// +0x28 = scale; logs the caller) and, per frame, each player block's soldier / view / devices when they change.
+void __fastcall SetTimeScale(uint8_t* timer, void*, float scale) {
+    const float old = *reinterpret_cast<float*>(timer + 0x28);
+    *reinterpret_cast<uint32_t*>(timer + 0xD8) = 0;
+    *reinterpret_cast<float*>(timer + 0x28) = scale;
+    static bool traced = false;
+    if (scale < 0.999f && old >= 0.999f && !traced) {  // the first slow-down: who started it (code addresses on the stack)
+        traced = true;
+        auto* stack = static_cast<uint32_t*>(_AddressOfReturnAddress());
+        char chain[512] = "";
+        size_t len = 0;
+        for (int i = 0; i < 64 && len < sizeof chain - 12; ++i)
+            if (stack[i] >= 0x401000 && stack[i] < 0x5D7000)
+                len += snprintf(chain + len, sizeof chain - len, " %06X", stack[i]);
+        dslog::Write("[dev]  slow-down started, stack:%s", chain);
+    }
+    if ((scale < 0.999f) != (old < 0.999f))
+        dslog::Write("[dev]  time scale %.2f -> %.2f from 0x%p", old, scale, _ReturnAddress());
+}
+bool g_playLog = false;
+
+void WatchPlayers() {
+    static uintptr_t lastSoldier[4];
+    static uint32_t lastView[4], lastDevices[4];
+    static char lastLevel[32];
+    const char* level = reinterpret_cast<const char*>(0x606880);
+    if (strncmp(level, lastLevel, sizeof lastLevel - 1) != 0) {
+        strncpy_s(lastLevel, level, sizeof lastLevel - 1);
+        dslog::Write("[dev]  level %s, players %u", level, *reinterpret_cast<uint16_t*>(0x610798));
+    }
+    const int players = *reinterpret_cast<uint16_t*>(0x610798);
+    for (int i = 0; i < players && i < 4; ++i) {
+        const uintptr_t block = 0x60F5B8 + i * 0x478;
+        const uintptr_t soldier = *reinterpret_cast<uintptr_t*>(block + 0x310);
+        const uint32_t view = *reinterpret_cast<uint32_t*>(block + 0x474), devices = *reinterpret_cast<uint32_t*>(block + 0x38);
+        if (soldier != lastSoldier[i] || view != lastView[i] || devices != lastDevices[i]) {
+            dslog::Write("[dev]  player %d: soldier %p (squad slot %d) view %u devices %u joystick %d", i + 1,
+                         reinterpret_cast<void*>(soldier),
+                         soldier ? *reinterpret_cast<int8_t*>(*reinterpret_cast<uintptr_t*>(soldier + 0x24) + 0x1C7) : -1,
+                         view, devices, *reinterpret_cast<int32_t*>(block + 0x3C8));
+            lastSoldier[i] = soldier, lastView[i] = view, lastDevices[i] = devices;
+        }
+    }
+}
+
+}  // namespace
+#endif
+
 void features::ApplyDevHooks() {
 #ifndef DS_DIST
     ApplyDtClamp();
+    g_playLog = DevDword("PlayLog", 0) != 0;
+    if (g_playLog) {
+        static const uint8_t entry[] = {0x8B, 0x44, 0x24, 0x04, 0xC7, 0x81, 0xD8, 0x00, 0x00, 0x00};
+        if (patch::Matches(0x4BA4E0, entry, sizeof entry)) patch::WriteJump(0x4BA4E0, reinterpret_cast<const void*>(&SetTimeScale));
+        dslog::Write("[dev]  play-test logging on");
+    }
     constexpr uint32_t kOptionsPtr = 0x5E7050, kOptionsDefault = 0x5E708C;  // -> "-f -d"
     static char options[64];
     char level[32] = {};
@@ -93,5 +197,29 @@ void features::ApplyDevHooks() {
     snprintf(options, sizeof options, "-d %s", level);
     patch::WriteValue(kOptionsPtr, reinterpret_cast<uint32_t>(options));
     dslog::Write("[dev]  Start level: %s", level);
+#endif
+}
+
+// Dev: F9 in a mission shows a test message in the pop-up bar (FUN_004d33a0 on the view controller [0x63c98c]: text,
+// duration ms) - the bar used for picked-up items and warnings.
+void features::OnFrameDev() {
+#ifndef DS_DIST
+    if (g_playLog) WatchPlayers();
+    {
+        static uint32_t last = 0xFFFFFFFF;
+        const uint32_t v = *reinterpret_cast<uint32_t*>(0x60FA00);
+        if (v != last) {
+            dslog::Write("[dev]  mouse acceleration global = %u (front-end state 0x%X)", v, *reinterpret_cast<uint32_t*>(0x617C18));
+            last = v;
+        }
+    }
+    static bool down = false;
+    const bool now = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+    if (now && !down) {
+        void* controller = *reinterpret_cast<void**>(0x63C98C);
+        if (controller)
+            reinterpret_cast<void(__thiscall*)(void*, const char*, int)>(0x4D33A0)(controller, "You have killed a civilian", 5000);
+    }
+    down = now;
 #endif
 }

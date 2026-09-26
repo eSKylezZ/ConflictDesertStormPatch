@@ -104,7 +104,7 @@ void SetState(uint32_t state);
 
 // --- players ---------------------------------------------------------------------------------------------------------
 
-enum class PadType { Keyboard, PlayStation, Xbox, Generic };
+using features::PadType;
 enum class Icons : int { Auto, PlayStation, Xbox, Keyboard, Count };
 constexpr int kKeyboard = 8;      // device id of the keyboard (joysticks are 0..7)
 constexpr int kFakeDevice = 100;  // dev builds: CoopFakeJoin test players
@@ -114,6 +114,7 @@ struct Slot {
     PadType type = PadType::Keyboard;
     Icons icons = Icons::Auto;
     std::string name;
+    int keyProfile = -1;  // keyboard player: saved key profile (controls.cpp), -1 = the current keys
 };
 Slot g_slots[4];
 uint32_t g_prevActions[kKeyboard + 1];
@@ -123,6 +124,7 @@ struct Session {
     int players = 0;
     int joystick[4] = {-1, -1, -1, -1};
     int style[4] = {0, 0, 0, 0};  // icon style per player: 0 keyboard, 1 PlayStation, 2 Xbox (Auto resolved)
+    int keyProfile[4] = {-1, -1, -1, -1};
     int mission = -1;        // mission (0-11) of the level last loaded in this session
     std::string lastLevel;   // to see each level load once
 } g_session;
@@ -180,6 +182,8 @@ int JoinedCount() {
     for (const Slot& s : g_slots) n += s.device >= 0;
     return n;
 }
+
+bool g_keepSlots = false;  // set when the co-op menu's Back returns here: the players stay joined
 
 void ResetSlots() {
     for (Slot& s : g_slots) s = Slot{};
@@ -299,6 +303,7 @@ void Begin() {
         const overlay::Icon icon = ConfirmIcon(s);
         g_session.style[g_session.players] =
             icon == overlay::Icon::PsCross ? 1 : icon == overlay::Icon::XbCross ? 2 : 0;
+        g_session.keyProfile[g_session.players] = s.device == kKeyboard ? s.keyProfile : -1;
         g_session.joystick[g_session.players++] = s.device < kKeyboard ? s.device : -1;
     }
     *reinterpret_cast<uint32_t*>(kSplitFlag) = 1;
@@ -307,7 +312,7 @@ void Begin() {
     const char* first = *reinterpret_cast<char**>(kCampaign) + 0x37;
     strcpy(*reinterpret_cast<char**>(kNextLevel), first);
     dslog::Write("Co-op: session with %d players, campaign from %s", g_session.players, first);
-    SetState(kStateDifficulty);
+    SetState(2);  // the single-player menu as CO-OPERATIVE CAMPAIGN: campaign or load game
 }
 
 // Every level load of the session: the previous mission counts as finished when the next one follows it
@@ -342,6 +347,15 @@ void Handle(int device, uint32_t actions, PadType type, const std::string& name)
     }
     if (pressed & kBack) return SetState(kStateMainMenu);
     if (pressed & kLeave) return Leave(device);
+    if (s->device == kKeyboard && (pressed & (kLeft | kRight))) {
+        // Keyboard player: left / right picks the keys - current, or a saved profile.
+        const int step = (pressed & kRight) ? 1 : -1;
+        for (int i = 0; i < 5; ++i) {
+            s->keyProfile = (s->keyProfile + 1 + step + 5) % 5 - 1;
+            if (s->keyProfile < 0 || features::KeyProfileSaved(s->keyProfile)) break;
+        }
+        return;
+    }
     const int n = static_cast<int>(Icons::Count);
     if (pressed & kLeft) s->icons = static_cast<Icons>((static_cast<int>(s->icons) + n - 1) % n);
     if (pressed & kRight) s->icons = static_cast<Icons>((static_cast<int>(s->icons) + 1) % n);
@@ -478,12 +492,14 @@ bool __fastcall CoopCreate(void* screen, void*) {
 
 // Set up: the main menu's layout (its set-up adds the four pooled items), then our texts and title.
 void __fastcall CoopSetup(void* screen, void*) {
-    ResetSlots();
+    const bool keep = g_keepSlots;
+    g_keepSlots = false;
+    if (!keep) ResetSlots();
 #ifndef DS_DIST
     DWORD fake = 0, size = sizeof fake;
     RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "CoopFakeJoin", RRF_RT_REG_DWORD, nullptr, &fake,
                  &size);
-    for (DWORD i = 0; i < fake && i < kSlots; ++i)
+    for (DWORD i = 0; i < fake && i < kSlots && !keep; ++i)
         g_slots[i] = Slot{kFakeDevice + static_cast<int>(i), i % 2 ? PadType::Xbox : PadType::PlayStation, Icons::Auto,
                           i % 2 ? "XBOX CONTROLLER" : "DUALSENSE"};
 #endif
@@ -558,14 +574,28 @@ int __fastcall CoopUpdate(void* screen, void*) {
     return 0;
 }
 
-// Front-end state -> screen: ours for kStateCoop, else the original (its first instructions, then the rest).
+void* __cdecl ExtraScreen(uint32_t state) { return features::ControlsScreen(state); }
+
+// Front-end state -> screen: ours for kStateCoop, the CONTROLS screens' for 0x3F.., else the original (its first
+// instructions, then the rest).
 __declspec(naked) void ScreenForStateStub() {
     __asm {
         mov eax, [esp + 4]
         cmp eax, kStateCoop
-        jne original
+        jne other
         mov eax, g_screen
         ret
+    other:
+        cmp eax, kStateCoop
+        jb original
+        push eax
+        call ExtraScreen
+        add esp, 4
+        test eax, eax
+        jz none
+        ret
+    none:
+        mov eax, [esp + 4]
     original:
         dec eax
         push kScreenForStateCont
@@ -712,6 +742,79 @@ const char* MissionTitle(uint32_t hash) {
     return nullptr;
 }
 
+// --- co-op saves ---------------------------------------------------------------------------------------------------
+// Saves are "<mission title> <n>.sav" in Documents\SCi\DesertStorm, named by FUN_004590b0 (sprintf at 0x459105,
+// "%s %d.sav" / "%s%s.sav"; then " <n>" appended until the name is free). A save made with 2-4 players is named
+// "Co-op <n>P <name>.sav". The save / load lists (enumerator FUN_004bf130 over "*.sav" with the callback 0x477020,
+// pushed at 0x449A8F load list and 0x4751FE save list) show only the saves of the current mode: in a co-op session
+// the co-op saves of that player count, otherwise the single-player ones.
+// Co-op menu flow (Xbox-like): Begin -> the single-player menu (state 2) titled CO-OPERATIVE CAMPAIGN without TRAINING
+// (DESERT STORM CAMPAIGN -> difficulty ..., LOAD GAME -> state 9); its Back (-> main menu) is turned into the join
+// screen by OnFrameCoop.
+constexpr uint32_t kSaveNamePrintf = 0x459105, kSprintf = 0x566E80;
+constexpr uint32_t kSaveListCallback = 0x477020, kLoadListPush = 0x449A8F, kSaveListPush = 0x4751FE;
+constexpr uint32_t kSpMenuSetupSlot = 0x5D93DC, kSpMenuSetup = 0x48CCB0;
+constexpr uint32_t kSpMenuTitle = 0xA08F3D1B, kStateSinglePlayer = 2;
+
+int CoopSavePlayers() {
+    if (g_session.players >= 2) return g_session.players;
+    const int split = features::SplitScreenPlayers();
+    return split >= 2 ? split : 0;
+}
+
+// Players of a save by its file name ("...\Co-op 2P Rescue 1.sav" -> 2), 0 = single player.
+int SavePlayers(const char* path) {
+    const char* name = path;
+    for (const char* c = path; *c; ++c)
+        if (*c == '\\' || *c == '/') name = c + 1;
+    if (_strnicmp(name, "Co-op ", 6) != 0) return 0;
+    const int n = name[6] - '0';
+    return n >= 2 && n <= 4 && (name[7] == 'P' || name[7] == 'p') ? n : 0;
+}
+
+int __cdecl SaveName(char* out, const char* format, uintptr_t a, uintptr_t b) {
+    char name[240];
+    const int length = snprintf(name, sizeof name, format, a, b);
+    const int players = CoopSavePlayers();
+    if (players) return sprintf(out, "Co-op %dP %s", players, name);
+    strcpy(out, name);
+    return length;
+}
+
+int __cdecl SaveFilter(const char* path, void* user) {
+    if (!path || SavePlayers(path) != CoopSavePlayers()) return 0;
+    return reinterpret_cast<int(__cdecl*)(const char*, void*)>(kSaveListCallback)(path, user);
+}
+
+void __fastcall SpMenuSetup(void* screen, void*) {
+    reinterpret_cast<void(__thiscall*)(void*)>(kSpMenuSetup)(screen);
+    if (!g_session.players) return;
+    void* list = At<void*>(screen, 8);
+    void** items = At<void**>(list, 0x2C);
+    if (At<int16_t>(list, 0x26) != 3) return;
+    void* training = items[0];  // the list shows its pool in order: TRAINING goes last and out of the count
+    items[0] = items[1], items[1] = items[2], items[2] = training;
+    At<int16_t>(list, 0x26) = 2;
+    At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) - At<int16_t>(list, 0x38));
+    if (At<int16_t>(list, 0x42) > 2) At<int16_t>(list, 0x42) = 2;
+    using Layout = void(__thiscall*)(void*, uint32_t, int, int, int);
+    reinterpret_cast<Layout>((*reinterpret_cast<void***>(screen))[20])(screen, kSpMenuTitle, 0, 0, 0x7FFF);
+    reinterpret_cast<void(__thiscall*)(void*)>(0x4E8130)(list);
+}
+
+bool InstallSaves() {
+    const uint32_t callback = kSaveListCallback, setup = kSpMenuSetup;
+    if (!patch::Matches(kLoadListPush + 1, &callback, 4) || !patch::Matches(kSaveListPush + 1, &callback, 4) ||
+        !patch::Matches(kSpMenuSetupSlot, &setup, 4)) {
+        dslog::Write("[fail] Co-op saves: unexpected bytes - not applied");
+        return false;
+    }
+    const uint32_t filter = reinterpret_cast<uint32_t>(&SaveFilter);
+    return patch::HookCall(kSaveNamePrintf, reinterpret_cast<const void*>(&SaveName), kSprintf) &&
+           patch::Write(kLoadListPush + 1, &filter, 4) && patch::Write(kSaveListPush + 1, &filter, 4) &&
+           patch::WriteValue(kSpMenuSetupSlot, reinterpret_cast<uint32_t>(&SpMenuSetup));
+}
+
 bool InstallMissionList() {
     const uint32_t uniform = 0x49BAF0, missionList = 0x4595D0;
     const uint8_t push[] = {0x68, 0xB0, 0x96, 0x45, 0x00};
@@ -738,6 +841,8 @@ const char* features::CoopText(uint32_t hash) {
         case kHashTitle: return "JOIN CO-OPERATIVE GAME";
         default: break;
     }
+    if (hash == 0xA08F3D1B && g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 2)
+        return "CO-OPERATIVE CAMPAIGN";
     if (CoopMissionList())
         if (const char* title = MissionTitle(hash)) return title;
     if (hash >= kHashSlot0 && hash < kHashSlot0 + kSlots) {
@@ -751,6 +856,15 @@ const char* features::CoopText(uint32_t hash) {
             row = RowIcons{prefix, {overlay::Icon::PsCross, overlay::Icon::XbCross, overlay::Icon::KbSpace}, 3};
             snprintf(slots[i], sizeof slots[i], "%s%s TO JOIN", prefix, Gap(icon * 3 + icon / 2).c_str());
         } else {
+            if (s.device == kKeyboard) {  // its icon; left / right picks a saved key profile (shown only when chosen)
+                snprintf(prefix, sizeof prefix, "PLAYER %d:  %s    < ", i + 1, s.name.c_str());
+                row = RowIcons{prefix, {overlay::Icon::KbEnter}, 1};
+                if (s.keyProfile >= 0)
+                    snprintf(slots[i], sizeof slots[i], "%s%s  PROFILE %d >", prefix, Gap(icon + icon / 4).c_str(), s.keyProfile + 1);
+                else
+                    snprintf(slots[i], sizeof slots[i], "%s%s >", prefix, Gap(icon + icon / 4).c_str());
+                return slots[i];
+            }
             // The icon shows the chosen style; left / right changes it.
             snprintf(prefix, sizeof prefix, "PLAYER %d:  %s    < ", i + 1, s.name.c_str());
             row = RowIcons{prefix, {ConfirmIcon(s)}, 1};
@@ -765,7 +879,7 @@ const char* features::CoopText(uint32_t hash) {
 // exist (the list code needs the menu font and HUD sheet).
 void features::ApplyCoop() {
     if (g_installed) return;
-    g_installed = Install() && InstallMissionList();
+    g_installed = Install() && InstallMissionList() && InstallSaves();
     if (g_installed) dslog::Write("[ok]   Co-op menu: CO-OP entry + join screen (state 0x%X)", kStateCoop);
 }
 
@@ -776,13 +890,42 @@ void features::OnFrameCoop() {
         else dslog::Write("[fail] Co-op: join screen could not be created");
     }
     const uint32_t state = *reinterpret_cast<uint32_t*>(kFrontEndState);
+    static uint32_t lastPolled = 0;
+    if (state == kStateCoop && lastPolled != kStateCoop)  // entering: what is held already (the Esc that led here) isn't a press
+        for (uint32_t& held : g_prevActions) held = ~0u;
+    lastPolled = state;
     if (g_screen && state == kStateCoop) PollDevices();
     if (state != kStateMissionList) g_preselected = false;
     TrackProgress();
-    if (g_session.players && state == kStateMainMenu) EndSession();
+    // Co-op menu Back: to the join screen - once the state setter FUN_0047ef20 takes calls again ([0x617C20] = 0;
+    // it ignores them while busy).
+    static uint32_t previous = 0;
+    static bool backToJoin = false;
+    if (g_session.players && state == kStateMainMenu) {
+        EndSession();
+        backToJoin = previous == kStateSinglePlayer;
+    }
+    if (backToJoin && state != kStateMainMenu) backToJoin = false;
+    if (backToJoin && *reinterpret_cast<uint32_t*>(0x617C20) == 0) {
+        backToJoin = false;
+        g_keepSlots = true;
+        SetState(kStateCoop);
+    }
+    previous = state;
 }
 
 int features::CoopPlayers() { return g_session.players; }
+int features::PlayerOfJoystick(int joystick) {
+    for (int p = 0; p < g_session.players; ++p)
+        if (g_session.joystick[p] == joystick) return p;
+    if (*reinterpret_cast<uint32_t*>(kFrontEndState) == kStateCoop)  // join screen: the slot it joined
+        for (int i = 0; i < kSlots; ++i)
+            if (g_slots[i].device == joystick) return i;
+    return 0;
+}
+int features::CoopKeyProfile(int player) {
+    return player >= 0 && player < 4 && player < g_session.players ? g_session.keyProfile[player] : -1;
+}
 int features::CoopPromptStyle(int player) {
     if (!g_session.players || player < 0 || player >= g_session.players) return -1;
     return g_session.style[player];

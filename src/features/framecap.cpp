@@ -20,6 +20,7 @@ namespace {
 constexpr uint32_t kFrameCallSite = 0x4116EC;
 constexpr uint32_t kFrameDispatch = 0x40DE00;
 constexpr uint32_t kGameWindow = 0x606A60;  // HWND global (created in FUN_00411470)
+constexpr uint32_t kMaxFps = 500;           // >= 2 ms per frame: the game clock counts whole ms
 
 using FrameFn = void(__cdecl*)();
 const FrameFn g_dispatch = reinterpret_cast<FrameFn>(kFrameDispatch);
@@ -57,11 +58,15 @@ void UpdateTarget() {
         uint32_t hz = MonitorRefresh();
         if (hz >= 30) fps = fps ? std::min(fps, hz) : hz;
     }
+    // "No limit" still stops at 500 fps: the game clock counts whole milliseconds, so near 1000 fps frames get
+    // dt = 0 and the frame timer reuses the previous frame's dt (early return at 0x4BA5C4) - the game speeds up.
+    const bool unlimited = fps == 0;
+    fps = unlimited ? kMaxFps : std::min(fps, kMaxFps);
     if (fps != g_targetFps) {
         g_targetFps = fps;
-        g_period = fps ? g_freq / fps : 0;
+        g_period = g_freq / fps;
         g_next = 0;
-        dslog::Write("Frame cap: %u fps%s", fps, fps ? "" : " (unlimited)");
+        dslog::Write("Frame cap: %u fps%s", fps, unlimited ? " (no limit set - game clock ceiling)" : "");
     }
 }
 

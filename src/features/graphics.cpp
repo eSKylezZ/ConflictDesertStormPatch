@@ -14,6 +14,10 @@
 //   SetRenderTarget  a multisampled depth buffer can't be used with a non-multisampled target (render-to-texture
 //                 with the main depth buffer, as 0x543b70 does) - such targets get our own plain depth buffer.
 //   Reset         releases that depth buffer first (default-pool resources must be gone before a Reset).
+//   DrawPrimitiveUP / DrawIndexedPrimitiveUP  with MSAA, D3D8 puts pixel 0's samples on both sides of x = 0, so a
+//                 pre-transformed quad starting exactly at the left/top screen edge covered only half of the first
+//                 column/row - the scene showed through cinematic bars, fades and menu backdrops there. Such vertices
+//                 are moved to -1 (SetVertexShader tracks whether the FVF is XYZRHW).
 // Settings are read when the device is created (after the launcher), so they apply from the next start of play.
 #include <windows.h>
 
@@ -23,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "core/log.h"
 #include "core/patch.h"
@@ -38,7 +43,7 @@ namespace d3d8 {
 enum D3D : int { kCheckDeviceMultiSampleType = 11, kCreateDevice = 15 };
 enum Device : int {
     kGetDeviceCaps = 7, kReset = 14, kCreateDepthStencilSurface = 26, kEndScene = 35, kSetRenderTarget = 31, kGetRenderTarget = 32,
-    kSetTextureStageState = 63,
+    kSetTextureStageState = 63, kDrawPrimitiveUP = 72, kDrawIndexedPrimitiveUP = 73, kSetVertexShader = 76,
 #ifndef DS_DIST
     kGetBackBuffer = 16, kCreateTexture = 20, kCreateRenderTarget = 25, kCopyRects = 28, kGetFrontBuffer = 30,
 #endif
@@ -79,6 +84,9 @@ using SetRenderTargetFn = HRESULT(__stdcall*)(void*, void*, void*);
 using GetRenderTargetFn = HRESULT(__stdcall*)(void*, void**);
 using SetTssFn = HRESULT(__stdcall*)(void*, DWORD, DWORD, DWORD);
 using EndSceneFn = HRESULT(__stdcall*)(void*);
+using DrawUpFn = HRESULT(__stdcall*)(void*, uint32_t, UINT, const void*, UINT);
+using DrawIndexedUpFn = HRESULT(__stdcall*)(void*, uint32_t, UINT, UINT, UINT, const void*, uint32_t, const void*, UINT);
+using SetVertexShaderFn = HRESULT(__stdcall*)(void*, DWORD);
 using ReleaseFn = ULONG(__stdcall*)(void*);
 using GetDescFn = HRESULT(__stdcall*)(void*, d3d8::SurfaceDesc*);
 
@@ -91,6 +99,10 @@ SetRenderTargetFn g_setRenderTarget = nullptr;
 GetRenderTargetFn g_getRenderTarget = nullptr;
 SetTssFn g_setTss = nullptr;
 EndSceneFn g_endScene = nullptr;
+DrawUpFn g_drawUp = nullptr;
+DrawIndexedUpFn g_drawIndexedUp = nullptr;
+SetVertexShaderFn g_setVertexShader = nullptr;
+bool g_pretransformed = false;  // current vertex shader is an FVF with D3DFVF_XYZRHW
 
 uint32_t g_samples = 0;     // MSAA sample count of the current device (0 = off)
 uint32_t g_anisotropy = 0;  // anisotropy forced on linear-filtered textures (0 = game default)
@@ -172,6 +184,86 @@ HRESULT __stdcall SetRenderTarget(void* dev, void* target, void* depth) {
     return g_setRenderTarget(dev, target, depth);
 }
 
+DWORD g_vertexShader = 0;
+
+HRESULT __stdcall SetVertexShader(void* dev, DWORD handle) {
+    // FVF codes are even (shader handles from CreateVertexShader are odd); position type XYZRHW = 0x004.
+    g_vertexShader = handle;
+    g_pretransformed = (handle & 1) == 0 && (handle & 0x00E) == 0x004;
+    return g_setVertexShader(dev, handle);
+}
+
+#ifndef DS_DIST
+// Development builds: which UP draws touch the top/left screen edge (caller, shader/FVF, first vertex), once each.
+void LogEdgeDraw(void* ret, const void* data, UINT count, UINT stride) {
+    static void* seen[32];
+    static int n = 0;
+    if (!data || stride < 8 || n >= 32) return;
+    bool edge = false;
+    for (UINT i = 0; i < count && i < 64; ++i) {
+        const float* p = reinterpret_cast<const float*>(static_cast<const uint8_t*>(data) + i * stride);
+        if (p[0] < 1.0f || p[1] < 1.0f) edge = true;
+    }
+    if (!edge) return;
+    for (int i = 0; i < n; ++i)
+        if (seen[i] == ret) return;
+    seen[n++] = ret;
+    const float* p = static_cast<const float*>(data);
+    dslog::Write("Graphics: edge draw from 0x%08X vs 0x%lX stride %u count %u v0 (%.2f, %.2f) samples %u",
+                 reinterpret_cast<uint32_t>(ret), g_vertexShader, stride, count, p[0], p[1], g_samples);
+}
+#endif
+
+// Copy of `count` vertices with x/y on the top/left screen edge moved to -1 (MSAA edge coverage, see the top).
+// Returns null when no vertex needs it.
+const void* ExtendScreenEdges(const void* data, UINT count, UINT stride) {
+    if (!g_samples || !g_pretransformed || !data || stride < 8 || count == 0 || count > 4096) return nullptr;
+    auto at = [&](const uint8_t* base, UINT i) { return reinterpret_cast<const float*>(base + i * stride); };
+    const auto* src = static_cast<const uint8_t*>(data);
+    auto onEdge = [](float v) { return v <= 0.0f && v > -1.0f; };
+    UINT i = 0;
+    while (i < count && !onEdge(at(src, i)[0]) && !onEdge(at(src, i)[1])) ++i;
+    if (i == count) return nullptr;
+    static uint8_t buffer[4096 * 64];
+    if (static_cast<size_t>(count) * stride > sizeof buffer) return nullptr;
+    memcpy(buffer, src, static_cast<size_t>(count) * stride);
+    for (; i < count; ++i) {
+        auto* p = reinterpret_cast<float*>(buffer + i * stride);
+        if (onEdge(p[0])) p[0] = -1.0f;
+        if (onEdge(p[1])) p[1] = -1.0f;
+    }
+    return buffer;
+}
+
+UINT VertexCount(uint32_t type, UINT prims) {
+    switch (type) {
+        case 1: return prims;      // point list
+        case 2: return prims * 2;  // line list
+        case 3: return prims + 1;  // line strip
+        case 4: return prims * 3;  // triangle list
+        case 5:                    // triangle strip
+        case 6: return prims + 2;  // triangle fan
+        default: return 0;
+    }
+}
+
+HRESULT __stdcall DrawPrimitiveUP(void* dev, uint32_t type, UINT prims, const void* data, UINT stride) {
+#ifndef DS_DIST
+    LogEdgeDraw(_ReturnAddress(), data, VertexCount(type, prims), stride);
+#endif
+    if (const void* fixed = ExtendScreenEdges(data, VertexCount(type, prims), stride)) data = fixed;
+    return g_drawUp(dev, type, prims, data, stride);
+}
+
+HRESULT __stdcall DrawIndexedPrimitiveUP(void* dev, uint32_t type, UINT minIndex, UINT vertices, UINT prims,
+                                         const void* indices, uint32_t indexFormat, const void* data, UINT stride) {
+#ifndef DS_DIST
+    LogEdgeDraw(_ReturnAddress(), data, minIndex + vertices, stride);
+#endif
+    if (const void* fixed = ExtendScreenEdges(data, minIndex + vertices, stride)) data = fixed;
+    return g_drawIndexedUp(dev, type, minIndex, vertices, prims, indices, indexFormat, data, stride);
+}
+
 // End of the frame: our button icons over whatever the game drew (overlay.cpp).
 HRESULT __stdcall EndScene(void* dev) {
     overlay::Render(dev);
@@ -238,7 +330,11 @@ void HookDevice(void* dev) {
     bool ok = HookSlot(dev, d3d8::kSetTextureStageState, reinterpret_cast<void*>(&SetTextureStageState), g_setTss) &&
               HookSlot(dev, d3d8::kSetRenderTarget, reinterpret_cast<void*>(&SetRenderTarget), g_setRenderTarget) &&
               HookSlot(dev, d3d8::kReset, reinterpret_cast<void*>(&Reset), g_reset) &&
-              HookSlot(dev, d3d8::kEndScene, reinterpret_cast<void*>(&EndScene), g_endScene);
+              HookSlot(dev, d3d8::kEndScene, reinterpret_cast<void*>(&EndScene), g_endScene) &&
+              HookSlot(dev, d3d8::kSetVertexShader, reinterpret_cast<void*>(&SetVertexShader), g_setVertexShader) &&
+              HookSlot(dev, d3d8::kDrawPrimitiveUP, reinterpret_cast<void*>(&DrawPrimitiveUP), g_drawUp) &&
+              HookSlot(dev, d3d8::kDrawIndexedPrimitiveUP, reinterpret_cast<void*>(&DrawIndexedPrimitiveUP),
+                       g_drawIndexedUp);
     g_getRenderTarget = Method<GetRenderTargetFn>(dev, d3d8::kGetRenderTarget);
     g_createDepth = Method<CreateDepthFn>(dev, d3d8::kCreateDepthStencilSurface);
 #ifndef DS_DIST

@@ -17,6 +17,8 @@
 // OBJECTIVES = 8), named for the pad in use after our DualShock remap.
 #include <windows.h>
 
+#include <intrin.h>
+
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -35,7 +37,6 @@ constexpr uint32_t kLookup = 0x4F6730;          // string lookup (hash -> text),
 constexpr uint32_t kLookupEnsureSorted = 0x4F6700, kLookupSearch = 0x4F6780;  // thiscall, no stack args
 constexpr uint32_t kSearchHash = 0x640734, kSearchLow = 0x640738, kSearchHigh = 0x640728;
 constexpr uint32_t kGameWindow = 0x606A60;
-constexpr uint32_t kMouseX = 0x754C18, kMouseY = 0x754C1C;
 
 enum class Input { Keyboard, PlayStation, Xbox };
 Input g_input = Input::Keyboard;
@@ -44,7 +45,17 @@ bool g_enabled = false;
 // ---- input device tracking ----
 bool g_padOpen = false;
 DWORD g_lastKbm = 0, g_lastPadActivity = 0;
-LONG g_lastMouseX = 0, g_lastMouseY = 0;
+
+// A key (or mouse button) held right now, or the game's DirectInput mouse (DIMOUSESTATE at 0x754C24, relative)
+// moved / clicked in its last poll - SetCursorPos produces neither.
+constexpr uint32_t kDiMouseState = 0x754C24;
+bool KeyboardOrMouseActive() {
+    const auto* m = reinterpret_cast<const int32_t*>(kDiMouseState);
+    if (m[0] || m[1] || m[2] || m[3]) return true;  // lX, lY, lZ, rgbButtons[4]
+    for (int vk = 1; vk < 0xFF; ++vk)
+        if (GetAsyncKeyState(vk) & 0x8000) return true;
+    return false;
+}
 
 void SetInput(Input input) {
     if (input == g_input) return;
@@ -167,7 +178,9 @@ overlay::Icon BindingIcon(uint32_t code) {
 // style they joined with, otherwise the device in use.
 constexpr uint32_t kActionPrompts[] = {
     0x14D74E2B, 0x94CE0B19, 0x43C36EAC, 0x38C30DC3, 0x0205AF3C, 0x935F10D6, 0x725DC0BB, 0x1DEA6EED, 0xA009940C,
-    0x7E276392, 0x9A21D90F, 0xDAF2188F, 0x1DDF138C, 0x88DEF646, 0x6A00298D, 0x207F169C, 0x6E35CC74, 0x0153D382};
+    0x7E276392, 0x9A21D90F, 0xDAF2188F, 0x1DDF138C, 0x88DEF646, 0x6A00298D, 0x207F169C, 0x6E35CC74, 0x0153D382,
+    // shown by other code (doors, cells, chains): UNLOCK, OP_DOOR "OPERATE DOOR", CUT_CHAIN, PICK_UP_OBJ
+    0x2F942AB6, 0xB24B9B70, 0x1AE20DAA, 0x478FE064};
 constexpr uint32_t kBindings = 0x60687C, kBindingLookup = 0x40A110;
 constexpr uint32_t kActionPrompt = 0x450540, kActionPromptCall = 0x40F304;  // FUN_00450540(block), one caller
 constexpr uint32_t kInputBlocks = 0x60F5B8, kInputBlockSize = 0x478;
@@ -188,12 +201,12 @@ constexpr uint32_t kActionControl = 2;
 
 overlay::Icon BindingIcon(uint32_t code);
 
-// The ACTION button of the player being drawn, or Count.
-overlay::Icon ActionIcon() {
+// The button of `action` for `player` (their device: co-op join, else the device in use), or Count.
+overlay::Icon ControlIcon(int player, uint32_t action) {
     void* table = *reinterpret_cast<void**>(kBindings);
     if (!table) return overlay::Icon::Count;
-    int player = 0, style;
-    if (features::SplitScreenPlayers() > 1) player = g_promptPlayer;
+    int style;
+    if (features::SplitScreenPlayers() <= 1) player = 0;
     const int coopStyle = features::CoopPromptStyle(player);
     if (coopStyle >= 0) style = coopStyle;
     else style = (g_enabled && g_input != Input::Keyboard) ? (g_input == Input::Xbox ? 2 : 1) : 0;
@@ -202,7 +215,7 @@ overlay::Icon ActionIcon() {
     const int slots = reinterpret_cast<const int*>(table)[1];
     using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
     for (int slot = 0; slot < slots; ++slot) {
-        const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, kActionControl);
+        const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, action);
         if (code == 0xFFFFFFFF) continue;
         const uint32_t type = code >> 16;
         const bool padCode = type == 1 || type == 2;
@@ -226,6 +239,45 @@ const char* __fastcall BindingName(void* table, void*, uint32_t code) {
     return reinterpret_cast<const char*(__thiscall*)(void*, uint32_t)>(kBindingName)(table, code);
 }
 
+// Which of an action's bindings the tutorial / tip texts list (FUN_00486b00 joins set 0's slots with " / "): the game
+// dropped pad codes unless [0x606368] (a joystick-present flag) was set and always kept the keys - "Press objectives
+// (F1)" on a pad. The check at 0x486B5E (22 bytes) now calls ListBinding: bindings of the device in use (player 1's
+// co-op device, else the last input), or all of them when the action has none for that device.
+constexpr uint32_t kListCheck = 0x486B5E, kListSkip = 0x486BE9, kListKeep = 0x486B74;
+bool IsPadCode(uint32_t code) { return (code >> 16) == 1 || (code >> 16) == 2; }
+
+int __stdcall ListBinding(uint32_t code, uint32_t action) {
+    const int coopStyle = features::CoopPromptStyle(0);
+    const bool pad = coopStyle >= 0 ? coopStyle != 0 : (g_enabled && g_input != Input::Keyboard);
+    if (IsPadCode(code) == pad) return 1;
+    void* table = *reinterpret_cast<void**>(kBindings);
+    const int slots = reinterpret_cast<const int*>(table)[1];
+    using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
+    for (int slot = 0; slot < slots; ++slot) {
+        const uint32_t other = reinterpret_cast<Lookup>(kBindingLookup)(table, 0, slot, action);
+        if (other != 0xFFFFFFFF && IsPadCode(other) == pad) return 0;  // the device has its own binding
+    }
+    return 1;
+}
+
+// At 0x486B5E: eax = edx = binding code, esi = action; edx must survive.
+__declspec(naked) void ListBindingStub() {
+    __asm {
+        push edx
+        push esi
+        push edx
+        call ListBinding
+        pop edx
+        test eax, eax
+        jz skip
+        push kListKeep
+        ret
+    skip:
+        push kListSkip
+        ret
+    }
+}
+
 // Same as FUN_004f6730: prepare the table if needed, then binary-search it through globals.
 const char* GameLookup(void* table, uint32_t hash) {
     using Method = const char*(__thiscall*)(void*);
@@ -241,14 +293,35 @@ const char* GameLookup(void* table, uint32_t hash) {
 
 const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
     if (const char* own = features::CoopText(hash)) return own;
+    if (const char* own = features::ControlsText(hash)) return own;
     const char* text = GameLookup(table, hash);
     if (!text) return text;
+#ifndef DS_DIST
+    {
+        static int logged = 0;
+        static uint32_t seen[512];
+        static int seenCount = 0;
+        const char* level = reinterpret_cast<const char*>(0x606880);
+        DWORD on = 0, size = sizeof on;
+        static const bool playLog = (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "PlayLog",
+                                                   RRF_RT_REG_DWORD, nullptr, &on, &size), on != 0);
+        if (playLog && logged < 400 && level[0] && _strnicmp(level, "frontend", 8) != 0 && strlen(text) < 40) {
+            bool known = false;
+            for (int i = 0; i < seenCount && !known; ++i) known = seen[i] == hash;
+            if (!known && seenCount < 512) {
+                seen[seenCount++] = hash;
+                ++logged;
+                dslog::Write("[dev]  text %08X \"%s\" from 0x%p", hash, text, _ReturnAddress());
+            }
+        }
+    }
+#endif
     const bool pad = g_enabled && g_input != Input::Keyboard;
     const bool icons = overlay::GlyphsReady();
     if (icons)
         for (uint32_t h : kActionPrompts) {
             if (h != hash) continue;
-            const overlay::Icon icon = ActionIcon();
+            const overlay::Icon icon = ControlIcon(g_promptPlayer, kActionControl);
             if (icon == overlay::Icon::Count) return text;
             static char ring[16][96];
             static int next = 0;
@@ -285,6 +358,12 @@ uint32_t __cdecl CursorFlag() {
 }
 }  // namespace
 
+const char* features::ControlIconText(int player, uint32_t action) {
+    if (!overlay::GlyphsReady()) return nullptr;
+    const overlay::Icon icon = ControlIcon(player, action);
+    return icon == overlay::Icon::Count ? nullptr : overlay::IconChar(icon);
+}
+
 const char* features::GameText(uint32_t hash) {
     void* table = *reinterpret_cast<void**>(0x60EDCC);
     return table ? GameLookup(table, hash) : nullptr;
@@ -306,14 +385,13 @@ void features::OnFrameInput() {
         g_lastPadActivity = now;
         SetInput(s.type == gamepad::Type::Xbox ? Input::Xbox : Input::PlayStation);
     }
-    // Keyboard/mouse: any real input Windows saw (ignored right after pad activity, in case the pad counts), or
-    // the game's own mouse position changing.
+    // Keyboard/mouse: input Windows saw (ignored right after pad activity, in case the pad counts) that really came
+    // from them - a key held, or the game's DirectInput mouse moving / clicking. On a mounted gun (block +0x454) the
+    // game re-centres the cursor with SetCursorPos every frame (0x44B4E1); that moves the cursor and updates the
+    // last-input time, which flipped the prompts between pad and keyboard.
     LASTINPUTINFO li{sizeof li, 0};
     GetLastInputInfo(&li);
-    LONG mx = *reinterpret_cast<LONG*>(kMouseX), my = *reinterpret_cast<LONG*>(kMouseY);
-    bool mouseMoved = mx != g_lastMouseX || my != g_lastMouseY;
-    g_lastMouseX = mx, g_lastMouseY = my;
-    if ((li.dwTime != g_lastKbm || mouseMoved) && now - g_lastPadActivity > 250) SetInput(Input::Keyboard);
+    if (li.dwTime != g_lastKbm && now - g_lastPadActivity > 250 && KeyboardOrMouseActive()) SetInput(Input::Keyboard);
     g_lastKbm = li.dwTime;
 }
 
@@ -336,6 +414,12 @@ void features::ApplyInGameInput() {
     patch::WriteJump(kLookup, reinterpret_cast<const void*>(&Lookup));
     if (overlay::Install()) {
         patch::HookCall(kTutorialBindingCall, reinterpret_cast<const void*>(&BindingName), kBindingName);
+        static const uint8_t listCheck[] = {0xC1, 0xE8, 0x10, 0x83, 0xF8, 0x01, 0x74, 0x05, 0x83, 0xF8, 0x02,
+                                            0x75, 0x09, 0xA1, 0x68, 0x63, 0x60, 0x00, 0x85, 0xC0, 0x74, 0x75};
+        if (patch::Matches(kListCheck, listCheck, sizeof listCheck))
+            patch::WriteJump(kListCheck, reinterpret_cast<const void*>(&ListBindingStub));
+        else
+            dslog::Write("[fail] Tutorial texts: binding list check not recognised at 0x%08X", kListCheck);
         patch::HookCall(kActionPromptCall, reinterpret_cast<const void*>(&ActionPrompt), kActionPrompt);
 #ifndef DS_DIST
         DWORD v = 0, size = sizeof v;
@@ -351,3 +435,6 @@ void features::ApplyInGameInput() {
     hooked = true;
     dslog::Write("[ok]   In-game pad prompts + cursor hiding");
 }
+
+bool features::KeyboardInUse() { return g_input == Input::Keyboard; }
+bool features::PadStyleXbox() { return g_input == Input::Xbox; }

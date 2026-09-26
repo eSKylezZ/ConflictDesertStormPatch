@@ -1,2 +1,4 @@
 // In-game button icons (scripts/gen_game_icons.py) - loaded by src/features/overlay.cpp.
 300 RCDATA "generated/game_icons.bin"
+301 RCDATA "generated/controller_ps5.png"
+302 RCDATA "generated/controller_xbox.png"

@@ -47,6 +47,7 @@ void settings::Load() {
         Read(key, "SkipCutscenes", g_values.skipCutscenes);
         Read(key, "Antialiasing", g_values.antialiasing, 0, 16);
         Read(key, "Anisotropy", g_values.anisotropy, 0, 16);
+        Read(key, "MouseAcceleration", g_values.mouseAcceleration);
         RegCloseKey(key);
     }
     const Values& v = g_values;
@@ -70,7 +71,7 @@ bool settings::Save(const Values& v) {
               Put(key, "SplitScreenLayout", v.splitScreenLayout) && Put(key, "DiscordPresence", v.discordPresence) &&
               Put(key, "DisplayMode", v.displayMode) && Put(key, "SkipIntro", v.skipIntro) &&
               Put(key, "SkipCutscenes", v.skipCutscenes) && Put(key, "Antialiasing", v.antialiasing) &&
-              Put(key, "Anisotropy", v.anisotropy);
+              Put(key, "Anisotropy", v.anisotropy) && Put(key, "MouseAcceleration", v.mouseAcceleration);
     RegCloseKey(key);
     if (ok) g_values = v;
     return ok;

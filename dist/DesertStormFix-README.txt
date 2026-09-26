@@ -10,8 +10,16 @@ Features
   mission cutscenes
 - Anti-aliasing (2x / 4x / 8x MSAA) and anisotropic texture filtering
   (up to 16x), which the original settings don't offer
-- HUD, text and menus scaled to your resolution
-- DualShock 4 / DualSense controller support (buttons + D-pad)
+- HUD, text and menus scaled to your resolution, with sharper text
+- DualShock 4 / DualSense and Xbox controller support (buttons, D-pad,
+  both sticks and triggers), with rumble on both
+- DualSense: adaptive triggers (a firm "gun trigger" on the fire trigger, light
+  resistance for aim mode), light bar and player lights show which player
+  the pad belongs to, touchpad click opens the objectives
+- Xbox One / Series controllers: trigger rumble on the fire trigger
+- Options -> CONTROLS: a controller screen that shows what every button does
+  on a PlayStation or Xbox controller, layouts per player (presets or your
+  own), and saved keyboard & mouse profiles
 - In-game menus follow the device you use: with a controller the mouse
   cursor is hidden and the prompts name the pad buttons ("Cross: Select")
   instead of the keys ("Return: Select")
@@ -20,7 +28,15 @@ Features
 - Characters no longer get stuck at high frame rates (for example the
   soldiers who stayed inside the helicopter in the opening film instead of
   jumping out)
-- Local co-op for 2-4 players in split screen (main menu -> CO-OP)
+- Your own gunshots no longer get louder when you aim or zoom (scopes,
+  binoculars, mounted guns), and nearby sounds no longer jump closer
+- Inventory hints: the item bar shows what the use button does without
+  equipping the item - a MediKit heals yourself, night vision goggles toggle,
+  weapons with several fire modes change mode
+- Mouse acceleration is off by default (turn it on in Options -> Controls ->
+  Keyboard & Mouse -> Mouse Options if you prefer it)
+- Local co-op for 2-4 players in split screen (main menu -> CO-OP), with
+  divider lines between the views
 - Discord status: shows the mission you are playing (for example
   "Mission 4: Desert Watch"), single player or split screen, and the time
   since the mission started
@@ -77,6 +93,35 @@ Co-op (local split screen, 2-4 players)
   for 2 players; with more players they are shown greyed out.
   The split layout (top/bottom or side by side) is set in the launcher's
   Settings under "Split screen".
+  A keyboard player can pick a saved keyboard & mouse profile with
+  Left/Right on their row (see Controls below).
+  Each player uses the controller layout set for their player number.
+
+Controllers
+  Xbox controllers (and other XInput pads) are read like in modern games, so
+  both triggers work at the same time. DualSense and DualShock 4 work over USB
+  and Bluetooth; rumble, light bar, player lights and the DualSense's
+  adaptive triggers need no extra software.
+  The adaptive triggers and trigger rumble follow your layout: they sit on
+  whichever trigger fires (R2 / RT unless you choose CLASSIC).
+  Vibration and the adaptive triggers can be switched off per player on the
+  CONTROLLER screen.
+
+Controls (Options -> CONTROLS)
+  KEYBOARD & MOUSE: the game's Key Assignment and Mouse Options, plus
+  PROFILES - four slots for your keys. Select a slot to load it, S (or
+  Square / X) saves your current keys into it, Delete (or Triangle / Y)
+  clears it. Profiles stay on this PC.
+  CONTROLLER: a picture of the controller with a line from each button to
+  what it does. At the top choose the player (1-4), the layout and what the
+  buttons do on foot, in the Orders menu or in the Inventory, whether the
+  controller vibrates and whether a DualSense uses its adaptive triggers. Layouts: DEFAULT (fire on R2 / RT, orders on
+  L2 / LT, targeting on the bumpers), CLASSIC (the original game's: fire on
+  R1 / RB), SOUTHPAW (DEFAULT with the sticks swapped). To change a button, select the action, press
+  Cross / A / Enter and then press the new button; whatever used that button
+  swaps with it and the layout becomes CUSTOM. Square / X / Delete resets the
+  player to DEFAULT, Triangle / Y / Tab switches between the PlayStation and
+  Xbox picture. Layouts are saved per player and used from the next mission.
 
 Install
   Copy dinput8.dll into the game folder, next to DesertStorm.exe.
@@ -89,3 +134,7 @@ Uninstall
 
 Credits
   Controller button icons: "Input Prompts" by Kenney (www.kenney.nl), CC0.
+  Controller pictures: "PS5 Button Icons and Controls" and "Xbox Series
+  Button Icons and Controls" by Zacksly (https://zacksly.itch.io), licensed
+  under CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Modified:
+  cropped and scaled.

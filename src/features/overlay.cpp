@@ -18,7 +18,13 @@
 
 #include <windows.h>
 
+#include <wincodec.h>
+#undef small  // rpcndr.h (via wincodec.h) defines it as char
+
+#include <cmath>
 #include <cstring>
+#include <initializer_list>
+#include <iterator>
 #include <vector>
 
 #include "core/log.h"
@@ -43,7 +49,8 @@ struct Vertex {
     float u, v;
 };
 struct Queued {
-    overlay::Icon icon;
+    int icon;       // overlay::Icon, or -1: `texture` (nullptr = solid colour)
+    void* texture;
     Vertex quad[4];  // triangle strip, already transformed
 };
 std::vector<Queued> g_queue;
@@ -267,10 +274,12 @@ float overlay::MenuAlpha() {
     return a < 0.0f ? 0.0f : a > 1.0f ? 1.0f : a;
 }
 
-void overlay::QueueIcon(Icon icon, float x, float y, float size, float alpha) {
-    if (alpha < 0.0f) alpha = MenuAlpha();
+namespace {
+// The game's 2D transform of this moment (menu transitions, FUN_005470a0) and the split-screen HUD offset, applied to
+// a quad given by its four corners (top-left, top-right, bottom-left, bottom-right) and queued.
+void Queue(int icon, void* texture, const float (&corner)[4][2], const float (&uv)[4][2], float alpha, DWORD rgb) {
+    if (alpha < 0.0f) alpha = overlay::MenuAlpha();
     float scale = 1.0f, cx = 0.0f, cy = 0.0f, mult[4] = {1, 1, 1, 1};
-    // The game's 2D transform of this moment (menu transitions), see FUN_005470a0.
     if (auto* r = *reinterpret_cast<uint8_t**>(kRenderer); r && *reinterpret_cast<uint32_t*>(r + 0x40A70)) {
         const uint32_t flags = *reinterpret_cast<uint32_t*>(r + 0x40A74);
         if (flags & 1) {
@@ -284,19 +293,186 @@ void overlay::QueueIcon(Icon icon, float x, float y, float size, float alpha) {
     alpha *= mult[3];
     if (alpha <= 0.0f) return;
     // Split screen: a view's HUD is drawn in view-local coordinates and moved to the view (splitscreen.cpp).
-    float vx, vy;
-    if (features::SplitHudOffset(vx, vy)) x += vx, y += vy;
+    float vx = 0, vy = 0;
+    features::SplitHudOffset(vx, vy);
     auto channel = [](float v) { return static_cast<DWORD>((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
-    const DWORD color = channel(alpha) << 24 | channel(mult[0]) << 16 | channel(mult[1]) << 8 | channel(mult[2]);
-    auto px = [&](float v) { return (v - cx) * scale + cx - 0.5f; };
-    auto py = [&](float v) { return (v - cy) * scale + cy - 0.5f; };
-    const float x0 = px(x), y0 = py(y), x1 = px(x + size), y1 = py(y + size);
-    g_queue.push_back({icon,
-                       {{x0, y0, 0, 1, color, 0, 0},
-                        {x1, y0, 0, 1, color, 1, 0},
-                        {x0, y1, 0, 1, color, 0, 1},
-                        {x1, y1, 0, 1, color, 1, 1}}});
+    const float rgbf[3] = {((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f, (rgb & 255) / 255.0f};
+    const DWORD color = channel(alpha) << 24 | channel(rgbf[0] * mult[0]) << 16 | channel(rgbf[1] * mult[1]) << 8 |
+                        channel(rgbf[2] * mult[2]);
+    Queued q{icon, texture, {}};
+    for (int i = 0; i < 4; ++i)
+        q.quad[i] = {(corner[i][0] + vx - cx) * scale + cx - 0.5f, (corner[i][1] + vy - cy) * scale + cy - 0.5f, 0, 1,
+                     color, uv[i][0], uv[i][1]};
+    g_queue.push_back(q);
 }
+
+void QueueRectangle(int icon, void* texture, float x, float y, float w, float h, float u1, float v1, float alpha,
+                    DWORD rgb) {
+    const float corner[4][2] = {{x, y}, {x + w, y}, {x, y + h}, {x + w, y + h}};
+    const float uv[4][2] = {{0, 0}, {u1, 0}, {0, v1}, {u1, v1}};
+    Queue(icon, texture, corner, uv, alpha, rgb);
+}
+}  // namespace
+
+void overlay::QueueIcon(Icon icon, float x, float y, float size, float alpha) {
+    QueueRectangle(static_cast<int>(icon), nullptr, x, y, size, size, 1, 1, alpha, 0xFFFFFF);
+}
+
+void overlay::QueueImage(void* texture, float x, float y, float w, float h, float u1, float v1, float alpha) {
+    if (texture) QueueRectangle(-1, texture, x, y, w, h, u1, v1, alpha, 0xFFFFFF);
+}
+
+void overlay::QueueRect(float x, float y, float w, float h, uint32_t argb) {
+    QueueRectangle(-1, nullptr, x, y, w, h, 0, 0, ((argb >> 24) / 255.0f) * MenuAlpha(), argb & 0xFFFFFF);
+}
+
+void overlay::QueueLine(float x0, float y0, float x1, float y1, float width, uint32_t argb) {
+    const float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx * dx + dy * dy);
+    if (len < 0.01f) return;
+    const float nx = -dy / len * width / 2, ny = dx / len * width / 2;
+    const float corner[4][2] = {{x0 + nx, y0 + ny}, {x1 + nx, y1 + ny}, {x0 - nx, y0 - ny}, {x1 - nx, y1 - ny}};
+    const float uv[4][2] = {};
+    Queue(-1, nullptr, corner, uv, ((argb >> 24) / 255.0f) * MenuAlpha(), argb & 0xFFFFFF);
+}
+
+// A PNG from this DLL's RCDATA as a managed A8R8G8B8 texture of texW x texH (image at the top-left), via WIC.
+void* overlay::LoadTexture(int resource, int texW, int texH) {
+    struct Cached {
+        int resource;
+        void* device;
+        void* texture;
+    };
+    static std::vector<Cached> cache;
+    void* dev = *reinterpret_cast<void**>(0x755050);
+    if (!dev) return nullptr;
+    for (const Cached& c : cache)
+        if (c.resource == resource && c.device == dev) return c.texture;
+    cache.push_back({resource, dev, nullptr});  // failures are not retried
+
+    HMODULE self = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&IconPixels), &self);
+    HRSRC res = FindResourceA(self, MAKEINTRESOURCEA(resource), MAKEINTRESOURCEA(10) /*RT_RCDATA*/);
+    HGLOBAL data = res ? LoadResource(self, res) : nullptr;
+    if (!data) return nullptr;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::vector<uint8_t> pixels;
+    UINT w = 0, h = 0;
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromMemory(static_cast<BYTE*>(LockResource(data)), SizeofResource(self, res))) &&
+        SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                        WICBitmapPaletteTypeCustom)) &&
+        SUCCEEDED(converter->GetSize(&w, &h)) && w <= static_cast<UINT>(texW) && h <= static_cast<UINT>(texH)) {
+        pixels.resize(size_t(w) * h * 4);
+        if (FAILED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data()))) pixels.clear();
+    }
+    for (IUnknown* u : std::initializer_list<IUnknown*>{converter, frame, decoder, stream, factory})
+        if (u) u->Release();
+    if (SUCCEEDED(com)) CoUninitialize();
+    if (pixels.empty()) {
+        dslog::Write("[fail] Overlay: image %d not decoded", resource);
+        return nullptr;
+    }
+    using Create = HRESULT(__stdcall*)(void*, UINT, UINT, UINT, DWORD, uint32_t, uint32_t, void**);
+    struct Locked {
+        INT pitch;
+        void* bits;
+    };
+    using Lock = HRESULT(__stdcall*)(void*, UINT, Locked*, const RECT*, DWORD);
+    using Unlock = HRESULT(__stdcall*)(void*, UINT);
+    void* tex = nullptr;
+    if (FAILED(M<Create>(dev, kCreateTexture)(dev, texW, texH, 1, 0, kFormatArgb, kPoolManaged, &tex)) || !tex) return nullptr;
+    Locked lr{};
+    if (SUCCEEDED(M<Lock>(tex, kLockRect)(tex, 0, &lr, nullptr, 0))) {
+        for (int y = 0; y < texH; ++y) {
+            auto* row = static_cast<uint8_t*>(lr.bits) + y * lr.pitch;
+            memset(row, 0, size_t(texW) * 4);
+            if (y < static_cast<int>(h)) memcpy(row, &pixels[size_t(y) * w * 4], size_t(w) * 4);
+        }
+        M<Unlock>(tex, kUnlockRect)(tex, 0);
+    }
+    cache.back().texture = tex;
+    dslog::Write("Overlay: image %d (%ux%u) loaded", resource, w, h);
+    return tex;
+}
+
+namespace {
+using SetRs = HRESULT(__stdcall*)(void*, DWORD, DWORD);
+using GetRs = HRESULT(__stdcall*)(void*, DWORD, DWORD*);
+using SetTss = HRESULT(__stdcall*)(void*, DWORD, DWORD, DWORD);
+using GetTss = HRESULT(__stdcall*)(void*, DWORD, DWORD, DWORD*);
+using GetTex = HRESULT(__stdcall*)(void*, DWORD, void**);
+using SetTex = HRESULT(__stdcall*)(void*, DWORD, void*);
+using SetDw = HRESULT(__stdcall*)(void*, DWORD);
+using GetDw = HRESULT(__stdcall*)(void*, DWORD*);
+using Viewport = HRESULT(__stdcall*)(void*, DWORD*);  // D3DVIEWPORT8 = 6 dwords
+using Draw = HRESULT(__stdcall*)(void*, uint32_t, UINT, const void*, UINT);
+
+// Sets up plain alpha-blended pre-transformed quads over the whole back buffer; every state it touches is read
+// first and put back when it goes out of scope.
+class Draw2D {
+public:
+    explicit Draw2D(void* dev) : dev_(dev) {
+        for (size_t i = 0; i < std::size(kStates); ++i) M<GetRs>(dev, kGetRenderState)(dev, kStates[i], &rs_[i]);
+        for (size_t i = 0; i < std::size(kStage0); ++i) M<GetTss>(dev, kGetTss)(dev, 0, kStage0[i], &tss0_[i]);
+        M<GetTss>(dev, kGetTss)(dev, 1, 1, &tss1ColorOp_);
+        M<GetTex>(dev, kGetTexture)(dev, 0, &tex0_);
+        M<GetDw>(dev, kGetVertexShader)(dev, &vs_);
+        M<GetDw>(dev, kGetPixelShader)(dev, &ps_);
+        M<Viewport>(dev, kGetViewport)(dev, vp_);
+
+        if (auto* r = *reinterpret_cast<uint8_t**>(kRenderer)) {
+            DWORD full[6] = {0, 0, *reinterpret_cast<DWORD*>(r + 0x40688), *reinterpret_cast<DWORD*>(r + 0x4068C), 0,
+                             0x3F800000};
+            M<Viewport>(dev, kSetViewport)(dev, full);
+        }
+        const DWORD set[][2] = {{7, 0}, {14, 0}, {15, 0}, {19, 5}, {20, 6}, {22, 1}, {27, 1}, {28, 0}, {52, 0}, {137, 0}};
+        for (auto& s : set) M<SetRs>(dev, kSetRenderState)(dev, s[0], s[1]);
+        Textured(true);
+        M<SetTss>(dev, kSetTss)(dev, 1, 1, 1 /*DISABLE*/);
+        M<SetDw>(dev, kSetPixelShader)(dev, 0);
+        M<SetDw>(dev, kSetVertexShader)(dev, kFvf);
+    }
+    ~Draw2D() {
+        M<Viewport>(dev_, kSetViewport)(dev_, vp_);
+        M<SetTex>(dev_, kSetTexture)(dev_, 0, tex0_);
+        if (tex0_) M<ULONG(__stdcall*)(void*)>(tex0_, kRelease)(tex0_);  // GetTexture added a reference
+        M<SetDw>(dev_, kSetVertexShader)(dev_, vs_);
+        M<SetDw>(dev_, kSetPixelShader)(dev_, ps_);
+        M<SetTss>(dev_, kSetTss)(dev_, 1, 1, tss1ColorOp_);
+        for (size_t i = 0; i < std::size(kStage0); ++i) M<SetTss>(dev_, kSetTss)(dev_, 0, kStage0[i], tss0_[i]);
+        for (size_t i = 0; i < std::size(kStates); ++i) M<SetRs>(dev_, kSetRenderState)(dev_, kStates[i], rs_[i]);
+    }
+    Draw2D(const Draw2D&) = delete;
+    Draw2D& operator=(const Draw2D&) = delete;
+
+    // Textured: texture x vertex colour; untextured: the vertex colour alone.
+    void Textured(bool on) {
+        const DWORD op = on ? 4 /*MODULATE*/ : 3 /*SELECTARG2*/;
+        const DWORD stage0[][2] = {{1, op}, {2, 2}, {3, 0}, {4, op}, {5, 2}, {6, 0}, {13, 3}, {14, 3}, {16, 2}, {17, 2}, {18, 0}};
+        for (auto& s : stage0) M<SetTss>(dev_, kSetTss)(dev_, 0, s[0], s[1]);
+        if (!on) M<SetTex>(dev_, kSetTexture)(dev_, 0, nullptr);
+    }
+    void Quad(const Vertex (&quad)[4]) { M<Draw>(dev_, kDrawPrimitiveUP)(dev_, kTriangleStrip, 2, quad, sizeof(Vertex)); }
+
+private:
+    static constexpr DWORD kStates[] = {7 /*ZENABLE*/, 14 /*ZWRITEENABLE*/, 15 /*ALPHATEST*/, 19 /*SRCBLEND*/,
+                                        20 /*DESTBLEND*/, 22 /*CULLMODE*/, 27 /*ALPHABLEND*/, 28 /*FOG*/,
+                                        52 /*STENCIL*/, 137 /*LIGHTING*/};
+    static constexpr DWORD kStage0[] = {1, 2, 3, 4, 5, 6, 13, 14, 16, 17, 18};  // COLOROP..ALPHAARG2, ADDRESSU/V, filters
+    void* dev_;
+    DWORD rs_[std::size(kStates)], tss0_[std::size(kStage0)], tss1ColorOp_ = 0, vs_ = 0, ps_ = 0, vp_[6];
+    void* tex0_ = nullptr;
+};
+}  // namespace
 
 void overlay::Render(void* dev) {
     if (g_queue.empty()) return;
@@ -308,61 +484,27 @@ void overlay::Render(void* dev) {
         g_queue.clear();
         return;
     }
-    using SetRs = HRESULT(__stdcall*)(void*, DWORD, DWORD);
-    using GetRs = HRESULT(__stdcall*)(void*, DWORD, DWORD*);
-    using SetTss = HRESULT(__stdcall*)(void*, DWORD, DWORD, DWORD);
-    using GetTss = HRESULT(__stdcall*)(void*, DWORD, DWORD, DWORD*);
-    using GetTex = HRESULT(__stdcall*)(void*, DWORD, void**);
-    using SetTex = HRESULT(__stdcall*)(void*, DWORD, void*);
-    using SetDw = HRESULT(__stdcall*)(void*, DWORD);
-    using GetDw = HRESULT(__stdcall*)(void*, DWORD*);
-    using Viewport = HRESULT(__stdcall*)(void*, DWORD*);  // D3DVIEWPORT8 = 6 dwords
-    using Draw = HRESULT(__stdcall*)(void*, uint32_t, UINT, const void*, UINT);
-
-    // Save.
-    static const DWORD kStates[] = {7 /*ZENABLE*/, 14 /*ZWRITEENABLE*/, 15 /*ALPHATEST*/, 19 /*SRCBLEND*/,
-                                    20 /*DESTBLEND*/, 22 /*CULLMODE*/, 27 /*ALPHABLEND*/, 28 /*FOG*/,
-                                    52 /*STENCIL*/, 137 /*LIGHTING*/};
-    static const DWORD kStage0[] = {1, 2, 3, 4, 5, 6, 13, 14, 16, 17, 18};  // COLOROP..ALPHAARG2, ADDRESSU/V, filters
-    DWORD rs[std::size(kStates)], tss0[std::size(kStage0)], tss1ColorOp = 0, vs = 0, ps = 0, vp[6];
-    for (size_t i = 0; i < std::size(kStates); ++i) M<GetRs>(dev, kGetRenderState)(dev, kStates[i], &rs[i]);
-    for (size_t i = 0; i < std::size(kStage0); ++i) M<GetTss>(dev, kGetTss)(dev, 0, kStage0[i], &tss0[i]);
-    M<GetTss>(dev, kGetTss)(dev, 1, 1, &tss1ColorOp);
-    void* tex0 = nullptr;
-    M<GetTex>(dev, kGetTexture)(dev, 0, &tex0);
-    M<GetDw>(dev, kGetVertexShader)(dev, &vs);
-    M<GetDw>(dev, kGetPixelShader)(dev, &ps);
-    M<Viewport>(dev, kGetViewport)(dev, vp);
-
-    // Set: plain alpha-blended textured quads over the whole back buffer.
-    auto* r = *reinterpret_cast<uint8_t**>(kRenderer);
-    if (r) {
-        DWORD full[6] = {0, 0, *reinterpret_cast<DWORD*>(r + 0x40688), *reinterpret_cast<DWORD*>(r + 0x4068C), 0, 0x3F800000};
-        M<Viewport>(dev, kSetViewport)(dev, full);
-    }
-    const DWORD set[][2] = {{7, 0}, {14, 0}, {15, 0}, {19, 5}, {20, 6}, {22, 1}, {27, 1}, {28, 0}, {52, 0}, {137, 0}};
-    for (auto& s : set) M<SetRs>(dev, kSetRenderState)(dev, s[0], s[1]);
-    const DWORD stage0[][2] = {{1, 4}, {2, 2}, {3, 0}, {4, 4}, {5, 2}, {6, 0}, {13, 3}, {14, 3}, {16, 2}, {17, 2}, {18, 0}};
-    for (auto& s : stage0) M<SetTss>(dev, kSetTss)(dev, 0, s[0], s[1]);
-    M<SetTss>(dev, kSetTss)(dev, 1, 1, 1 /*DISABLE*/);
-    M<SetDw>(dev, kSetPixelShader)(dev, 0);
-    M<SetDw>(dev, kSetVertexShader)(dev, kFvf);
-
+    Draw2D draw(dev);
+    bool textured = true;
     for (const Queued& q : g_queue) {
-        M<SetTex>(dev, kSetTexture)(dev, 0, g_textures[static_cast<int>(q.icon)]);
-        M<Draw>(dev, kDrawPrimitiveUP)(dev, kTriangleStrip, 2, q.quad, sizeof(Vertex));
+        void* tex = q.icon >= 0 ? g_textures[q.icon] : q.texture;
+        if (!tex != !textured) draw.Textured(textured = tex != nullptr);
+        if (tex) M<SetTex>(dev, kSetTexture)(dev, 0, tex);
+        draw.Quad(q.quad);
     }
     g_queue.clear();
+}
 
-    // Restore.
-    M<Viewport>(dev, kSetViewport)(dev, vp);
-    M<SetTex>(dev, kSetTexture)(dev, 0, tex0);
-    if (tex0) M<ULONG(__stdcall*)(void*)>(tex0, kRelease)(tex0);  // GetTexture added a reference
-    M<SetDw>(dev, kSetVertexShader)(dev, vs);
-    M<SetDw>(dev, kSetPixelShader)(dev, ps);
-    M<SetTss>(dev, kSetTss)(dev, 1, 1, tss1ColorOp);
-    for (size_t i = 0; i < std::size(kStage0); ++i) M<SetTss>(dev, kSetTss)(dev, 0, kStage0[i], tss0[i]);
-    for (size_t i = 0; i < std::size(kStates); ++i) M<SetRs>(dev, kSetRenderState)(dev, kStates[i], rs[i]);
+void overlay::FillRects(const float (*rects)[4], int count, uint32_t argb) {
+    void* dev = *reinterpret_cast<void**>(0x755050);
+    if (!dev || count <= 0) return;
+    Draw2D draw(dev);
+    draw.Textured(false);
+    for (int i = 0; i < count; ++i) {
+        const float x0 = rects[i][0] - 0.5f, y0 = rects[i][1] - 0.5f;
+        const float x1 = x0 + rects[i][2], y1 = y0 + rects[i][3];
+        draw.Quad({{x0, y0, 0, 1, argb, 0, 0}, {x1, y0, 0, 1, argb, 1, 0}, {x0, y1, 0, 1, argb, 0, 1}, {x1, y1, 0, 1, argb, 1, 1}});
+    }
 }
 
 void* overlay::MenuFont() { return *reinterpret_cast<void**>(0x60EDB4); }

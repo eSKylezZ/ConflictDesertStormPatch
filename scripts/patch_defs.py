@@ -22,16 +22,6 @@ HUD_CAVE = (
     "600085C9740A680000C842E8ABFFFFFFE967C9E9FF"
 )
 
-# Controller cave at 0x5E5CC0 (after the remap table): POV hat -> buttons 16-19, then rgbButtons[i] = temp[map[i]].
-PAD_CAVE = (
-    "01030206040C0809608D74242C83EC148B46308904248B4634894424048B4638894424088B463C8944240C33D28B4620663DFFFF"
-    "74190FB7C005CA080000B994110000F7F183E0070FB690C05C5E0033C933C0D1EA7302B08088440C104183F90472EE33C90FB681"
-    "B05C5E008A040488440E304183F91072EC83C41461393D6C4C7500C3"
-)
-
-# Game button i <- source (0-15 raw DirectInput button, 16-19 D-pad up/right/down/left). DualShock 4 / DualSense.
-PAD_LAYOUT_PLAYSTATION = "0302010004050607080A0B0910111213"
-
 # Launcher resolution list FUN_004487f0: drop the 4:3-only filter.
 WIDESCREEN = [
     ("Launcher: allow non-4:3 display modes", 0x004488B3, "0F84A2000000", "909090909090", False),
@@ -55,11 +45,9 @@ HUD = [
     ("HUD: keep scale flag after restore", 0x0050838C, "896820", "909090", False),
 ]
 
-# DualShock 4 / DualSense: hook after GetDeviceState in FUN_00538ed0.
+# Joypads: the button / axis fix-up after GetDeviceState is C++ (src/features/controller.cpp); here only the
+# stick deadzone the DLL sets from settings.
 CONTROLLER = [
-    ("Pad: button remap table", 0x005E5CB0, ZEROS(16), PAD_LAYOUT_PLAYSTATION, True),
-    ("Pad: cave code", 0x005E5CC0, ZEROS(132), PAD_CAVE, False),
-    ("Pad: remap + D-pad hook", 0x00538F2A, "393D6C4C7500", "E899CD0A0090", False),
     ("Pad: stick deadzone", 0x00538997, "A00F0000", "A00F0000", True),
 ]
 
@@ -69,6 +57,13 @@ TIMING = [
      "83EC088D44240050FF15F4805D00DF6C240083C408D80D6C845D00DF2DA03A6200DEF9E93CCB0A009090",
      "505054FF15F4805D00585A8B0DA03A6200F7F169C0E80300005068E803000092F72424F7F1595903C1C3",  # tools/build_timer.py
      False),
+]
+
+# Own gunshots: the shot sound in FUN_004a1b80 was played without a position (flat 2D, full level in both
+# speakers) while the shooter's input block has +0x318 = 1 (aiming) -> louder than the positional shot when not
+# aiming. The branch picking the 2D call always takes the positional one.
+AUDIO = [
+    ("Audio: own gunshots stay positional while aiming", 0x004A1D71, "740A", "EB0A", False),
 ]
 
 # Layout clamps (part of HUD): layout code computes c * max(800, W)/800 * sheetScale; with the resolution factor

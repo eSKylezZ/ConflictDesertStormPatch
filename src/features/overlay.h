@@ -15,10 +15,19 @@ using Icon = gen::GameIcon;
 // Queues an icon for this frame: top-left corner and height in back-buffer pixels (icons are square). Its opacity
 // follows the menus' current fade (alpha tint of the HUD sheet, see MenuAlpha) unless one is given.
 void QueueIcon(Icon icon, float x, float y, float size, float alpha = -1.0f);
+// A texture (e.g. LoadTexture) at x, y, w x h, showing texture coordinates 0..u1 / 0..v1.
+void QueueImage(void* texture, float x, float y, float w, float h, float u1 = 1.0f, float v1 = 1.0f, float alpha = -1.0f);
+// Solid shapes (colour 0xAARRGGBB; the alpha is multiplied by the menus' fade).
+void QueueRect(float x, float y, float w, float h, uint32_t argb);
+void QueueLine(float x0, float y0, float x1, float y1, float width, uint32_t argb);
+// A PNG from this DLL's RCDATA `resource` as a texture of texW x texH (image top-left), cached per device.
+void* LoadTexture(int resource, int texW, int texH);
 // Alpha multiplier the game's menu art is drawn with right now (image sheet [0x60EE18] +0x38; menu fades change it).
 float MenuAlpha();
 // Draws the queued icons (called before the game's EndScene) and empties the queue.
 void Render(void* device);
+// Draws solid rectangles {x, y, w, h} (back-buffer pixels) right now, over whatever is drawn so far this frame.
+void FillRects(const float (*rects)[4], int count, uint32_t argb);
 
 // Installs the glyph hooks (once, before the game starts) and keeps the fonts' icon glyphs in place (every frame).
 bool Install();

@@ -18,6 +18,7 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/padio.h"
 #include "features/launcher_pad.h"
 #include "features/overlay.h"
 #include "features/splitscreen_layout.h"
@@ -59,7 +60,7 @@ constexpr FpsChoice kFps[] = {
     {"144 fps", 144, false},
     {"165 fps", 165, false},
     {"240 fps", 240, false},
-    {"Unlimited (not recommended)", 0, false},
+    {"Unlimited (up to 500 fps)", 0, false},
 };
 constexpr const char* kDisplayModes[] = {"Fullscreen", "Windowed", "Borderless window"};
 constexpr uint32_t kAntialiasing[] = {0, 2, 4, 8};
@@ -353,6 +354,11 @@ void features::OnFrame() {
     OnFrameSplitScreen();
     OnFrameDiscord();
     OnFrameCoop();
+    OnFrameFontSharp();
+    OnFrameControls();
+    padio::Update();
+    FollowActivePad();
+    OnFrameDev();
 }
 
 void features::OnSettingsChanged() {

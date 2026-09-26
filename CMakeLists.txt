@@ -39,6 +39,14 @@ add_library(dinput8 SHARED
     src/features/graphics.cpp
     src/features/coop.cpp
     src/features/overlay.cpp
+    src/features/fontsharp.cpp
+    src/features/padlayout.cpp
+    src/features/controls.cpp
+    src/features/padio.cpp
+    src/features/mouse.cpp
+    src/features/tooltips.cpp
+    src/features/rumble.cpp
+    src/features/audio.cpp
     ${CMAKE_BINARY_DIR}/version.rc
     src/game_icons.rc
 )
@@ -47,7 +55,7 @@ target_compile_definitions(dinput8 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SEC
     DS_VERSION="${PROJECT_VERSION}" $<$<BOOL:${DS_DIST}>:DS_DIST>)
 target_compile_options(dinput8 PRIVATE /W4 /permissive- /utf-8)
 # dinput8.lib only for its static data (c_dfDIJoystick2); DirectInput8Create is called via the real DLL.
-target_link_libraries(dinput8 PRIVATE winmm msimg32 dxguid dinput8.lib)
+target_link_libraries(dinput8 PRIVATE winmm msimg32 dxguid dinput8.lib ole32 windowscodecs)
 target_link_options(dinput8 PRIVATE /SAFESEH:NO $<$<BOOL:${DS_DIST}>:/DEBUG:NONE>)
 
 if(DS_DIST)
