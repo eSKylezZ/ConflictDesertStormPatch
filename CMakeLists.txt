@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DesertStormFix VERSION 0.1.0 LANGUAGES CXX RC)
+project(DesertStormFix VERSION 1.0.0 LANGUAGES CXX RC)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "DesertStorm.exe is 32-bit: configure with -A Win32 (use the CMake presets).")
