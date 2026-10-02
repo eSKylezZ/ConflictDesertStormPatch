@@ -3,10 +3,14 @@
 # Never commit anything from the game itself (binaries, data, dumps) or reverse-engineering databases.
 # ---------------------------------------------------------------------------------------------------------------
 
-# Local reverse-engineering helpers and working notes
+# Local reverse-engineering helpers and working notes (not needed to build or use the patch)
 tools/
-TODO.md
+/TODO.md
+/SERVICE_RECORD_RESEARCH.md
+
+# AI assistant context and settings
 CLAUDE.md
+.claude/
 
 # Game binaries and data (Steam / GOG / Xbox) – never commit
 *.exe
@@ -44,6 +48,7 @@ Data/
 # Build output
 build/
 build-dist/
+build-release/
 *.pdb
 *.ilk
 *.obj
@@ -54,7 +59,6 @@ build-dist/
 CMakeUserPresets.json
 .vscode/*
 !.vscode/extensions.json
-.claude/settings.local.json
 
 # Source archives (curated copies live in assets/)
 *.zip
@@ -71,3 +75,6 @@ xbox/
 
 # Screenshots / videos for the mod page (show game content) – kept local
 media/
+
+# Assets exported from the game archives (tools/datx.py) – never commit
+extracted/
