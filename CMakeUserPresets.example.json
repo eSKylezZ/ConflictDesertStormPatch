@@ -1,0 +1,22 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "x86-local",
+      "displayName": "Dev: deploy to my game install",
+      "inherits": "x86",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Program Files (x86)/Steam/steamapps/common/conflict_desert_storm" }
+    },
+    {
+      "name": "dist-local",
+      "displayName": "Package: install into a second (clean) game install for validation",
+      "inherits": "dist",
+      "cacheVariables": { "DS_GAME_DIR": "C:/GOG Games/Conflict - Desert Storm" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug-local",   "displayName": "Debug + deploy",       "configurePreset": "x86-local",  "configuration": "Debug" },
+    { "name": "release-local", "displayName": "Release + deploy",     "configurePreset": "x86-local",  "configuration": "RelWithDebInfo" },
+    { "name": "dist-local",    "displayName": "Package + install",    "configurePreset": "dist-local", "configuration": "Release" }
+  ]
+}
