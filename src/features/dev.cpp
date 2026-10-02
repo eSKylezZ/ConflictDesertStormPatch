@@ -200,10 +200,142 @@ void features::ApplyDevHooks() {
 #endif
 }
 
+#ifndef DS_DIST
+// Dev watchpoints: Dev\WatchAddr / Dev\WatchAddr2 (DWORD addresses) = hardware read/write watchpoints (DR0 / DR1,
+// 4 bytes) on the game thread, armed by a helper thread once a level is being played; every distinct instruction that
+// touches them is logged once (address after the access, value, and the return address on the stack).
+namespace {
+DWORD g_gameThread = 0;
+uint32_t g_watchAddr[2] = {};
+uint32_t g_watchSeen[128];
+int g_watchSeenCount = 0;
+
+LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* e) {
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = e->ContextRecord;
+    const DWORD hit = c->Dr6 & 3;
+    if (!hit) return EXCEPTION_CONTINUE_SEARCH;
+    c->Dr6 = 0;
+    const uint32_t eip = c->Eip, which = (hit & 1) ? 0 : 1;
+    const uint32_t key = eip ^ (which << 31);
+    for (int i = 0; i < g_watchSeenCount; ++i)
+        if (g_watchSeen[i] == key) return EXCEPTION_CONTINUE_EXECUTION;
+    if (g_watchSeenCount < 128) {
+        g_watchSeen[g_watchSeenCount++] = key;
+        dslog::Write("[dev]  watch %u (%08X): access before %08X, value %08X, [esp] %08X", which + 1, g_watchAddr[which],
+                     eip, *reinterpret_cast<uint32_t*>(g_watchAddr[which]), *reinterpret_cast<uint32_t*>(c->Esp));
+    }
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+DWORD WINAPI ArmWatch(void*) {
+    HANDLE t = OpenThread(THREAD_ALL_ACCESS, FALSE, g_gameThread);
+    if (!t) return 0;
+    SuspendThread(t);
+    CONTEXT c{};
+    c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    GetThreadContext(t, &c);
+    c.Dr0 = g_watchAddr[0];
+    c.Dr1 = g_watchAddr[1];
+    c.Dr7 = 0;
+    if (g_watchAddr[0]) c.Dr7 |= 1 | (3u << 16) | (3u << 18);
+    if (g_watchAddr[1]) c.Dr7 |= 4 | (3u << 20) | (3u << 22);
+    SetThreadContext(t, &c);
+    ResumeThread(t);
+    CloseHandle(t);
+    dslog::Write("[dev]  watchpoints armed: %08X %08X", g_watchAddr[0], g_watchAddr[1]);
+    return 0;
+}
+
+void WatchTick() {
+    static int frames = 0;
+    if (frames < 0) return;
+    static int early = -1;  // Dev\WatchEarly = 1: arm on the first frame (front-end) instead of in a mission
+    if (early < 0) {
+        DWORD v = 0, size = sizeof v;
+        RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "WatchEarly", RRF_RT_REG_DWORD, nullptr, &v, &size);
+        early = v ? 1 : 0;
+    }
+    if (!early) {
+        if (*reinterpret_cast<uint32_t*>(0x617C18) != 0xE || *reinterpret_cast<uint8_t*>(0x60EC8C)) return;
+        if (++frames < 120) return;
+    }
+    frames = -1;
+    for (int i = 0; i < 2; ++i) {
+        DWORD v = 0, size = sizeof v;
+        RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", i ? "WatchAddr2" : "WatchAddr", RRF_RT_REG_DWORD,
+                     nullptr, &v, &size);
+        g_watchAddr[i] = v;
+    }
+    if (!g_watchAddr[0] && !g_watchAddr[1]) return;
+    g_gameThread = GetCurrentThreadId();
+    AddVectoredExceptionHandler(1, WatchHandler);
+    CloseHandle(CreateThread(nullptr, 0, ArmWatch, nullptr, 0, nullptr));
+}
+}  // namespace
+#endif
+
+// ---- focus / keys (also for scripted tests while someone else uses the PC) ----
+// The game's keyboard is window messages (window proc 0x411310 -> FUN_005393f0: WM_KEYDOWN / WM_KEYUP, scan code in
+// lParam bits 16-24, extended keys +0x100) into the key table 0x753940 (0 up, 1 pressed, 2 held, 3 released, 4
+// pressed + released this frame) - keys posted to the window work without focus. Our own screens read keys through
+// KeyHeld (GetAsyncKeyState while in front, else / also the game's table) and check GameFocused.
+// Dev\RunInBackground = 1: the game keeps running when it loses focus (WM_ACTIVATE inactive branch at 0x41138A
+// skipped: jne -> jmp at 0x411390), and GameFocused is always true - tests run in a window off-screen.
+namespace {
+bool g_background = false;
+}
+
+bool features::DevBackground() { return g_background; }
+
+#ifndef DS_DIST
+// Background mode: the game must never take the mouse of whoever uses the PC (its window sits off-screen).
+BOOL WINAPI NoSetCursorPos(int, int) { return TRUE; }
+HWND WINAPI NoSetCapture(HWND) { return nullptr; }
+#endif
+
+bool features::GameFocused() {
+    return g_background || GetForegroundWindow() == *reinterpret_cast<HWND*>(0x606A60);
+}
+
+bool features::KeyHeld(int vk) {
+    if (GetForegroundWindow() == *reinterpret_cast<HWND*>(0x606A60) && (GetAsyncKeyState(vk) & 0x8000)) return true;
+    // The table is indexed by DirectInput codes: extended keys (arrows ...) are scan | 0x80 there (a window message
+    // with the extended flag lands at 0x100 + scan - checked too).
+    const UINT scan = MapVirtualKeyA(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
+    if (!scan || scan >= 0x80) return false;
+    bool extended = false;
+    switch (vk) {
+        case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN: case VK_DELETE: case VK_INSERT: case VK_HOME:
+        case VK_END: case VK_PRIOR: case VK_NEXT: case VK_RCONTROL: case VK_RMENU: extended = true; break;
+        default: break;
+    }
+    const uint32_t* table = reinterpret_cast<const uint32_t*>(0x753940);
+    auto held = [table](UINT i) { return table[i] == 1 || table[i] == 2 || table[i] == 4; };
+    return extended ? held(scan | 0x80) || held(scan | 0x100) : held(scan);
+}
+
+void features::ApplyDevBackground() {
+#ifndef DS_DIST
+    DWORD v = 0, size = sizeof v;
+    RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "RunInBackground", RRF_RT_REG_DWORD, nullptr, &v,
+                 &size);
+    if (!v) return;
+    const uint8_t jne = 0x75, jmp = 0xEB;
+    if (patch::Matches(0x411390, &jne, 1)) patch::Write(0x411390, &jmp, 1);
+    g_background = true;
+    patch::HookIndirectCall(0x44B4E1, reinterpret_cast<const void*>(&NoSetCursorPos), 0x5D8268);  // mounted gun re-centre
+    patch::HookIndirectCall(0x538363, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
+    patch::HookIndirectCall(0x55E08A, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
+    dslog::Write("[dev]  running in the background (no pause without focus, no cursor clip / move / capture)");
+#endif
+}
+
 // Dev: F9 in a mission shows a test message in the pop-up bar (FUN_004d33a0 on the view controller [0x63c98c]: text,
 // duration ms) - the bar used for picked-up items and warnings.
 void features::OnFrameDev() {
 #ifndef DS_DIST
+    WatchTick();
     if (g_playLog) WatchPlayers();
     {
         static uint32_t last = 0xFFFFFFFF;
@@ -214,7 +346,7 @@ void features::OnFrameDev() {
         }
     }
     static bool down = false;
-    const bool now = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+    const bool now = features::KeyHeld(VK_F9) && features::GameFocused();
     if (now && !down) {
         void* controller = *reinterpret_cast<void**>(0x63C98C);
         if (controller)

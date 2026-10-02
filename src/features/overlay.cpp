@@ -22,6 +22,7 @@
 #undef small  // rpcndr.h (via wincodec.h) defines it as char
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <iterator>
@@ -202,6 +203,10 @@ void __cdecl DrawIconGlyph(const uint8_t* sheet, uint32_t image, int x, int y) {
     overlay::QueueIcon(g_slotIcon[slot], x + (g.advance - g.side) * 0.5f * sx, y + g.top * sy, g.side * sy, alpha);
 }
 
+const void* g_drawSheet = nullptr;  // the image being drawn (for the page texture bind inside the draw)
+int g_drawImage = -1;
+void* g_imageProbe = nullptr;  // dev: stdcall(caller, sheet, image, x, y) for every image draw (splitscreen.cpp probe)
+
 __declspec(naked) void ImageDrawStub() {
     __asm {
         mov eax, [esp + 4]          // image
@@ -218,12 +223,28 @@ __declspec(naked) void ImageDrawStub() {
         add esp, 16
         ret 12
     original:
+        cmp g_imageProbe, 0
+        je no_probe
+        pushad
+        push dword ptr [esp + 44]   // y      (args start at esp+36 after pushad + return address)
+        push dword ptr [esp + 44]   // x
+        push dword ptr [esp + 44]   // image
+        push ecx                    // sheet
+        push dword ptr [esp + 48]   // caller
+        call g_imageProbe
+        popad
+    no_probe:
+        mov eax, [esp + 4]
+        mov g_drawImage, eax
+        mov g_drawSheet, ecx
         sub esp, 0x94
         push kImageDrawCont
         ret
     }
 }
 }  // namespace
+
+void overlay::SetImageProbe(void* probe) { g_imageProbe = probe; }
 
 bool overlay::Install() {
     static const uint8_t entry[] = {0x81, 0xEC, 0x94, 0x00, 0x00, 0x00};
@@ -244,6 +265,9 @@ void overlay::OnFrame() {
 }
 
 bool overlay::GlyphsReady() { return g_sheet && g_glyphBase != 0xFFFFFFFF; }
+
+const void* overlay::DrawingSheet() { return g_drawSheet; }
+int overlay::DrawingImage() { return g_drawImage; }
 
 // Least recently requested character gets reused (prompts ask every frame, so what is on screen stays fresh).
 const char* overlay::IconChar(Icon icon) {
@@ -322,6 +346,20 @@ void overlay::QueueImage(void* texture, float x, float y, float w, float h, floa
     if (texture) QueueRectangle(-1, texture, x, y, w, h, u1, v1, alpha, 0xFFFFFF);
 }
 
+void overlay::QueueScreenImage(void* texture, float x, float y, float w, float h, float u1, float v1) {
+    if (!texture) return;
+    constexpr DWORD white = 0xFFFFFFFF;
+    x -= 0.5f, y -= 0.5f;
+    g_queue.push_back({-1, texture, {{x, y, 0, 1, white, 0, 0}, {x + w, y, 0, 1, white, u1, 0},
+                                     {x, y + h, 0, 1, white, 0, v1}, {x + w, y + h, 0, 1, white, u1, v1}}});
+}
+
+void overlay::QueueScreenRect(float x, float y, float w, float h, uint32_t argb) {
+    x -= 0.5f, y -= 0.5f;
+    g_queue.push_back({-1, nullptr, {{x, y, 0, 1, argb, 0, 0}, {x + w, y, 0, 1, argb, 1, 0},
+                                     {x, y + h, 0, 1, argb, 0, 1}, {x + w, y + h, 0, 1, argb, 1, 1}}});
+}
+
 void overlay::QueueRect(float x, float y, float w, float h, uint32_t argb) {
     QueueRectangle(-1, nullptr, x, y, w, h, 0, 0, ((argb >> 24) / 255.0f) * MenuAlpha(), argb & 0xFFFFFF);
 }
@@ -334,6 +372,66 @@ void overlay::QueueLine(float x0, float y0, float x1, float y1, float width, uin
     const float uv[4][2] = {};
     Queue(-1, nullptr, corner, uv, ((argb >> 24) / 255.0f) * MenuAlpha(), argb & 0xFFFFFF);
 }
+
+namespace {
+// An encoded image (PNG, DDS DXT1-5 ... whatever WIC reads) as a managed A8R8G8B8 texture of texW x texH with the
+// image at the top-left; texW / texH 0 = the image size rounded up to powers of two. w / h = the image size.
+void* TextureFromImage(const void* bytes, size_t size, int texW, int texH, UINT& w, UINT& h, const char* what) {
+    void* dev = *reinterpret_cast<void**>(0x755050);
+    w = h = 0;
+    if (!dev || !bytes || !size) return nullptr;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    std::vector<uint8_t> pixels;
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapDecoder* decoder = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromMemory(static_cast<BYTE*>(const_cast<void*>(bytes)), static_cast<DWORD>(size))) &&
+        SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                        WICBitmapPaletteTypeCustom)) &&
+        SUCCEEDED(converter->GetSize(&w, &h))) {
+        if (!texW) for (texW = 1; texW < static_cast<int>(w); texW *= 2) {}
+        if (!texH) for (texH = 1; texH < static_cast<int>(h); texH *= 2) {}
+        if (w <= static_cast<UINT>(texW) && h <= static_cast<UINT>(texH)) {
+            pixels.resize(size_t(w) * h * 4);
+            if (FAILED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data())))
+                pixels.clear();
+        }
+    }
+    for (IUnknown* u : std::initializer_list<IUnknown*>{converter, frame, decoder, stream, factory})
+        if (u) u->Release();
+    if (SUCCEEDED(com)) CoUninitialize();
+    if (pixels.empty()) {
+        dslog::Write("[fail] Overlay: image %s not decoded", what);
+        return nullptr;
+    }
+    using Create = HRESULT(__stdcall*)(void*, UINT, UINT, UINT, DWORD, uint32_t, uint32_t, void**);
+    struct Locked {
+        INT pitch;
+        void* bits;
+    };
+    using Lock = HRESULT(__stdcall*)(void*, UINT, Locked*, const RECT*, DWORD);
+    using Unlock = HRESULT(__stdcall*)(void*, UINT);
+    void* tex = nullptr;
+    if (FAILED(M<Create>(dev, kCreateTexture)(dev, texW, texH, 1, 0, kFormatArgb, kPoolManaged, &tex)) || !tex) return nullptr;
+    Locked lr{};
+    if (SUCCEEDED(M<Lock>(tex, kLockRect)(tex, 0, &lr, nullptr, 0))) {
+        for (int y = 0; y < texH; ++y) {
+            auto* row = static_cast<uint8_t*>(lr.bits) + y * lr.pitch;
+            memset(row, 0, size_t(texW) * 4);
+            if (y < static_cast<int>(h)) memcpy(row, &pixels[size_t(y) * w * 4], size_t(w) * 4);
+        }
+        M<Unlock>(tex, kUnlockRect)(tex, 0);
+    }
+    dslog::Write("Overlay: image %s (%ux%u) loaded", what, w, h);
+    return tex;
+}
+}  // namespace
 
 // A PNG from this DLL's RCDATA as a managed A8R8G8B8 texture of texW x texH (image at the top-left), via WIC.
 void* overlay::LoadTexture(int resource, int texW, int texH) {
@@ -355,53 +453,58 @@ void* overlay::LoadTexture(int resource, int texW, int texH) {
     HRSRC res = FindResourceA(self, MAKEINTRESOURCEA(resource), MAKEINTRESOURCEA(10) /*RT_RCDATA*/);
     HGLOBAL data = res ? LoadResource(self, res) : nullptr;
     if (!data) return nullptr;
-    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    std::vector<uint8_t> pixels;
+    char what[16];
+    snprintf(what, sizeof what, "%d", resource);
     UINT w = 0, h = 0;
-    IWICImagingFactory* factory = nullptr;
-    IWICStream* stream = nullptr;
-    IWICBitmapDecoder* decoder = nullptr;
-    IWICBitmapFrameDecode* frame = nullptr;
-    IWICFormatConverter* converter = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
-        SUCCEEDED(factory->CreateStream(&stream)) &&
-        SUCCEEDED(stream->InitializeFromMemory(static_cast<BYTE*>(LockResource(data)), SizeofResource(self, res))) &&
-        SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
-        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
-        SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0,
-                                        WICBitmapPaletteTypeCustom)) &&
-        SUCCEEDED(converter->GetSize(&w, &h)) && w <= static_cast<UINT>(texW) && h <= static_cast<UINT>(texH)) {
-        pixels.resize(size_t(w) * h * 4);
-        if (FAILED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size()), pixels.data()))) pixels.clear();
-    }
-    for (IUnknown* u : std::initializer_list<IUnknown*>{converter, frame, decoder, stream, factory})
-        if (u) u->Release();
-    if (SUCCEEDED(com)) CoUninitialize();
-    if (pixels.empty()) {
-        dslog::Write("[fail] Overlay: image %d not decoded", resource);
-        return nullptr;
-    }
+    cache.back().texture = TextureFromImage(LockResource(data), SizeofResource(self, res), texW, texH, w, h, what);
+    return cache.back().texture;
+}
+
+void* overlay::LoadTextureFile(const char* path, int& w, int& h, int& texW, int& texH) {
+    w = h = texW = texH = 0;
+    HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return nullptr;
+    std::vector<uint8_t> data(GetFileSize(f, nullptr));
+    DWORD got = 0;
+    const BOOL ok = ReadFile(f, data.data(), static_cast<DWORD>(data.size()), &got, nullptr);
+    CloseHandle(f);
+    if (!ok || got != data.size()) return nullptr;
+    UINT iw = 0, ih = 0;
+    void* tex = TextureFromImage(data.data(), data.size(), 0, 0, iw, ih, path);
+    if (!tex) return nullptr;
+    w = static_cast<int>(iw), h = static_cast<int>(ih);
+    for (texW = 1; texW < w; texW *= 2) {}
+    for (texH = 1; texH < h; texH *= 2) {}
+    return tex;
+}
+
+void* overlay::CurrentDevice() { return *reinterpret_cast<void**>(0x755050); }
+
+void* overlay::CreateTexture(int texW, int texH) {
     using Create = HRESULT(__stdcall*)(void*, UINT, UINT, UINT, DWORD, uint32_t, uint32_t, void**);
+    void* dev = CurrentDevice();
+    void* tex = nullptr;
+    if (!dev || FAILED(M<Create>(dev, kCreateTexture)(dev, texW, texH, 1, 0, kFormatArgb, kPoolManaged, &tex))) return nullptr;
+    return tex;
+}
+
+bool overlay::UploadTexture(void* texture, const uint32_t* pixels, int w, int h) {
     struct Locked {
         INT pitch;
         void* bits;
     };
     using Lock = HRESULT(__stdcall*)(void*, UINT, Locked*, const RECT*, DWORD);
     using Unlock = HRESULT(__stdcall*)(void*, UINT);
-    void* tex = nullptr;
-    if (FAILED(M<Create>(dev, kCreateTexture)(dev, texW, texH, 1, 0, kFormatArgb, kPoolManaged, &tex)) || !tex) return nullptr;
     Locked lr{};
-    if (SUCCEEDED(M<Lock>(tex, kLockRect)(tex, 0, &lr, nullptr, 0))) {
-        for (int y = 0; y < texH; ++y) {
-            auto* row = static_cast<uint8_t*>(lr.bits) + y * lr.pitch;
-            memset(row, 0, size_t(texW) * 4);
-            if (y < static_cast<int>(h)) memcpy(row, &pixels[size_t(y) * w * 4], size_t(w) * 4);
-        }
-        M<Unlock>(tex, kUnlockRect)(tex, 0);
-    }
-    cache.back().texture = tex;
-    dslog::Write("Overlay: image %d (%ux%u) loaded", resource, w, h);
-    return tex;
+    const RECT r{0, 0, w, h};
+    if (!texture || FAILED(M<Lock>(texture, kLockRect)(texture, 0, &lr, &r, 0))) return false;
+    for (int y = 0; y < h; ++y) memcpy(static_cast<uint8_t*>(lr.bits) + y * lr.pitch, pixels + size_t(y) * w, size_t(w) * 4);
+    M<Unlock>(texture, kUnlockRect)(texture, 0);
+    return true;
+}
+
+void overlay::ReleaseTexture(void* texture) {
+    if (texture) M<ULONG(__stdcall*)(void*)>(texture, kRelease)(texture);
 }
 
 namespace {
@@ -474,7 +577,11 @@ private:
 };
 }  // namespace
 
-void overlay::Render(void* dev) {
+namespace {
+overlay::LateDraw g_lateDraw = nullptr;
+overlay::LateDraw g_lateDraws[4] = {};  // AddLateDraw: drawn every frame after g_lateDraw
+
+void DrawQueue(void* dev) {
     if (g_queue.empty()) return;
     if (dev != g_device) {  // first use, or a new device
         g_device = dev;
@@ -493,6 +600,34 @@ void overlay::Render(void* dev) {
         draw.Quad(q.quad);
     }
     g_queue.clear();
+}
+}  // namespace
+
+void overlay::SetLateDraw(LateDraw fn) { g_lateDraw = fn; }
+
+void overlay::AddLateDraw(LateDraw fn) {
+    for (LateDraw& slot : g_lateDraws)
+        if (slot == fn) return;
+    for (LateDraw& slot : g_lateDraws)
+        if (!slot) {
+            slot = fn;
+            return;
+        }
+}
+
+// Queued shapes first; then the late draw (text with the game's own font code, drawn right away on top), then what
+// that text queued (icon glyphs inside it).
+void overlay::Render(void* dev) {
+    DrawQueue(dev);
+    if (g_lateDraw) {
+        g_lateDraw();
+        DrawQueue(dev);
+    }
+    for (LateDraw fn : g_lateDraws)
+        if (fn) {
+            fn();
+            DrawQueue(dev);
+        }
 }
 
 void overlay::FillRects(const float (*rects)[4], int count, uint32_t argb) {

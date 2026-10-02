@@ -10,7 +10,7 @@ struct Values {
     uint32_t hudScalePercent = 100;  // on top of the automatic min(W/800, H/600)
     bool controller = true;
     uint32_t padDeadzone = 40;       // percent
-    uint32_t fpsCap = 240;           // 0 = no fixed cap
+    uint32_t fpsCap = 240;           // 30..240 (240 = the most the game runs at; older 0 = "unlimited" reads as 240)
     bool fpsCapToRefresh = true;     // also never exceed the monitor refresh rate
     uint32_t splitScreenLayout = 0;  // splitscreen::Layout: 0 horizontal (top / bottom), 1 vertical (side by side)
     bool discordPresence = true;     // show the mission / mode in the user's Discord status
@@ -20,6 +20,8 @@ struct Values {
     uint32_t antialiasing = 0;       // MSAA samples (0 = off; the highest supported count <= this is used)
     uint32_t anisotropy = 16;        // anisotropic filtering level for linear-filtered textures (0 = off)
     bool mouseAcceleration = false;  // the game's MOUSE OPTIONS -> ACCELERATION (its own default was on)
+    bool vsync = true;               // fullscreen: present on the monitor's refresh (no tearing / uneven frames)
+    bool perfOverlay = false;        // performance overlay (FPS, frame times, level / zone / position); F11 toggles it
 };
 
 const Values& Get();

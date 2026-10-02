@@ -5,6 +5,8 @@
 #include <xinput.h>
 
 #include <initializer_list>
+#include <mutex>
+#include <vector>
 
 #include "core/log.h"
 #include "core/proxy.h"
@@ -35,11 +37,10 @@ void LoadXInput() {
     }
 }
 
-BOOL CALLBACK OnDevice(const DIDEVICEINSTANCEA* inst, void*) {
-    if (g_deviceCount >= kMaxDevices) return DIENUM_STOP;
-    if (LOWORD(inst->guidProduct.Data1) != kSonyVid) return DIENUM_CONTINUE;  // everything else via XInput
+bool AddDevice(const GUID& instance, const char* name) {
+    if (g_deviceCount >= kMaxDevices) return false;
     IDirectInputDevice8A* dev = nullptr;
-    if (FAILED(g_di->CreateDevice(inst->guidInstance, &dev, nullptr))) return DIENUM_CONTINUE;
+    if (FAILED(g_di->CreateDevice(instance, &dev, nullptr))) return true;
     DIPROPRANGE range{};
     range.diph.dwSize = sizeof range;
     range.diph.dwHeaderSize = sizeof range.diph;
@@ -49,7 +50,7 @@ BOOL CALLBACK OnDevice(const DIDEVICEINSTANCEA* inst, void*) {
     if (FAILED(dev->SetDataFormat(&c_dfDIJoystick2)) ||
         FAILED(dev->SetCooperativeLevel(g_owner, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE))) {
         dev->Release();
-        return DIENUM_CONTINUE;
+        return true;
     }
     for (DWORD axis : {DIJOFS_X, DIJOFS_Y}) {
         range.diph.dwObj = axis;
@@ -57,13 +58,75 @@ BOOL CALLBACK OnDevice(const DIDEVICEINSTANCEA* inst, void*) {
     }
     dev->Acquire();
     g_devices[g_deviceCount++] = dev;
-    dslog::Write("Gamepad: DirectInput %s", inst->tszProductName);
-    return DIENUM_CONTINUE;
+    dslog::Write("Gamepad: DirectInput %s", name);
+    return true;
+}
+
+BOOL CALLBACK OnDevice(const DIDEVICEINSTANCEA* inst, void*) {
+    if (LOWORD(inst->guidProduct.Data1) != kSonyVid) return DIENUM_CONTINUE;  // everything else via XInput
+    return AddDevice(inst->guidInstance, inst->tszProductName) ? DIENUM_CONTINUE : DIENUM_STOP;
 }
 
 void Enumerate() {
     g_lastEnum = GetTickCount();
     if (g_di && g_deviceCount == 0) g_di->EnumDevices(DI8DEVCLASS_GAMECTRL, OnDevice, nullptr, DIEDFL_ATTACHEDONLY);
+}
+
+// Hot-plug rescans (no Sony pad open yet) run on a worker thread with its own DirectInput object: EnumDevices blocks
+// for ~140 ms, and every 3 s on the game thread that was a visible hitch (frame recorder). The worker only
+// collects the Sony pads' instance GUIDs; Poll() opens them on its own thread.
+struct Found {
+    GUID instance;
+    char name[MAX_PATH];
+};
+std::mutex g_scanLock;
+std::vector<Found> g_found;
+bool g_scanDone = false;
+HANDLE g_scanEvent = nullptr;
+
+BOOL CALLBACK CollectDevice(const DIDEVICEINSTANCEA* inst, void* out) {
+    if (LOWORD(inst->guidProduct.Data1) == kSonyVid) {
+        Found f{inst->guidInstance, {}};
+        lstrcpynA(f.name, inst->tszProductName, MAX_PATH);
+        static_cast<std::vector<Found>*>(out)->push_back(f);
+    }
+    return DIENUM_CONTINUE;
+}
+
+DWORD WINAPI ScanThread(void*) {
+    using Create = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
+    auto create = reinterpret_cast<Create>(RealDInput8("DirectInput8Create"));
+    IDirectInput8A* di = nullptr;
+    if (!create || FAILED(create(GetModuleHandleA(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8A,
+                                 reinterpret_cast<void**>(&di), nullptr)))
+        return 0;
+    for (;;) {
+        WaitForSingleObject(g_scanEvent, INFINITE);
+        std::vector<Found> found;
+        di->EnumDevices(DI8DEVCLASS_GAMECTRL, CollectDevice, &found, DIEDFL_ATTACHEDONLY);
+        std::lock_guard<std::mutex> lock(g_scanLock);
+        g_found = found;
+        g_scanDone = true;
+    }
+}
+
+void BackgroundRescan() {
+    {
+        std::lock_guard<std::mutex> lock(g_scanLock);
+        if (g_scanDone) {
+            g_scanDone = false;
+            for (const Found& f : g_found)
+                if (!AddDevice(f.instance, f.name)) break;
+            g_found.clear();
+        }
+    }
+    if (g_deviceCount || GetTickCount() - g_lastEnum <= 3000) return;
+    g_lastEnum = GetTickCount();
+    if (!g_scanEvent) {
+        g_scanEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        if (HANDLE t = g_scanEvent ? CreateThread(nullptr, 0, &ScanThread, nullptr, 0, nullptr) : nullptr) CloseHandle(t);
+    }
+    if (g_scanEvent) SetEvent(g_scanEvent);
 }
 
 uint32_t Directions(bool up, bool down, bool left, bool right) {
@@ -150,7 +213,7 @@ void Close() {
 }
 
 State Poll() {
-    if (g_deviceCount == 0 && GetTickCount() - g_lastEnum > 3000) Enumerate();  // hot-plug (Sony pads)
+    if (g_di) BackgroundRescan();  // hot-plug (Sony pads)
     bool xConnected = false, dConnected = false, xActivity = false, dActivity = false;
     uint32_t x = PollXInput(xConnected, xActivity);
     uint32_t d = PollDirectInput(dConnected, dActivity);

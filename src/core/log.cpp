@@ -22,10 +22,16 @@ void dslog::Open() {
 }
 
 void dslog::Write(const char* fmt, ...) {
-    char buf[1024];
+    static LARGE_INTEGER start, freq;
+    if (!start.QuadPart) QueryPerformanceCounter(&start), QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double s = double(now.QuadPart - start.QuadPart) / double(freq.QuadPart);
+    char buf[1100];
+    const int n = snprintf(buf, sizeof buf, "[%4d:%06.3f] ", static_cast<int>(s / 60), s - 60 * static_cast<int>(s / 60));
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, sizeof buf, fmt, args);
+    vsnprintf(buf + n, sizeof buf - n, fmt, args);
     va_end(args);
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");

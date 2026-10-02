@@ -29,6 +29,7 @@
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
+#include "features/padlayout.h"
 
 namespace {
 constexpr uint32_t kCursorFlagSite = 0x40F3A5;  // mov eax,[0x5e6cb4] (5 bytes)
@@ -84,6 +85,15 @@ constexpr Prompt kPrompts[] = {
     {2393634237u, -1, overlay::Icon::KbArrows},           // PC_DEBRIEF_PROMPT       Arrow Keys: Change soldier
     {2522449822u, -1, overlay::Icon::KbArrowsHorizontal}, // PC_LR_SELECT_PROMPT     Left/Right: Select
 };
+
+// PAUSE (11) and OBJECTIVES (8) can be moved by a player's pad layout (CONTROLLER screen); the pause menu and the
+// objectives screen belong to player 1, so their prompts name player 1's buttons. The menu actions stay fixed.
+int PromptButton(int button) {
+    const int action = button == 11 ? 6 : button == 8 ? 7 : -1;  // PAUSE, OBJECTIVES
+    if (action < 0) return button;
+    const int b = padlayout::ButtonOf(padlayout::Get(0), action);
+    return b >= 0 ? b : button;
+}
 
 // Game button n after our remap -> physical button name.
 const char* ButtonName(Input input, int button) {
@@ -228,11 +238,40 @@ overlay::Icon ControlIcon(int player, uint32_t action) {
     return overlay::Icon::Count;
 }
 
+// Devices of a co-op / versus session's players (bit 0 keyboard & mouse, 1 PlayStation, 2 Xbox), 0 = no session.
+// The tutorial / tip line is one full-screen text shared by every view, so in split screen it names the buttons of
+// every device that joined (and both icon styles when PlayStation and Xbox pads joined) instead of the last one used.
+int SessionStyles() {
+    int mask = 0;
+    for (int p = 0; p < 4; ++p) {
+        const int style = features::CoopPromptStyle(p);
+        if (style >= 0 && style <= 2) mask |= 1 << style;
+    }
+    return features::SplitScreenPlayers() > 1 ? mask : 0;
+}
+
 // Replaces the call of FUN_004722c0 (binding code -> name) where the game fills the "%s" of its tutorial / tip
 // texts with an action's bindings ("Crouch (%s)" -> "Crouch (C / Joy 3)"): an icon character instead of the name.
 constexpr uint32_t kBindingName = 0x4722C0, kTutorialBindingCall = 0x486BA8;
 const char* __fastcall BindingName(void* table, void*, uint32_t code) {
     if (code != 0xFFFFFFFF && overlay::GlyphsReady()) {
+        const int styles = SessionStyles();
+        const bool padCode = (code >> 16) == 1 || (code >> 16) == 2;
+        if (padCode && (styles & 6)) {  // the pad styles that joined, PlayStation first
+            static char ring[8][8];
+            static int next = 0;
+            char* out = ring[next];
+            next = (next + 1) % 8;
+            out[0] = 0;
+            for (int style = 1; style <= 2; ++style) {
+                if (!(styles & (1 << style))) continue;
+                g_forceStyle = style;
+                const overlay::Icon icon = BindingIcon(code);
+                g_forceStyle = -1;
+                if (icon != overlay::Icon::Count) strcat_s(out, sizeof ring[0], overlay::IconChar(icon));
+            }
+            if (out[0]) return out;
+        }
         const overlay::Icon icon = BindingIcon(code);
         if (icon != overlay::Icon::Count) return overlay::IconChar(icon);
     }
@@ -247,6 +286,18 @@ constexpr uint32_t kListCheck = 0x486B5E, kListSkip = 0x486BE9, kListKeep = 0x48
 bool IsPadCode(uint32_t code) { return (code >> 16) == 1 || (code >> 16) == 2; }
 
 int __stdcall ListBinding(uint32_t code, uint32_t action) {
+    if (const int styles = SessionStyles()) {  // split screen: every joined device's bindings
+        const bool wantPad = (styles & 6) != 0, wantKeys = (styles & 1) != 0;
+        if (IsPadCode(code) ? wantPad : wantKeys) return 1;
+        void* table = *reinterpret_cast<void**>(kBindings);
+        const int slots = reinterpret_cast<const int*>(table)[1];
+        using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
+        for (int slot = 0; slot < slots; ++slot) {  // dropped only if a joined device has its own binding
+            const uint32_t other = reinterpret_cast<Lookup>(kBindingLookup)(table, 0, slot, action);
+            if (other != 0xFFFFFFFF && (IsPadCode(other) ? wantPad : wantKeys)) return 0;
+        }
+        return 1;
+    }
     const int coopStyle = features::CoopPromptStyle(0);
     const bool pad = coopStyle >= 0 ? coopStyle != 0 : (g_enabled && g_input != Input::Keyboard);
     if (IsPadCode(code) == pad) return 1;
@@ -292,8 +343,11 @@ const char* GameLookup(void* table, uint32_t hash) {
 }
 
 const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
+    if (const char* own = features::VersusText(hash)) return own;
+    if (const char* own = features::ModsMenuText(hash)) return own;
     if (const char* own = features::CoopText(hash)) return own;
     if (const char* own = features::ControlsText(hash)) return own;
+    if (const char* own = features::ModText(hash)) return own;
     const char* text = GameLookup(table, hash);
     if (!text) return text;
 #ifndef DS_DIST
@@ -342,10 +396,11 @@ const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
         static int next = 0;
         char* out = ring[next];
         next = (next + 1) % 32;
+        const int button = PromptButton(p.button);
         if (icons)
-            snprintf(out, sizeof ring[0], "%s  %s", overlay::IconChar(pad ? PadIcon(p.button) : p.key), action);
+            snprintf(out, sizeof ring[0], "%s  %s", overlay::IconChar(pad ? PadIcon(button) : p.key), action);
         else
-            snprintf(out, sizeof ring[0], "%s: %s", ButtonName(g_input, p.button), action);
+            snprintf(out, sizeof ring[0], "%s: %s", ButtonName(g_input, button), action);
         return out;
     }
     return text;

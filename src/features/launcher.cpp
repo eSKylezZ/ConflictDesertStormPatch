@@ -18,6 +18,7 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/framerec.h"
 #include "features/padio.h"
 #include "features/launcher_pad.h"
 #include "features/overlay.h"
@@ -40,11 +41,11 @@ constexpr int kIdGroup = 1200, kIdFpsLabel = 1201, kIdFps = 1202, kIdHud = 1203,
               kIdHudSize = 1205, kIdPad = 1206, kIdDeadzoneLabel = 1207, kIdDeadzone = 1208, kIdNote = 1209,
               kIdSplitLabel = 1210, kIdSplit = 1211, kIdSplitPreview = 1212, kIdDiscord = 1213,
               kIdDisplayLabel = 1214, kIdDisplay = 1215, kIdSkipIntro = 1216, kIdSkipCutscenes = 1217,
-              kIdAaLabel = 1218, kIdAa = 1219, kIdAfLabel = 1220, kIdAf = 1221;
+              kIdAaLabel = 1218, kIdAa = 1219, kIdAfLabel = 1220, kIdAf = 1221, kIdPerf = 1222, kIdVsync = 1223;
 
 constexpr int kDialogW = 221;                  // original client width, dialog units
 constexpr int kColumnX = 228, kColumnW = 207;  // our column; 7 DLU margin on both sides
-constexpr int kExtraH = 76;                    // dialog grows by this (DLU) for our rows
+constexpr int kExtraH = 104;                   // dialog grows by this (DLU) for our rows
 
 struct FpsChoice {
     const char* label;
@@ -53,14 +54,13 @@ struct FpsChoice {
 };
 constexpr FpsChoice kFps[] = {
     {"Monitor refresh rate (max 240)", 240, true},
-    {"Monitor refresh rate", 0, true},
     {"30 fps", 30, false},
     {"60 fps", 60, false},
     {"120 fps", 120, false},
     {"144 fps", 144, false},
     {"165 fps", 165, false},
+    {"180 fps", 180, false},
     {"240 fps", 240, false},
-    {"Unlimited (up to 500 fps)", 0, false},
 };
 constexpr const char* kDisplayModes[] = {"Fullscreen", "Windowed", "Borderless window"};
 constexpr uint32_t kAntialiasing[] = {0, 2, 4, 8};
@@ -179,6 +179,8 @@ void Fill(HWND dlg, const settings::Values& v) {
     CheckDlgButton(dlg, kIdSkipCutscenes, v.skipCutscenes ? BST_CHECKED : BST_UNCHECKED);
     SelectData(GetDlgItem(dlg, kIdAa), v.antialiasing, "x");
     SelectData(GetDlgItem(dlg, kIdAf), v.anisotropy, "x");
+    CheckDlgButton(dlg, kIdPerf, v.perfOverlay ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(dlg, kIdVsync, v.vsync ? BST_CHECKED : BST_UNCHECKED);
     InvalidateRect(GetDlgItem(dlg, kIdSplitPreview), nullptr, FALSE);
     UpdateEnabled(dlg);
 }
@@ -199,6 +201,8 @@ void Save(HWND dlg) {
     v.skipCutscenes = IsDlgButtonChecked(dlg, kIdSkipCutscenes) == BST_CHECKED;
     v.antialiasing = static_cast<uint32_t>(SelectedData(dlg, kIdAa));
     v.anisotropy = static_cast<uint32_t>(SelectedData(dlg, kIdAf));
+    v.perfOverlay = IsDlgButtonChecked(dlg, kIdPerf) == BST_CHECKED;
+    v.vsync = IsDlgButtonChecked(dlg, kIdVsync) == BST_CHECKED;
     if (settings::Save(v)) features::OnSettingsChanged();
 }
 
@@ -290,7 +294,10 @@ void Build(HWND dlg) {
     for (uint32_t i = 0; i < splitscreen::kLayoutCount; ++i) AddItem(split, kSplitLayouts[i], i);
     Add(dlg, "STATIC", "", SS_OWNERDRAW, kIdSplitPreview, cx, 223, cw, 30);
 
-    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 288, w, 8);
+    Add(dlg, "BUTTON", "&Performance overlay (F11 in game)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdPerf, x, 272, w, 10);
+    Add(dlg, "BUTTON", "&V-Sync in fullscreen (smooth, no tearing)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdVsync, x, 258, w, 10);
+
+    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 316, w, 8);
     Fill(dlg, settings::Get());
     // Left column, our column, then the bottom row left to right.
     MoveToEndOfTabOrder(dlg, {kIdDefaults, kIdOk, kIdCancel});
@@ -348,17 +355,42 @@ void features::ApplyLauncher() {
         dslog::Write("[ok]   Launcher: gamepad navigation");
 }
 
+// Each part is timed; one that takes more than 2 ms goes into the frame recorder's notes for that frame.
+template <class Fn>
+void Timed(const char* name, Fn fn) {
+    if (!framerec::Recording()) return fn();
+    const double t0 = framerec::Now();
+    fn();
+    const double ms = framerec::Now() - t0;
+    if (ms > 2.0) {
+        char note[64];
+        snprintf(note, sizeof note, "%s %.1f ms", name, ms);
+        framerec::Note(note);
+    }
+}
+
 void features::OnFrame() {
-    overlay::OnFrame();
-    OnFrameInput();
-    OnFrameSplitScreen();
-    OnFrameDiscord();
-    OnFrameCoop();
-    OnFrameFontSharp();
-    OnFrameControls();
-    padio::Update();
-    FollowActivePad();
-    OnFrameDev();
+    Timed("overlay", [] { overlay::OnFrame(); });
+    Timed("input", [] { OnFrameInput(); });
+    Timed("splitscreen", [] { OnFrameSplitScreen(); });
+    Timed("discord", [] { OnFrameDiscord(); });
+    Timed("coop", [] { OnFrameCoop(); });
+    Timed("fontsharp", [] { OnFrameFontSharp(); });
+    Timed("weaponicons", [] { OnFrameWeaponIcons(); });
+    Timed("bodies", [] { OnFrameBodies(); });
+    Timed("versus", [] { OnFrameVersus(); });
+    Timed("modsmenu", [] { OnFrameModsMenu(); });
+    Timed("controls", [] { OnFrameControls(); });
+    Timed("diagnostics", [] { OnFrameDiagnostics(); });
+    Timed("hotplug", [] { OnFrameHotplug(); });
+    Timed("padio", [] { padio::Update(); });
+    Timed("followpad", [] { FollowActivePad(); });
+    Timed("customise", [] { OnFrameCustomise(); });
+    Timed("dev", [] { OnFrameDev(); });
+#ifndef DS_DIST
+    Timed("loadoutdev", [] { OnFrameLoadoutDev(); });
+    LogLayoutOffsetHits();
+#endif
 }
 
 void features::OnSettingsChanged() {
@@ -369,4 +401,5 @@ void features::OnSettingsChanged() {
     ApplyDiscord();
     ApplyDisplay();
     ApplyCinematics();
+    ApplyDiagnostics();
 }

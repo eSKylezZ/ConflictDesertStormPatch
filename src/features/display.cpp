@@ -167,6 +167,7 @@ void __cdecl StyleCheck() {
 
 // Replaces FUN_004112B0 (called each active frame and on move / size / focus).
 void __cdecl ClipToWindow() {
+    if (features::DevBackground()) return;  // dev background tests: never clip the PC user's mouse
     HWND wnd = *reinterpret_cast<HWND*>(kGameWindow);
     RECT& r = *reinterpret_cast<RECT*>(kClipRect);
     if (g_mode == features::DisplayMode::Fullscreen) {
@@ -182,6 +183,10 @@ void __cdecl ClipToWindow() {
 }
 
 BOOL WINAPI ScreenToGame(HWND wnd, POINT* pt) {
+    if (features::DevBackground()) {  // dev background tests: the PC user's mouse is not the game's
+        pt->x = pt->y = 1;
+        return TRUE;
+    }
     BOOL ok = ScreenToClient(wnd, pt);
     uint8_t* r = Renderer();
     if (!ok || g_mode == features::DisplayMode::Fullscreen || !r) return ok;

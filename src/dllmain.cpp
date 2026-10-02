@@ -41,6 +41,7 @@ void Init() {
     dslog::Write("DesertStormFix " DS_VERSION " loaded");
     settings::Load();
     features::ApplyWidescreen();
+    features::ApplyDevBackground();
     features::ApplyHud();
     features::ApplyController();
     features::ApplyTiming();
@@ -53,12 +54,22 @@ void Init() {
     features::ApplyCinematics();
     features::ApplyGraphics();
     features::ApplyCoop();
+    features::ApplyVersus();
+    features::ApplyModsMenu();
     features::ApplyFontSharp();
     features::ApplyControls();
     features::ApplyMouse();
     features::ApplyTooltips();
     features::ApplyRumble();
+    features::ApplyMods();
+    features::ApplyWeaponIcons();  // after ApplyMods: the .weapon files name the icons
+    features::ApplyBodies();       // .skin "body": soldier meshes from mods
+    features::ApplyBodies();
+    features::ApplyLoadout();
+    features::ApplyCustomise();
+    features::ApplyDiagnostics();
     features::ApplyAudio();
+    features::ApplyShadows();
     features::ApplyDevHooks();
 }
 

@@ -1,7 +1,8 @@
 """Controller pictures for the CONTROLLER screen (src/features/controls.cpp).
 
 Source: Zacksly "PS5 Button Icons and Controls" and "Xbox Series Button Icons and Controls" (CC BY 3.0,
-https://zacksly.itch.io) - the zips in the repo root (gitignored). Modified: cropped to the controller and scaled.
+https://zacksly.itch.io) - download both zips into the repo root first (third-party archives, not committed).
+Modified: cropped to the controller and scaled.
 Writes src/generated/controller_ps5.png, controller_xbox.png (RCDATA 301/302 via src/game_icons.rc) and
 controller_art.h: image size inside the 2048x1024 texture and, per game button (PS2 numbering 0-15, then 16 left
 stick, 17 right stick), where the callout line starts, as fractions of the image.

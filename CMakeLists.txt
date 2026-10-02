@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DesertStormFix VERSION 1.0.0 LANGUAGES CXX RC)
+project(DesertStormFix VERSION 2.0.0 LANGUAGES CXX RC)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "DesertStorm.exe is 32-bit: configure with -A Win32 (use the CMake presets).")
@@ -43,10 +43,21 @@ add_library(dinput8 SHARED
     src/features/padlayout.cpp
     src/features/controls.cpp
     src/features/padio.cpp
+    src/features/hotplug.cpp
     src/features/mouse.cpp
     src/features/tooltips.cpp
     src/features/rumble.cpp
     src/features/audio.cpp
+    src/features/shadows.cpp
+    src/features/loadout.cpp
+    src/features/diagnostics.cpp
+    src/features/framerec.cpp
+    src/features/customise.cpp
+    src/features/mods.cpp
+    src/features/weaponicons.cpp
+    src/features/bodies.cpp
+    src/features/versus.cpp
+    src/features/modsmenu.cpp
     ${CMAKE_BINARY_DIR}/version.rc
     src/game_icons.rc
 )
@@ -57,6 +68,12 @@ target_compile_options(dinput8 PRIVATE /W4 /permissive- /utf-8)
 # dinput8.lib only for its static data (c_dfDIJoystick2); DirectInput8Create is called via the real DLL.
 target_link_libraries(dinput8 PRIVATE winmm msimg32 dxguid dinput8.lib ole32 windowscodecs)
 target_link_options(dinput8 PRIVATE /SAFESEH:NO $<$<BOOL:${DS_DIST}>:/DEBUG:NONE>)
+# Release package: no build timestamp (/Brepro: a content hash instead, reproducible builds) and no Rich header
+# (toolchain fingerprint).
+if(DS_DIST)
+    target_compile_options(dinput8 PRIVATE /Brepro)
+    target_link_options(dinput8 PRIVATE /Brepro /EMITTOOLVERSIONINFO:NO)
+endif()
 
 if(DS_DIST)
     set(DIST_DIR ${CMAKE_BINARY_DIR}/package)

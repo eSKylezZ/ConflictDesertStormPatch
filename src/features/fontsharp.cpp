@@ -20,6 +20,7 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/overlay.h"
 
 namespace {
 constexpr uint32_t kSetTexture = 0x544220, kSetTextureSite = 0x53CC9B;
@@ -317,6 +318,10 @@ bool Enabled() {
 }
 
 void __fastcall SetTexture(void* renderer, void* /*edx*/, DWORD stage, void* tex) {
+    if (void* icon = features::WeaponIconTexture(overlay::DrawingSheet(), overlay::DrawingImage())) {
+        reinterpret_cast<SetTextureFn>(kSetTexture)(renderer, stage, icon);  // a mod weapon's picture
+        return;
+    }
     if (tex && Enabled()) {
         const uint8_t* sheet = FontSheet();
         auto it = std::find_if(g_copies.begin(), g_copies.end(), [&](const Copy& c) { return c.original == tex; });

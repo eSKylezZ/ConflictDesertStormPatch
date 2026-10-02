@@ -87,7 +87,7 @@ constexpr uint32_t kMissionTable = 0x5EB8A8, kLevelNames = 0x5E6CC0;
 constexpr uint32_t kLoadPending = 0x60EC8C;         // byte: 1 = a level loads this frame
 constexpr int kMissions = 12, kMissionItemId = 0x1005;
 
-constexpr uint16_t kCoopItemId = 0x401, kSlotItemId = 0x500;
+constexpr uint16_t kCoopItemId = 0x401, kModsItemId = 0x402, kSlotItemId = 0x500;
 constexpr int kSlots = 4;
 constexpr int kVtableEntries = 21;
 
@@ -115,6 +115,9 @@ struct Slot {
     Icons icons = Icons::Auto;
     std::string name;
     int keyProfile = -1;  // keyboard player: saved key profile (controls.cpp), -1 = the current keys
+    int team = 0;         // versus: team 0 / 1 (left / right on the join screen)
+    int cls = 0;          // versus: class = character skill 0..3
+    int field = 0;        // versus: the field left / right changes - 0 team, 1 class (R1 / R2, RB / RT, Tab)
 };
 Slot g_slots[4];
 uint32_t g_prevActions[kKeyboard + 1];
@@ -125,6 +128,8 @@ struct Session {
     int joystick[4] = {-1, -1, -1, -1};
     int style[4] = {0, 0, 0, 0};  // icon style per player: 0 keyboard, 1 PlayStation, 2 Xbox (Auto resolved)
     int keyProfile[4] = {-1, -1, -1, -1};
+    int team[4] = {0, 1, 0, 1};  // versus teams
+    int cls[4] = {0, 0, 0, 0};   // versus classes (character skill)
     int mission = -1;        // mission (0-11) of the level last loaded in this session
     std::string lastLevel;   // to see each level load once
 } g_session;
@@ -175,7 +180,11 @@ int MissionOfLevel(const char* level) {
     return found;
 }
 
-enum Action : uint32_t { kJoin = 1, kLeave = 2, kStart = 4, kLeft = 8, kRight = 16, kBack = 32 };
+enum Action : uint32_t { kJoin = 1, kLeave = 2, kStart = 4, kLeft = 8, kRight = 16, kBack = 32, kCycle = 64 };
+
+// Versus classes: the network game's character skill (player table +0x16 -> FUN_00461390 role: kit and skin).
+constexpr const char* kClassNames[] = {"RIFLEMAN", "HEAVY WEAPONS", "SNIPER", "ENGINEER"};  // skill 0..3
+constexpr int kClasses = 4;
 
 int JoinedCount() {
     int n = 0;
@@ -184,6 +193,8 @@ int JoinedCount() {
 }
 
 bool g_keepSlots = false;  // set when the co-op menu's Back returns here: the players stay joined
+bool g_versus = false;     // the join screen was opened from VERSUS > SPLIT SCREEN (versus.cpp)
+constexpr uint32_t kStateVersus = 0x42;
 
 void ResetSlots() {
     for (Slot& s : g_slots) s = Slot{};
@@ -242,11 +253,13 @@ uint32_t JoystickActions(int j, PadType type) {
             if (button(1)) a |= kJoin;
             if (button(2)) a |= kLeave;
             if (button(9)) a |= kStart;
+            if (button(5) || button(7)) a |= kCycle;  // R1, R2
             break;
-        case PadType::Xbox:  // 0 A 1 B ... 7 Start
+        case PadType::Xbox:  // 0 A 1 B ... 5 RB, 7 Start; triggers on Z (LT +, RT -)
             if (button(0)) a |= kJoin;
             if (button(1)) a |= kLeave;
             if (button(7)) a |= kStart;
+            if (button(5) || *reinterpret_cast<LONG*>(state + 8) < -64) a |= kCycle;
             break;
         default:
             if (button(0) || button(1)) a |= kJoin;
@@ -260,7 +273,7 @@ uint32_t JoystickActions(int j, PadType type) {
 }
 
 uint32_t KeyboardActions() {
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    auto down = [](int vk) { return features::KeyHeld(vk); };
     uint32_t a = 0;
     if (down(VK_SPACE)) a |= kJoin;
     if (down(VK_BACK)) a |= kLeave;
@@ -268,6 +281,7 @@ uint32_t KeyboardActions() {
     if (down(VK_RETURN)) a |= kStart;
     if (down(VK_LEFT)) a |= kLeft;
     if (down(VK_RIGHT)) a |= kRight;
+    if (down(VK_TAB)) a |= kCycle;
     return a;
 }
 
@@ -281,6 +295,7 @@ void Join(int device, PadType type, const std::string& name) {
     for (Slot& s : g_slots) {
         if (s.device >= 0) continue;
         s = Slot{device, type, Icons::Auto, name};
+        s.team = static_cast<int>(&s - g_slots) % 2;  // versus: alternate teams until a player picks
         dslog::Write("Co-op: player %d joined with %s", static_cast<int>(&s - g_slots) + 1, name.c_str());
         return;
     }
@@ -304,11 +319,18 @@ void Begin() {
         g_session.style[g_session.players] =
             icon == overlay::Icon::PsCross ? 1 : icon == overlay::Icon::XbCross ? 2 : 0;
         g_session.keyProfile[g_session.players] = s.device == kKeyboard ? s.keyProfile : -1;
+        g_session.team[g_session.players] = s.team;
+        g_session.cls[g_session.players] = s.cls;
         g_session.joystick[g_session.players++] = s.device < kKeyboard ? s.device : -1;
     }
     *reinterpret_cast<uint32_t*>(kSplitFlag) = 1;
     *reinterpret_cast<uint32_t*>(kSplitPlayers) = static_cast<uint32_t>(g_session.players);
     *reinterpret_cast<uint32_t*>(kSplitLoadedGame) = 0;
+    if (g_versus) {  // versus: the players' devices as for co-op, then the match set-up instead of the campaign
+        dslog::Write("Co-op: %d players joined for versus", g_session.players);
+        features::VersusPlayersJoined();
+        return;
+    }
     const char* first = *reinterpret_cast<char**>(kCampaign) + 0x37;
     strcpy(*reinterpret_cast<char**>(kNextLevel), first);
     dslog::Write("Co-op: session with %d players, campaign from %s", g_session.players, first);
@@ -342,11 +364,20 @@ void Handle(int device, uint32_t actions, PadType type, const std::string& name)
     Slot* s = SlotOf(device);
     if (!s) {
         if (pressed & kJoin) Join(device, type, name);
-        else if (pressed & (kLeave | kBack)) SetState(kStateMainMenu);  // Circle / B / Esc before joining: back
+        else if (pressed & (kLeave | kBack)) g_versus ? features::VersusJoinBack() : SetState(kStateMainMenu);  // back
         return;
     }
-    if (pressed & kBack) return SetState(kStateMainMenu);
+    if (pressed & kBack) return g_versus ? features::VersusJoinBack() : SetState(kStateMainMenu);
     if (pressed & kLeave) return Leave(device);
+    if (g_versus && (pressed & kCycle) && features::VersusTeams()) {  // versus: R1 / R2 (RB / RT, Tab) - next field
+        s->field ^= 1;
+        return;
+    }
+    if (g_versus && (pressed & (kLeft | kRight))) {  // versus: left / right changes the field (deathmatch: class)
+        if (s->field == 0 && features::VersusTeams()) s->team ^= 1;
+        else s->cls = (s->cls + ((pressed & kRight) ? 1 : kClasses - 1)) % kClasses;
+        return;
+    }
     if (s->device == kKeyboard && (pressed & (kLeft | kRight))) {
         // Keyboard player: left / right picks the keys - current, or a saved profile.
         const int step = (pressed & kRight) ? 1 : -1;
@@ -363,7 +394,7 @@ void Handle(int device, uint32_t actions, PadType type, const std::string& name)
 }
 
 void PollDevices() {
-    if (GetForegroundWindow() != *reinterpret_cast<HWND*>(kGameWindow)) return;
+    if (!features::GameFocused()) return;
     const int count = std::min(*reinterpret_cast<int*>(kJoystickCount), kKeyboard);
     for (int j = 0; j < count; ++j) {
         PadType type;
@@ -428,21 +459,27 @@ void SetState(uint32_t state) { reinterpret_cast<void(__cdecl*)(uint32_t)>(kSetS
 
 // --- main menu: the CO-OP entry ------------------------------------------------------------------------------------
 
-// Main menu set-up: the original (SINGLE PLAYER, MULTIPLAYER, OPTIONS, QUIT on pool items 0-3), then CO-OP on item
-// 4, and the pool rotated to SINGLE PLAYER, CO-OP, MULTIPLAYER, OPTIONS, QUIT. The item objects are interchangeable,
-// so the next set-up (every time the menu is entered) simply fills the rotated pool again.
+// Main menu set-up: the original (SINGLE PLAYER, MULTIPLAYER, OPTIONS, QUIT on pool items 0-3), then CO-OP and MODS on
+// items 4-5, MULTIPLAYER renamed VERSUS, and the pool reordered to SINGLE PLAYER, CO-OP, VERSUS, MODS, OPTIONS, QUIT.
+// The item objects are interchangeable, so the next set-up (every time the menu is entered) simply fills the
+// reordered pool again.
 void __fastcall MainMenuSetup(void* screen, void*) {
     reinterpret_cast<void(__thiscall*)(void*)>(kMainMenuSetup)(screen);
     void* list = At<void*>(screen, 8);
     void** items = At<void**>(list, 0x2C);
-    SetItem(items[4], kCoopItemId, kHashCoop);
-    AddToList(list, items[4]);
     void* coop = items[4];
-    for (int i = 4; i > 1; --i) items[i] = items[i - 1];
-    items[1] = coop;
+    void* mods = items[5];
+    SetItem(coop, kCoopItemId, kHashCoop);
+    SetItem(mods, kModsItemId, features::ModsMenuItemText());  // MODS (modsmenu.cpp)
+    AddToList(list, coop);
+    AddToList(list, mods);
+    SetItem(items[1], 0x3FE, features::VersusItemText());  // MULTIPLAYER -> VERSUS (versus.cpp)
+    // Pool order = list order: SINGLE PLAYER, CO-OP, VERSUS, MODS, OPTIONS, QUIT.
+    void* const order[6] = {items[0], coop, items[1], mods, items[2], items[3]};
+    for (int i = 0; i < 6; ++i) items[i] = order[i];
     // The list area was sized for four rows (list +0x38 row pitch, +0x40 area height, +0x42 visible rows).
-    At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) + At<int16_t>(list, 0x38));
-    At<int16_t>(list, 0x42) = 5;
+    At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) + 2 * At<int16_t>(list, 0x38));
+    At<int16_t>(list, 0x42) = 6;
     // The panel rectangle (screen +0x10..+0x1c) is laid out around the list by vtable +0x50, which the original
     // set-up already called - lay it out again with the same arguments.
     using Layout = void(__thiscall*)(void*, int, int, int, int);
@@ -454,9 +491,27 @@ __declspec(naked) void MenuSelectStub() {
     __asm {
         cmp si, kCoopItemId
         je coop
+        cmp si, 0x3FE               // MULTIPLAYER -> VERSUS (state 0x42, versus.cpp)
+        je versus
+        cmp si, kModsItemId         // MODS (state 0x43, modsmenu.cpp)
+        je mods
         cmp si, 0x3FC
         jle done
         push kMenuSelectCont
+        ret
+    mods:
+        push 0x43
+        mov eax, kSetState
+        call eax
+        add esp, 4
+        push kMenuSelectDone
+        ret
+    versus:
+        push 0x42
+        mov eax, kSetState
+        call eax
+        add esp, 4
+        push kMenuSelectDone
         ret
     coop:
         push kStateCoop
@@ -501,7 +556,8 @@ void __fastcall CoopSetup(void* screen, void*) {
                  &size);
     for (DWORD i = 0; i < fake && i < kSlots && !keep; ++i)
         g_slots[i] = Slot{kFakeDevice + static_cast<int>(i), i % 2 ? PadType::Xbox : PadType::PlayStation, Icons::Auto,
-                          i % 2 ? "XBOX CONTROLLER" : "DUALSENSE"};
+                          i % 2 ? "XBOX CONTROLLER" : "DUALSENSE", -1, static_cast<int>(i % 2),
+                          static_cast<int>(i % kClasses)};
 #endif
     reinterpret_cast<void(__thiscall*)(void*)>(kMainMenuSetup)(screen);
     void* list = At<void*>(screen, 8);
@@ -547,9 +603,17 @@ void __fastcall CoopDraw(void* screen, void*) {
     using overlay::Icon;
     if (JoinedCount() >= 2) DrawPrompt(w * 46 / 1000, y, Icon::PsStart, Icon::XbStart, Icon::KbEnter, "Begin");
     else DrawPrompt(w * 46 / 1000, y, Icon::PsCross, Icon::XbCross, Icon::KbSpace, "Join");
-    if (JoinedCount() > 0)
+    if (JoinedCount() > 0 && g_versus) {
+        if (features::VersusTeams()) {
+            DrawPrompt(w * 23 / 100, y, Icon::PsR1, Icon::XbR1, Icon::KbTab, "Team / Class");
+            DrawPrompt(w * 47 / 100, y, Icon::PsDpadHorizontal, Icon::XbDpadHorizontal, Icon::KbArrowsHorizontal, "Change");
+        } else {
+            DrawPrompt(w * 35 / 100, y, Icon::PsDpadHorizontal, Icon::XbDpadHorizontal, Icon::KbArrowsHorizontal, "Class");
+        }
+    } else if (JoinedCount() > 0) {
         DrawPrompt(w * 30 / 100, y, Icon::PsDpadHorizontal, Icon::XbDpadHorizontal, Icon::KbArrowsHorizontal, "Icons");
-    DrawPrompt(w * 60 / 100, y, Icon::PsCircle, Icon::XbCircle, Icon::KbEscape, "Back / Leave");
+    }
+    DrawPrompt(w * 66 / 100, y, Icon::PsCircle, Icon::XbCircle, Icon::KbEscape, "Back / Leave");
 }
 
 // Prompt getters (vtable +0x34 select, +0x44 back): none - CoopDraw draws ours with the real buttons.
@@ -571,10 +635,16 @@ int DrawPrompt(int x, int y, overlay::Icon a, overlay::Icon b, overlay::Icon c, 
 
 int __fastcall CoopUpdate(void* screen, void*) {
     reinterpret_cast<short(__thiscall*)(void*)>(kListSelected)(At<void*>(screen, 8));  // items only show players
+    if (g_versus && features::VersusTakeStart()) return 3;  // versus Begin: load the match level
     return 0;
 }
 
-void* __cdecl ExtraScreen(uint32_t state) { return features::ControlsScreen(state); }
+void* __cdecl ExtraScreen(uint32_t state) {
+    if (state == 0x42) return features::VersusScreen();
+    if (state == 0x44) return features::VersusSetupScreen();
+    if (state == 0x43) return features::ModsMenuScreen();
+    return features::ControlsScreen(state);
+}
 
 // Front-end state -> screen: ours for kStateCoop, the CONTROLS screens' for 0x3F.., else the original (its first
 // instructions, then the rest).
@@ -632,8 +702,8 @@ bool Install() {
         dslog::Write("[fail] Co-op menu: unexpected bytes - different exe version? Not applied.");
         return false;
     }
-    const uint8_t capacity5[] = {0x6A, 0x05};
-    const uint8_t count5[] = {0xBF, 0x05, 0x00, 0x00, 0x00};
+    const uint8_t capacity5[] = {0x6A, 0x06};  // 6 items: + CO-OP, MODS
+    const uint8_t count5[] = {0xBF, 0x06, 0x00, 0x00, 0x00};
     const uint8_t nops[] = {0x90, 0x90};
     return patch::Write(kMenuCapacity, capacity5, sizeof capacity5) && patch::Write(kMenuItemCount, count5, sizeof count5) &&
            patch::WriteValue(kMainMenuSetupSlot, reinterpret_cast<uint32_t>(&MainMenuSetup)) &&
@@ -838,7 +908,7 @@ const char* features::CoopText(uint32_t hash) {
     static char slots[kSlots][96];
     switch (hash) {
         case kHashCoop: return "CO-OP";
-        case kHashTitle: return "JOIN CO-OPERATIVE GAME";
+        case kHashTitle: return g_versus ? "JOIN VERSUS GAME" : "JOIN CO-OPERATIVE GAME";
         default: break;
     }
     if (hash == 0xA08F3D1B && g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 2)
@@ -856,6 +926,21 @@ const char* features::CoopText(uint32_t hash) {
             row = RowIcons{prefix, {overlay::Icon::PsCross, overlay::Icon::XbCross, overlay::Icon::KbSpace}, 3};
             snprintf(slots[i], sizeof slots[i], "%s%s TO JOIN", prefix, Gap(icon * 3 + icon / 2).c_str());
         } else {
+            if (g_versus) {  // versus: the device's icon, then the team (left / right)
+                snprintf(prefix, sizeof prefix, "P%d:  %s  ", i + 1, s.name.c_str());
+                row = RowIcons{prefix, {s.device == kKeyboard ? overlay::Icon::KbEnter : ConfirmIcon(s)}, 1};
+                // the field left / right changes has the arrows; deathmatch has no teams
+                if (!features::VersusTeams())
+                    snprintf(slots[i], sizeof slots[i], "%s%s   < %s >", prefix, Gap(icon + icon / 4).c_str(),
+                             kClassNames[s.cls]);
+                else if (s.field == 0)
+                    snprintf(slots[i], sizeof slots[i], "%s%s   < TEAM %d >   %s", prefix, Gap(icon + icon / 4).c_str(),
+                             s.team + 1, kClassNames[s.cls]);
+                else
+                    snprintf(slots[i], sizeof slots[i], "%s%s   TEAM %d   < %s >", prefix, Gap(icon + icon / 4).c_str(),
+                             s.team + 1, kClassNames[s.cls]);
+                return slots[i];
+            }
             if (s.device == kKeyboard) {  // its icon; left / right picks a saved key profile (shown only when chosen)
                 snprintf(prefix, sizeof prefix, "PLAYER %d:  %s    < ", i + 1, s.name.c_str());
                 row = RowIcons{prefix, {overlay::Icon::KbEnter}, 1};
@@ -894,6 +979,7 @@ void features::OnFrameCoop() {
     if (state == kStateCoop && lastPolled != kStateCoop)  // entering: what is held already (the Esc that led here) isn't a press
         for (uint32_t& held : g_prevActions) held = ~0u;
     lastPolled = state;
+    if (state == kStateMainMenu) g_versus = false;  // CO-OP from the main menu = the co-op join screen
     if (g_screen && state == kStateCoop) PollDevices();
     if (state != kStateMissionList) g_preselected = false;
     TrackProgress();
@@ -915,6 +1001,20 @@ void features::OnFrameCoop() {
 }
 
 int features::CoopPlayers() { return g_session.players; }
+int features::CoopClass(int player) {
+    return g_versus && player >= 0 && player < g_session.players ? g_session.cls[player] : -1;
+}
+int features::CoopTeam(int player) {
+    return g_versus && player >= 0 && player < g_session.players ? g_session.team[player] : -1;
+}
+
+// VERSUS > SPLIT SCREEN: the join screen for a versus match (keepPlayers: back from the match set-up, still joined).
+void features::OpenVersusJoin(bool keepPlayers) {
+    if (g_session.players) EndSession();
+    g_versus = true;
+    g_keepSlots = keepPlayers;
+    SetState(kStateCoop);
+}
 int features::PlayerOfJoystick(int joystick) {
     for (int p = 0; p < g_session.players; ++p)
         if (g_session.joystick[p] == joystick) return p;

@@ -72,6 +72,7 @@
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
+#include "features/padio.h"
 #include "features/padlayout.h"
 #include "features/splitscreen_layout.h"
 
@@ -244,6 +245,7 @@ void __fastcall AssignPlayers(uintptr_t block0) {
             dslog::Write("Split screen: player %u uses %s %d", i + 1, joystick >= 0 ? "joystick" : "keyboard", joystick);
         }
     }
+    features::VersusAssignPlayers();  // versus: MP soldiers instead of squad members (versus.cpp)
     dslog::Write("Split screen: %u players assigned", players);
 }
 
@@ -255,6 +257,20 @@ void __fastcall AssignPlayers(uintptr_t block0) {
 // block keeps a joystick index) with that pad's sticks. Replaced by the same logic with the device checks.
 constexpr uint32_t kAxisValue = 0x450920;
 constexpr uint32_t kBindingLookup = 0x40A110, kKeyHeld = 0x539DA0, kAxisTable = 0x754268, kKeyboardUsed = 0x60F5B0;
+
+// Gyro aiming (DualSense / DualShock 4, CONTROLLER screen GYRO AIM): the pad's turn rate added like a stick
+// deflection - 120 deg/s = full stick, then the look sensitivity on top. On foot it turns (TURN result: + = right,
+// AIM_PITCH: + = down); in aim mode (block +0x318 = 1) it moves the head axes instead, never both.
+float GyroLook(int player, int joystick, int action, bool aiming) {
+    const int mode = padlayout::GyroMode(player);
+    if (!mode || (mode == 1 && !aiming)) return 0.0f;
+    float yawRight, pitchDown;
+    if (!padio::Gyro(joystick, yawRight, pitchDown)) return 0.0f;
+    constexpr float kFullStickDps = 120.0f;
+    const bool yaw = aiming ? action == 0x15 : action == 0xB;
+    const bool pitch = aiming ? action == 0x16 : action == 0xF;
+    return yaw ? yawRight / kFullStickDps : pitch ? pitchDown / kFullStickDps : 0.0f;
+}
 
 float __fastcall AxisValue(uint8_t* block, void*, int action, int opposite) {
     const int joystick = *reinterpret_cast<int32_t*>(block + 0x3C8);
@@ -292,6 +308,13 @@ float __fastcall AxisValue(uint8_t* block, void*, int action, int opposite) {
         if (value == 0.0f) axis(opposite, value);
         else value = -value;
     }
+    // Looking with a stick (TURN_LEFT / TURN_RIGHT 0xB / 0xA, AIM_YAW / AIM_PITCH 0xE / 0xF, aim mode HEAD_YAW /
+    // HEAD_PITCH 0x15 / 0x16): the player's look sensitivity. Values above 1 are fine - the mouse path writes larger
+    // ones into the same fields.
+    const bool look = action == 0xA || action == 0xB || action == 0xE || action == 0xF || action == 0x15 || action == 0x16;
+    const int player = static_cast<int>((block - reinterpret_cast<uint8_t*>(0x60F5B8)) / 0x478);
+    if (look && (devices & 2)) value += GyroLook(player, joystick, action, *reinterpret_cast<int32_t*>(block + 0x318) == 1);
+    if (value != 0.0f && look) value *= padlayout::LookSensitivity(player) / 100.0f;
     if (value == 0.0f) {
         if (key(action)) value = 1.0f;
         if (opposite != 0x50) {
@@ -543,6 +566,7 @@ void EndHud() {
 }
 
 void __fastcall Panels(uintptr_t inputManager) {
+    if (features::CustomiseOpen()) return;  // customise screen: no HUD
     const uint32_t player = *reinterpret_cast<uint32_t*>(kCurrentPlayer);
     if (player < kMaxPlayers && BeginHud()) {
         reinterpret_cast<void(__thiscall*)(uintptr_t)>(kPanel)(inputManager + player * kInputBlockSize);
@@ -570,6 +594,7 @@ D3DViewport* ViewOfBlock(uintptr_t block) {
 }
 
 void __fastcall InventoryDraw(uintptr_t block) {
+    if (features::CustomiseOpen()) return;
     D3DViewport* view = ViewOfBlock(block);
     const bool pass = view && BeginHud(view);
     reinterpret_cast<void(__fastcall*)(uintptr_t)>(kInventoryDraw)(block);
@@ -629,6 +654,7 @@ void __fastcall FlushView(uintptr_t viewController) {
 void ProbePanel(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uintptr_t item);
 #endif
 int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f, uintptr_t item) {
+    if (features::CustomiseOpen()) return 0;
 #ifndef DS_DIST
     ProbePanel(a, b, c, d, item);
 #endif
@@ -663,6 +689,7 @@ int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32
 }
 
 uint32_t __cdecl Reticle(uintptr_t block) {
+    if (features::CustomiseOpen()) return 0;
     const bool pass = BeginHud();
 #ifndef DS_DIST
     {  // play-test: the HUD sheets' scale when the crosshair is drawn, per player, when it changes
@@ -691,33 +718,61 @@ uint32_t __cdecl Reticle(uintptr_t block) {
 }
 
 void __cdecl HudDraw(int player) {
+    if (features::CustomiseOpen()) return;
     BeginHud();
     reinterpret_cast<void(__cdecl*)(int)>(kHudDraw)(player);
     EndHud();
 }
 
 void __fastcall HudDraw2(void* self, void* /*edx*/, int player, uint32_t x) {
+    if (features::CustomiseOpen()) return;
     BeginHud();
     reinterpret_cast<void(__thiscall*)(void*, int, uint32_t)>(kHudDraw2)(self, player, x);
     EndHud();
 }
 
+float g_shiftX = 0, g_shiftY = 0;  // extra move for one HUD element outside the HUD passes (match clock)
+
 // Screen-space quads drawn during a HUD pass move to the view's origin (on a copy: callers may reuse theirs).
 void __fastcall DrawFan(uintptr_t renderer, void* /*edx*/, uint32_t prims, const uint8_t* verts, uint32_t stride) {
     using Draw = void(__thiscall*)(uintptr_t, uint32_t, const void*, uint32_t);
     const uint32_t count = prims + 2;
-    if (g_hud.active && *reinterpret_cast<uint32_t*>(renderer + kCurrentFvf) == kFvfScreenQuad &&
+    const bool shift = g_shiftX != 0 || g_shiftY != 0;
+    if ((g_hud.active || shift) && *reinterpret_cast<uint32_t*>(renderer + kCurrentFvf) == kFvfScreenQuad &&
         stride >= 8 && count * stride <= 64 * 1024) {
         static uint8_t copy[64 * 1024];
         memcpy(copy, verts, count * stride);
+        const float dx = (g_hud.active ? g_hud.ox : 0) + g_shiftX, dy = (g_hud.active ? g_hud.oy : 0) + g_shiftY;
         for (uint32_t i = 0; i < count; ++i) {
             auto v = reinterpret_cast<float*>(copy + i * stride);
-            v[0] += g_hud.ox, v[1] += g_hud.oy;
+            v[0] += dx, v[1] += dy;
         }
         reinterpret_cast<Draw>(kDrawFan)(renderer, prims, copy, stride);
         return;
     }
     reinterpret_cast<Draw>(kDrawFan)(renderer, prims, verts, stride);
+}
+
+// MP match clock (FUN_0047e750, from the HUD render-list item at 0x48D8A7): an LCD frame (HUD art image 0x16) with
+// the session time, drawn once at 40 art px from the top-left corner - on player 1's compass in split screen. Moved
+// to the centre of the screen, where the dividers meet: free in every layout (compasses top left, panels bottom left,
+// weapons bottom right of each view; top centre was player 2's compass in quarters). Every quad it draws is shifted.
+constexpr uint32_t kMatchClockCall = 0x48D8A7, kMatchClock = 0x47E750, kHudArt = 0x60EE18;
+constexpr uint32_t kImageWidth = 0x53C6D0, kImageHeight = 0x53C710;
+constexpr int kClockFrame = 0x16;
+void MatchClock() {
+    auto renderer = *reinterpret_cast<uintptr_t*>(kRenderer);
+    auto sheet = *reinterpret_cast<uint8_t**>(kHudArt);
+    if (g_builtPlayers > 1 && renderer && sheet) {
+        const float w = reinterpret_cast<float(__thiscall*)(void*, int)>(kImageWidth)(sheet, kClockFrame);
+        const float h = reinterpret_cast<float(__thiscall*)(void*, int)>(kImageHeight)(sheet, kClockFrame);
+        const float W = static_cast<float>(*reinterpret_cast<uint32_t*>(renderer + kScreenW));
+        const float H = static_cast<float>(*reinterpret_cast<uint32_t*>(renderer + kScreenH));
+        g_shiftX = std::floor((W - w) * 0.5f - 40.0f * *reinterpret_cast<float*>(sheet + 0x24));
+        g_shiftY = std::floor((H - h) * 0.5f - 40.0f * *reinterpret_cast<float*>(sheet + 0x28));
+    }
+    reinterpret_cast<void(__cdecl*)()>(kMatchClock)();
+    g_shiftX = g_shiftY = 0;
 }
 
 // Divider lines between the views, like the Xbox's Split_DrawDivider (0xe8610: 2 px of 50% grey on a 480-line
@@ -811,10 +866,13 @@ void InstallProbe() {
                      &size) != ERROR_SUCCESS || !v)
         return;
     static const uint8_t head[] = {0x81, 0xEC, 0x94, 0x00, 0x00, 0x00};
-    if (!patch::Matches(kDrawImage, head, sizeof head)) return;
-    patch::WriteJump(kDrawImage, reinterpret_cast<const void*>(&DrawImageProbe));
-    static const uint8_t nop = 0x90;
-    patch::Write(kDrawImage + 5, &nop, 1);
+    if (patch::Matches(kDrawImage, head, sizeof head)) {
+        patch::WriteJump(kDrawImage, reinterpret_cast<const void*>(&DrawImageProbe));
+        static const uint8_t nop = 0x90;
+        patch::Write(kDrawImage + 5, &nop, 1);
+    } else {
+        overlay::SetImageProbe(reinterpret_cast<void*>(&ProbeImage));  // the overlay owns the entry
+    }
     g_probeLeft = 120;
     if (v > 1) g_probeDelay = v * 1000;
     dslog::Write("[dev]  HUD probe on");
@@ -838,6 +896,30 @@ bool IsMenuLevel(const char* name) {
 
 int features::SplitScreenPlayers() { return g_builtPlayers; }
 
+// Field of view in narrow views. The projection FUN_0054fb80 (thiscall camera, vertical FOV degrees, near, far) is
+// Hor+: 70 deg vertical in any view, so a side-by-side half of a 16:9 screen (8:9) saw about 64 deg across against
+// 106 deg full screen. A split view narrower than 4:3 now keeps 4:3's horizontal angle and gets a taller vertical one
+// instead (the FOV itself goes up, so the culling angles stored from it widen too; scope zoom keeps its ratio).
+namespace {
+constexpr uint32_t kProjection = 0x54FB80;
+constexpr uint32_t kProjectionCalls[] = {0x40F1F6, 0x4105CD, 0x4D6715, 0x4ECD02, 0x4EF98D, 0x54F941};
+int __fastcall Projection(void* camera, void*, float fov, float zNear, float zFar) {
+    if (g_builtPlayers > 1 && fov > 1.0f && fov < 170.0f) {
+        const uint8_t* r = *reinterpret_cast<const uint8_t* const*>(0x63C924);  // renderer: the view being drawn
+        const uint8_t* vp = r ? *reinterpret_cast<const uint8_t* const*>(r + kCurrentViewport) : nullptr;
+        const uint32_t w = vp ? *reinterpret_cast<const uint32_t*>(vp + 8) : 0;
+        const uint32_t h = vp ? *reinterpret_cast<const uint32_t*>(vp + 0xC) : 0;
+        if (w && h && w * 3 < h * 4) {
+            const float half = fov * 0.5f * 0.017453292f;
+            fov = 2.0f * std::atan(std::tan(half) * (4.0f / 3.0f) * static_cast<float>(h) / static_cast<float>(w)) /
+                  0.017453292f;
+            fov = std::min(fov, 120.0f);
+        }
+    }
+    return reinterpret_cast<int(__thiscall*)(void*, float, float, float)>(kProjection)(camera, fov, zNear, zFar);
+}
+}  // namespace
+
 // Offset of the view whose HUD is being drawn (its 2D is drawn in view-local coordinates and moved here).
 bool features::SplitHudOffset(float& x, float& y) {
     if (!g_hud.active) return false;
@@ -855,6 +937,9 @@ void features::ApplySplitScreen() {
         return;
     }
     hooked = patch::HookCall(kPickSoldierSite, reinterpret_cast<const void*>(&AssignPlayers), kPickSoldier);
+    for (uint32_t site : kProjectionCalls)
+        if (!patch::HookCall(site, reinterpret_cast<const void*>(&Projection), kProjection))
+            dslog::Write("[fail] Split screen: projection call at 0x%08X not recognised", site);
     for (uint32_t site : kMouseDeltaSites)
         if (!patch::HookCall(site, reinterpret_cast<const void*>(&MouseDeltaStub), kMouseDelta))
             dslog::Write("[fail] Split screen: mouse read at 0x%08X not recognised - the mouse turns every player", site);
@@ -905,6 +990,8 @@ void features::ApplySplitScreen() {
     } else {
         hud = false;
     }
+    if (!patch::HookCall(kMatchClockCall, reinterpret_cast<const void*>(&MatchClock), kMatchClock))
+        dslog::Write("[fail] Split screen: MP match clock call not recognised at 0x%08X", kMatchClockCall);
     for (uint32_t site : kDrawFanCallers)
         hud = patch::HookCall(site, reinterpret_cast<const void*>(&DrawFan), kDrawFan) && hud;
     dslog::Write("[ok]   Split screen: player set-up for 2-4 players, 4 binding sets%s%s",
@@ -938,6 +1025,8 @@ void features::OnFrameSplitScreen() {
     PlaceHud(g_builtPlayers > 1);
     RebuildPanelsOnSquadChange();
     // Mid-level: only restore what something else reset (device reset after Alt+Tab), or a new orientation.
-    if (g_builtPlayers > 1 && (count != static_cast<uint32_t>(g_builtPlayers) || layout != g_builtLayout))
+    // (the customise screen shows one full-screen view while it is up - customise.cpp puts the views back)
+    if (g_builtPlayers > 1 && !features::CustomiseOpen() &&
+        (count != static_cast<uint32_t>(g_builtPlayers) || layout != g_builtLayout))
         Build(renderer, g_builtPlayers, layout);
 }

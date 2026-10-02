@@ -55,6 +55,8 @@ struct Input {
     uint8_t l2, r2;
     uint32_t buttons;  // game numbering bits 0-15
     DWORD time;
+    int16_t gyro[3];   // DualSense / DualShock 4 raw gyro (pitch, yaw, roll), 0 when the report has none
+    bool hasGyro;
 };
 
 struct Output {
@@ -86,10 +88,13 @@ struct Pad {
     uint32_t lastButtons = 0;
     DWORD firePulse = 0;
     bool fireHeld = false;  // DualSense fire trigger past its break point (released again with some hysteresis)
+    // gyro drift (reader thread): bias learnt while the pad lies still
+    float bias[3] = {};
+    DWORD stillSince = 0;
 };
 Pad* g_pads[kMax] = {};
 std::mutex g_padsLock;
-std::thread g_worker;
+std::atomic<bool> g_workerStarted{false};  // the worker is detached: a joinable std::thread left at exit = abort()
 std::atomic<bool> g_stop{false};
 
 // ---- XInput (loaded dynamically, like core/gamepad) ----
@@ -212,7 +217,26 @@ bool ParseSony(Pad& p, const uint8_t* r, DWORD n, Input& in) {
     in.r2 = r[tr + 1];
     in.buttons = SonyButtons(r[bt], r[bt + 1], r[bt + 2], in.l2, in.r2);
     in.time = GetTickCount();
+    // Gyro (le16 x 3): DualSense 15 bytes after LX, DualShock 4 12 - not in the short Bluetooth report.
+    const int gy = ax + (p.kind == Kind::DualSense ? 15 : 12);
+    in.hasGyro = !(r[0] == 0x01 && n < 64) && static_cast<DWORD>(gy + 6) <= n;
+    for (int i = 0; i < 3; ++i) in.gyro[i] = in.hasGyro ? static_cast<int16_t>(r[gy + 2 * i] | r[gy + 2 * i + 1] << 8) : 0;
     return true;
+}
+
+// Raw gyro -> degrees per second (both pads: about 16.4 units per deg/s), drift removed. The bias follows the readings
+// while all three axes stay near it for half a second (pad lying still or held very steady).
+void LearnBias(Pad& p, const Input& in) {
+    if (!in.hasGyro) return;
+    bool still = true;
+    for (int i = 0; i < 3; ++i) still &= std::fabs(in.gyro[i] - p.bias[i]) < 40.0f;
+    if (!still) {
+        p.stillSince = 0;
+        return;
+    }
+    if (!p.stillSince) p.stillSince = in.time ? in.time : 1;
+    if (in.time - p.stillSince < 500) return;
+    for (int i = 0; i < 3; ++i) p.bias[i] += (in.gyro[i] - p.bias[i]) * 0.02f;
 }
 
 void ReaderThread(Pad* p) {
@@ -225,6 +249,7 @@ void ReaderThread(Pad* p) {
         }
         Input in;
         if (n && ParseSony(*p, buf, n, in)) {
+            LearnBias(*p, in);
             if (!p->haveInput)
                 dslog::Write("Pad I/O: HID input report 0x%02X (%lu bytes), sticks %ld %ld", buf[0], n, in.lx, in.ly);
             std::lock_guard<std::mutex> guard(p->lock);
@@ -421,7 +446,7 @@ Pad* PadFor(int j) {
     if (j < 0 || j >= kMax || j >= *reinterpret_cast<int*>(kJoystickCount)) return nullptr;
     void* dev = reinterpret_cast<void**>(kJoysticks)[j];
     Pad* p = g_pads[j];
-    if (p && p->device == dev && !p->dead) return p;
+    if (p && p->device == dev) return p->dead ? nullptr : p;  // dead = unplugged: hotplug.cpp swaps the device
     if (!dev) return nullptr;
     auto* fresh = new Pad;
     fresh->device = dev;
@@ -445,7 +470,7 @@ Pad* PadFor(int j) {
         g_pads[j] = fresh;
     }
     Release(p);
-    if (!g_worker.joinable()) g_worker = std::thread(WorkerThread);
+    if (!g_workerStarted.exchange(true)) std::thread(WorkerThread).detach();
     return fresh;
 }
 
@@ -563,6 +588,43 @@ void AimTrigger(uint8_t (&t)[11]) {
 }
 
 constexpr uint8_t kColours[4][3] = {{0, 70, 255}, {255, 20, 20}, {20, 220, 40}, {230, 40, 200}};
+
+// Health of the soldier a player controls (input block +0x310 -> soldier +0x54, float; 150 for Bradley at the start
+// of Mission 1 - the highest value seen per soldier counts as full), -1 = none.
+// Only for a player in this level whose block's soldier points back at the block (soldier +0x23C0) - a block left over
+// from the last level, or one a level load is still setting up, can hold a freed soldier (crashed here once).
+float SoldierHealth(const uint8_t* block) {
+    __try {
+        auto* soldier = *reinterpret_cast<uint8_t* const*>(block + 0x310);
+        if (!soldier || *reinterpret_cast<const uint8_t* const*>(soldier + 0x23C0) != block) return -1.0f;
+        return *reinterpret_cast<const float*>(soldier + 0x54);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1.0f;
+    }
+}
+float PlayerHealth(int player) {
+    if (player >= std::max(1, features::SplitScreenPlayers())) return -1.0f;
+    const auto* block = reinterpret_cast<const uint8_t*>(0x60F5B8 + player * 0x478);
+    const float health = SoldierHealth(block);
+    if (health < 0.0f) return -1.0f;
+    const void* soldier = *reinterpret_cast<void* const*>(block + 0x310);
+    static const void* seen[4];
+    static float full[4];
+    if (seen[player] != soldier || health > full[player]) seen[player] = soldier, full[player] = std::fmax(health, 1.0f);
+    return std::fmax(0.0f, health / full[player]);
+}
+
+// Light bar by health: green, yellow at half, red when low; pulses below a quarter, slow red pulse when down.
+void HealthColour(float f, uint8_t& r, uint8_t& g, uint8_t& b) {
+    const float t = std::fmin(1.0f, std::fmax(0.0f, f));
+    float red = t > 0.5f ? (1.0f - t) * 2.0f : 1.0f, green = t > 0.5f ? 1.0f : t * 2.0f;
+    float level = 1.0f;
+    if (t <= 0.0f) level = 0.25f + 0.75f * (0.5f + 0.5f * std::sin(timeGetTime() * 0.004f));
+    else if (t < 0.25f) level = 0.55f + 0.45f * (0.5f + 0.5f * std::sin(timeGetTime() * 0.012f));
+    r = static_cast<uint8_t>(255.0f * red * level);
+    g = static_cast<uint8_t>(200.0f * green * level);
+    b = 0;
+}
 constexpr uint8_t kPlayerLeds[4] = {0x04, 0x0A, 0x15, 0x1B};
 }  // namespace
 
@@ -616,6 +678,17 @@ bool padio::Fill(int joystick, JoyState& s) {
     return false;
 }
 
+void padio::Forget(int joystick) {
+    if (joystick < 0 || joystick >= kMax) return;
+    Pad* p;
+    {
+        std::lock_guard<std::mutex> guard(g_padsLock);
+        p = g_pads[joystick];
+        g_pads[joystick] = nullptr;
+    }
+    Release(p);
+}
+
 void padio::Update() {
     if (!settings::Get().controller) return;
     const bool active = GetForegroundWindow() == *reinterpret_cast<HWND*>(kGameWindow);
@@ -633,6 +706,12 @@ void padio::Update() {
         o.weak = static_cast<uint8_t>(m.weak * 255.0f);
         o.r = kColours[player][0], o.g = kColours[player][1], o.b = kColours[player][2];
         o.leds = kPlayerLeds[player];
+        // In a mission the light bar shows the soldier's health (the DualSense's player LEDs still give the player;
+        // a DualShock 4 has none, so in co-op it keeps the player colour).
+        if (mission && (p->kind == Kind::DualSense || features::CoopPlayers() < 2)) {
+            const float health = PlayerHealth(player);
+            if (health >= 0.0f) HealthColour(health, o.r, o.g, o.b);
+        }
         if (mission && active) {
             const padlayout::Layout& layout = padlayout::Get(player);
             const int fire = padlayout::ButtonOf(layout, 0);   // FIRE
@@ -667,4 +746,28 @@ void padio::Update() {
         std::lock_guard<std::mutex> guard(g_padsLock);
         p->want = o;
     }
+}
+
+bool padio::Gyro(int joystick, float& yawRight, float& pitchDown) {
+    yawRight = pitchDown = 0.0f;
+    if (!settings::Get().controller || joystick < 0 || joystick >= kMax) return false;
+    Pad* p = g_pads[joystick];
+    if (!p || p->dead || (p->kind != Kind::DualSense && p->kind != Kind::DualShock4)) return false;
+    Input in;
+    float bias[3];
+    {
+        std::lock_guard<std::mutex> guard(p->lock);
+        if (!p->haveInput || !p->in.hasGyro || GetTickCount() - p->in.time > 200) return false;
+        in = p->in;
+        memcpy(bias, p->bias, sizeof bias);
+    }
+    constexpr float kUnitsPerDps = 16.4f, kDeadDps = 0.8f;
+    auto rate = [&](int i) {
+        const float v = (in.gyro[i] - bias[i]) / kUnitsPerDps;
+        return std::fabs(v) < kDeadDps ? 0.0f : v;
+    };
+    // Raw x = pitch (nose up +), y = yaw (to the left +), as SDL reads these pads. Not yet checked on a real pad.
+    yawRight = -rate(1);
+    pitchDown = -rate(0);
+    return true;
 }

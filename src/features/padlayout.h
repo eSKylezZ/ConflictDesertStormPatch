@@ -39,4 +39,11 @@ bool Vibration(int player);
 void SetVibration(int player, bool on);
 bool AdaptiveTriggers(int player);
 void SetAdaptiveTriggers(int player, bool on);
+// Look speed with the pad's stick, percent (PadLook<n>, 100 = the game's own speed).
+constexpr int kLookMin = 25, kLookMax = 200, kLookStep = 25;
+int LookSensitivity(int player);
+void SetLookSensitivity(int player, int percent);
+// Gyro aiming with a DualSense / DualShock 4 (PadGyro<n>): 0 off (default), 1 while aiming, 2 always.
+int GyroMode(int player);
+void SetGyroMode(int player, int mode);
 }  // namespace padlayout

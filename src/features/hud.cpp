@@ -23,6 +23,10 @@
 // text box one raw line high (0x4D3507, 0x4D35E3) while the text (80 % size, FUN_0053c850(80)) is scaled - the boxed
 // text routine FUN_0053abc0 skips a line that doesn't fit its box -> empty bar. Both get the scaled line height.
 // Text fields on the network screens (SESSION NAME): a fixed-pixel part of the width is scaled (ApplyFieldPads).
+#include <windows.h>
+#include <xmmintrin.h>
+
+#include <algorithm>
 #include <cstring>
 
 #include "core/log.h"
@@ -200,6 +204,128 @@ void ApplyFieldPads(bool on) {
     }
 }
 
+// Layout offsets in raw pixels (the 17 clamp sites the layout clamps leave alone): the game computes an offset as
+// c x max(800, W) / 800 and uses it as pixels, while the art next to it is scaled by k = max(1, min(W/800, H/600)) x
+// HUD size - on 16:9 the offsets came out W/800 : k (3.2 : 2.4 at 1440p) = 33 % too wide. Each site's clamp
+// (cmp r, 800 ... mov dest, r / 800) jumps to a stub that replays the other instructions in that span and stores
+// 800 x k in the clamp's destination instead. Screens: KEY ASSIGNMENT columns (0x445F6C), loading screen (0x40B01F,
+// 0x40B18F), menu prompt line (0x47AF35..93), network MP screens (0x467C3F, 0x46A770 / 0x46D9A0 functions).
+// k is read when the code runs, so a split-screen view's HUD pass (renderer W / H = the view) gets its own k.
+struct OffsetSite {
+    uint32_t site, end;
+    int8_t reg;      // destination register (0 eax .. 7 edi), or -1: [esp + espOff]
+    uint8_t espOff;
+    uint8_t extraLen;
+    uint8_t extra[8];  // other instructions between the cmp and the end, replayed in the stub
+};
+constexpr int8_t kEax = 0, kEcx = 1, kEbx = 3, kEbp = 5, kEdi = 7, kMem = -1;
+const OffsetSite kOffsetSites[] = {
+    {0x40B01F, 0x40B02C, kEcx, 0, 0, {}},
+    {0x40B18F, 0x40B198, kEcx, 0, 0, {}},
+    {0x445F6C, 0x445F78, kEax, 0, 0, {}},
+    {0x467C3F, 0x467C52, kEdi, 0, 4, {0x89, 0x54, 0x24, 0x24}},
+    {0x46AA0E, 0x46AA1C, kEbx, 0, 4, {0x89, 0x4C, 0x24, 0x10}},
+    {0x46AC43, 0x46AC53, kMem, 0x10, 4, {0x89, 0x44, 0x24, 0x1C}},
+    {0x46AD97, 0x46ADA8, kEbx, 0, 7, {0x8B, 0x48, 0x24, 0x89, 0x4C, 0x24, 0x14}},
+    {0x46AEF2, 0x46AF02, kMem, 0x14, 4, {0x89, 0x4C, 0x24, 0x24}},
+    {0x46B058, 0x46B068, kMem, 0x14, 4, {0x89, 0x54, 0x24, 0x18}},
+    {0x46DA96, 0x46DAA4, kEbp, 0, 4, {0x89, 0x54, 0x24, 0x28}},
+    {0x46DC20, 0x46DC2E, kEbp, 0, 4, {0x89, 0x4C, 0x24, 0x28}},
+    {0x46DD76, 0x46DD84, kEbp, 0, 4, {0x89, 0x54, 0x24, 0x28}},
+    {0x46DED2, 0x46DEE0, kEbx, 0, 4, {0x89, 0x4C, 0x24, 0x28}},
+    {0x47AF35, 0x47AF41, kMem, 0x28, 0, {}},
+    {0x47AF4C, 0x47AF62, kEdi, 0, 7, {0x8B, 0x48, 0x28, 0x89, 0x4C, 0x24, 0x40}},
+    {0x47AF65, 0x47AF78, kEbp, 0, 4, {0x89, 0x54, 0x24, 0x38}},
+    {0x47AF93, 0x47AFAC, kMem, 0x24, 5, {0x66, 0x89, 0x44, 0x24, 0x10}},
+};
+constexpr size_t kOffsetSiteCount = sizeof kOffsetSites / sizeof kOffsetSites[0];
+uint8_t g_offsetOrig[kOffsetSiteCount][32];  // original bytes of each span
+uint8_t* g_offsetStubs = nullptr;
+uint32_t g_hudWidth = 800;
+uint32_t g_offsetHits[kOffsetSiteCount] = {};  // dev: calls per site (features::LogLayoutOffsetHits)
+
+// 800 x k without touching the x87 stack (the callers keep values on it across these spans): integers + SSE.
+int __cdecl HudWidth() {
+    const auto* r = *reinterpret_cast<const uint8_t* const*>(0x63C924);
+    int w = 800;
+    if (r) {
+        const int W = *reinterpret_cast<const int*>(r + 0x40688), H = *reinterpret_cast<const int*>(r + 0x4068C);
+        w = std::max(800, std::min(W, H * 4 / 3));
+    }
+    const __m128 scaled = _mm_mul_ss(_mm_cvtsi32_ss(_mm_setzero_ps(), w), _mm_load_ss(reinterpret_cast<const float*>(kHudScaleVa)));
+    return _mm_cvt_ss2si(scaled);
+}
+
+bool BuildOffsetStubs() {
+    if (g_offsetStubs) return true;
+    auto* mem = static_cast<uint8_t*>(VirtualAlloc(nullptr, 64 * kOffsetSiteCount, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!mem) return false;
+    for (size_t i = 0; i < kOffsetSiteCount; ++i) {
+        const OffsetSite& s = kOffsetSites[i];
+        uint8_t* p = mem + 64 * i;
+        auto put32 = [&](uint32_t v) { std::memcpy(p, &v, 4), p += 4; };
+        *p++ = 0xFF, *p++ = 0x05, put32(reinterpret_cast<uint32_t>(&g_offsetHits[i]));  // inc [hits]
+        std::memcpy(p, s.extra, s.extraLen), p += s.extraLen;
+        *p++ = 0x50, *p++ = 0x51, *p++ = 0x52;  // push eax, ecx, edx
+        *p++ = 0xE8, put32(reinterpret_cast<uint32_t>(&HudWidth) - (reinterpret_cast<uint32_t>(p) + 4));
+        *p++ = 0xA3, put32(reinterpret_cast<uint32_t>(&g_hudWidth));  // mov [g_hudWidth], eax
+        *p++ = 0x5A, *p++ = 0x59, *p++ = 0x58;  // pop edx, ecx, eax
+        if (s.reg == kEax) {
+            *p++ = 0xA1, put32(reinterpret_cast<uint32_t>(&g_hudWidth));
+        } else if (s.reg >= 0) {
+            *p++ = 0x8B, *p++ = static_cast<uint8_t>(0x05 | s.reg << 3), put32(reinterpret_cast<uint32_t>(&g_hudWidth));
+        } else {  // push eax; mov eax, [g_hudWidth]; mov [esp + off + 4], eax; pop eax
+            *p++ = 0x50, *p++ = 0xA1, put32(reinterpret_cast<uint32_t>(&g_hudWidth));
+            *p++ = 0x89, *p++ = 0x44, *p++ = 0x24, *p++ = static_cast<uint8_t>(s.espOff + 4);
+            *p++ = 0x58;
+        }
+        *p++ = 0xE9, put32(s.end - (reinterpret_cast<uint32_t>(p) + 4));
+    }
+    g_offsetStubs = mem;
+    return true;
+}
+
+// All or nothing: every span must hold its original bytes (starting with cmp r, 800) or our jump.
+void ApplyLayoutOffsets(bool on) {
+    static bool saved = false;
+    if (!saved) {
+        for (size_t i = 0; i < kOffsetSiteCount; ++i) {
+            const OffsetSite& s = kOffsetSites[i];
+            const auto* code = reinterpret_cast<const uint8_t*>(s.site);
+            const bool cmp = (code[0] == 0x81 && (code[1] & 0xF8) == 0xF8 && code[2] == 0x20 && code[3] == 0x03) ||
+                             (code[0] == 0x3D && code[1] == 0x20 && code[2] == 0x03);
+            if (!cmp || s.end - s.site > sizeof g_offsetOrig[i]) {
+                dslog::Write("[fail] HUD layout offsets: unexpected code at 0x%08X - not applied", s.site);
+                return;
+            }
+            std::memcpy(g_offsetOrig[i], code, s.end - s.site);
+        }
+        saved = true;
+    }
+    if (on && !BuildOffsetStubs()) return;
+#ifndef DS_DIST
+    DWORD off = 0, size = sizeof off;  // dev: Dev\NoLayoutOffsets = 1 keeps the game's widths (before / after shots)
+    RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "NoLayoutOffsets", RRF_RT_REG_DWORD, nullptr, &off,
+                 &size);
+    if (off) on = false;
+#endif
+    for (size_t i = 0; i < kOffsetSiteCount; ++i) {
+        const OffsetSite& s = kOffsetSites[i];
+        const size_t len = s.end - s.site;
+        if (on) {
+            uint8_t code[32];
+            std::memset(code, 0x90, len);
+            code[0] = 0xE9;
+            const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(g_offsetStubs + 64 * i) - (s.site + 5));
+            std::memcpy(code + 1, &rel, 4);
+            patch::Write(s.site, code, len);
+        } else {
+            patch::Write(s.site, g_offsetOrig[i], len);
+        }
+    }
+    if (on) dslog::Write("HUD layout offsets: %u sites scale with the HUD", static_cast<unsigned>(kOffsetSiteCount));
+}
+
 struct CallSite {
     uint32_t site, original;
     const void* scaled;
@@ -241,6 +367,18 @@ void ApplyIconCentring(bool on) {
 }
 }  // namespace
 
+// Dev: logs the first time each layout-offset site runs (which screen uses it).
+void features::LogLayoutOffsetHits() {
+    static bool logged[kOffsetSiteCount] = {};
+    for (size_t i = 0; i < kOffsetSiteCount; ++i)
+        if (g_offsetHits[i] && !logged[i]) {
+            logged[i] = true;
+            dslog::Write("[dev]  layout offset 0x%08X first used: front-end state 0x%X, level %s, width %u",
+                         kOffsetSites[i].site, *reinterpret_cast<uint32_t*>(0x617C18),
+                         reinterpret_cast<const char*>(0x606880), g_hudWidth);
+        }
+}
+
 void features::ApplyHud() {
     const auto& s = settings::Get();
     if (!s.hudScaling) {
@@ -249,6 +387,7 @@ void features::ApplyHud() {
         ApplyMenuTextCentring(false);
         ApplyBarPad(false);
         ApplyFieldPads(false);
+        ApplyLayoutOffsets(false);
         return;
     }
     if (patch::ApplyGroup("HUD scaling", gen::kHud)) {
@@ -257,5 +396,6 @@ void features::ApplyHud() {
         ApplyMenuTextCentring(true);
         ApplyBarPad(true);
         ApplyFieldPads(true);
+        ApplyLayoutOffsets(true);
     }
 }

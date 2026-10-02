@@ -12,6 +12,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -86,25 +87,28 @@ padlayout::Layout g_layout[padlayout::kPlayers];
 padlayout::Preset g_preset[padlayout::kPlayers];
 bool g_vibration[padlayout::kPlayers] = {true, true, true, true};
 bool g_triggers[padlayout::kPlayers] = {true, true, true, true};
+int g_look[padlayout::kPlayers] = {100, 100, 100, 100};
+int g_gyro[padlayout::kPlayers] = {};
 
-bool ReadFlag(const char* base, int player) {
+DWORD ReadValue(const char* base, int player, DWORD fallback) {
     char name[32];
     snprintf(name, sizeof name, "%s%d", base, player + 1);
-    DWORD v = 1, size = sizeof v;
-    RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_DWORD, nullptr, &v, &size);
-    return v != 0;
+    DWORD v = fallback, size = sizeof v;
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_DWORD, nullptr, &v, &size) != ERROR_SUCCESS) v = fallback;
+    return v;
 }
+bool ReadFlag(const char* base, int player) { return ReadValue(base, player, 1) != 0; }
 
-void WriteFlag(const char* base, int player, bool on) {
+void WriteValue(const char* base, int player, DWORD v) {
     HKEY key = nullptr;
     if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
         return;
     char name[32];
-    const DWORD v = on ? 1 : 0;
     snprintf(name, sizeof name, "%s%d", base, player + 1);
     RegSetValueExA(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof v);
     RegCloseKey(key);
 }
+void WriteFlag(const char* base, int player, bool on) { WriteValue(base, player, on ? 1 : 0); }
 bool g_loaded = false;
 
 void Load() {
@@ -120,6 +124,8 @@ void Load() {
         g_preset[p] = static_cast<padlayout::Preset>(v);
         g_vibration[p] = ReadFlag("PadVibration", p);
         g_triggers[p] = ReadFlag("PadTriggers", p);
+        g_gyro[p] = std::clamp(static_cast<int>(ReadValue("PadGyro", p, 0)), 0, 2);
+        g_look[p] = std::clamp(static_cast<int>(ReadValue("PadLook", p, 100)), padlayout::kLookMin, padlayout::kLookMax);
         g_layout[p] = padlayout::Make(g_preset[p]);
         if (g_preset[p] == padlayout::Preset::Custom) {
             snprintf(name, sizeof name, "PadLayout%d", p + 1);
@@ -265,4 +271,28 @@ void padlayout::SetAdaptiveTriggers(int player, bool on) {
     if (player < 0 || player >= kPlayers) return;
     g_triggers[player] = on;
     WriteFlag("PadTriggers", player, on);
+}
+
+int padlayout::LookSensitivity(int player) {
+    Load();
+    return player < 0 || player >= kPlayers ? 100 : g_look[player];
+}
+
+void padlayout::SetLookSensitivity(int player, int percent) {
+    Load();
+    if (player < 0 || player >= kPlayers) return;
+    g_look[player] = std::clamp(percent, kLookMin, kLookMax);
+    WriteValue("PadLook", player, static_cast<DWORD>(g_look[player]));
+}
+
+int padlayout::GyroMode(int player) {
+    Load();
+    return player < 0 || player >= kPlayers ? 0 : g_gyro[player];
+}
+
+void padlayout::SetGyroMode(int player, int mode) {
+    Load();
+    if (player < 0 || player >= kPlayers) return;
+    g_gyro[player] = std::clamp(mode, 0, 2);
+    WriteValue("PadGyro", player, static_cast<DWORD>(g_gyro[player]));
 }

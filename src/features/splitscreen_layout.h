@@ -1,6 +1,6 @@
 #pragma once
 // Split-screen view rectangles as fractions of the screen, per player count and orientation. Same layouts as
-// the Xbox build's tables (default.xbe 0x234e88..0x235088, see CLAUDE.md "Xbox version"):
+// the Xbox build's tables (default.xbe 0x234e88..0x235088):
 //   2 players: 50/50        3 players: 50/25/25 (player 1 gets the half)        4 players: quarters
 // Used by the launcher preview now, and by the split-screen renderer later.
 #include <cstdint>

@@ -22,4 +22,13 @@ bool Fill(int joystick, JoyState& s);
 
 // Once per frame (game thread): the game's rumble table, players and layouts -> the pads' outputs.
 void Update();
+
+// DualSense / DualShock 4 gyro of joystick j in degrees per second (turning right / tilting the top towards the
+// player = positive), drift removed; false = no gyro.
+bool Gyro(int joystick, float& yawRight, float& pitchDown);
+#ifndef DS_DIST
+#endif
+
+// Joystick slot j was emptied or gets another device (hot-plug, hotplug.cpp): drop what was opened for it.
+void Forget(int joystick);
 }  // namespace padio

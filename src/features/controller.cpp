@@ -167,6 +167,11 @@ void features::FollowActivePad() {
     }
 }
 
+void features::ForgetJoystick(int joystick) {
+    if (joystick >= 0 && joystick < kMaxJoysticks) g_known[joystick] = {};
+    padio::Forget(joystick);
+}
+
 features::PadType features::JoystickType(int joystick) {
     if (joystick < 0 || joystick >= kMaxJoysticks) return PadType::Generic;
     void* dev = reinterpret_cast<void**>(kJoysticks)[joystick];
@@ -198,6 +203,30 @@ uint32_t features::ReadJoystick(int joystick) {
     if (s.y > kPush) bits |= 1u << 18;
     if (s.x < -kPush) bits |= 1u << 19;
     return bits;
+}
+
+// CONTROLLER screen: a new deadzone for every pad - saved, used by our own scaling (padio, Xbox right stick) and set
+// on the joysticks already open (the game sets DIPROP_DEADZONE on X / Y / Z / Rz once, when it opens a device).
+void features::SetPadDeadzone(uint32_t percent) {
+    settings::Values v = settings::Get();
+    v.padDeadzone = std::min<uint32_t>(percent, 90);
+    if (!settings::Save(v)) return;
+    if (patch::Matches(kPollSite, kPollOriginal, sizeof kPollOriginal)) return;  // controller support off
+    const int32_t value = static_cast<int32_t>(v.padDeadzone * 100);
+    patch::WriteValue(kDeadzoneVa, value);
+    struct {
+        DWORD size, headerSize, obj, how, data;
+    } prop{sizeof prop, 16, 0, 1 /* DIPH_BYOFFSET */, static_cast<DWORD>(value)};
+    for (int j = 0; j < kMaxJoysticks; ++j) {
+        void* dev = reinterpret_cast<void**>(kJoysticks)[j];
+        if (!dev) continue;
+        for (DWORD axis : {0u, 4u, 8u, 0x14u}) {  // lX, lY, lZ, lRz
+            prop.obj = axis;
+            using SetProperty = HRESULT(__stdcall*)(void*, uintptr_t, void*);
+            reinterpret_cast<SetProperty>((*reinterpret_cast<void***>(dev))[6])(dev, 5 /* DIPROP_DEADZONE */, &prop);
+        }
+    }
+    dslog::Write("Pad: deadzone %u%%", v.padDeadzone);
 }
 
 void features::ApplyController() {

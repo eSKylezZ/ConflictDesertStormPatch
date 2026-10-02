@@ -31,6 +31,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
 #include "features/padlayout.h"
@@ -231,9 +232,9 @@ int __fastcall ProfUpdate(void* screen, void*) {
     }
     // Save (S / Square / X) and clear (Delete / Triangle / Y) on the highlighted row.
     uint32_t keys = 0, pad = 0;
-    if (GetForegroundWindow() == *reinterpret_cast<HWND*>(kGameWindow)) {
-        if (GetAsyncKeyState('S') & 0x8000) keys |= 1;
-        if (GetAsyncKeyState(VK_DELETE) & 0x8000) keys |= 2;
+    if (features::GameFocused()) {
+        if (features::KeyHeld('S')) keys |= 1;
+        if (features::KeyHeld(VK_DELETE)) keys |= 2;
         const int count = std::min(*reinterpret_cast<int*>(kJoystickCount), 8);
         for (int j = 0; j < count; ++j) pad |= features::ReadJoystick(j);
     }
@@ -335,7 +336,8 @@ struct FocusSpot {
 struct ControllerScreen {
     int player = 0;
     int tab = kOnFoot;
-    int cursor = 0;  // 0 player, 1 layout, 2 vibration, 3 adaptive triggers, 4 tab, 5.. action rows of the tab
+    int cursor = 0;  // 0 player, 1 layout, 2 vibration, 3 adaptive triggers, 4 tab, 5 deadzone, 6 look sensitivity,
+                     // 7 gyro aim, 8.. action rows of the tab
     bool editing = false;  // a selector is open: Left/Right change its value
     bool xboxView = false;
     bool keyboardPrompts = false;
@@ -348,7 +350,7 @@ struct ControllerScreen {
     int spotCount = 0;
 } g_cs;
 
-constexpr int kHeaderRows = 5;
+constexpr int kHeaderRows = 8;
 
 void AddSpot(int id, float x, float y) {
     if (g_cs.spotCount < static_cast<int>(std::size(g_cs.spots))) g_cs.spots[g_cs.spotCount++] = {id, x, y};
@@ -361,27 +363,32 @@ int Neighbour(int from, uint32_t dir) {
     for (int i = 0; i < g_cs.spotCount; ++i)
         if (g_cs.spots[i].id == from) f = &g_cs.spots[i];
     if (!f) return from;
-    int best = from;
-    float bestScore = 1e30f;
-    for (int i = 0; i < g_cs.spotCount; ++i) {
-        const FocusSpot& s = g_cs.spots[i];
-        if (s.id == from) continue;
-        const float dx = s.x - f->x, dy = s.y - f->y;
-        const bool vertical = dir == kUp || dir == kDown;
-        const float along = dir == kUp ? -dy : dir == kDown ? dy : dir == kLeft ? -dx : dx;
-        const float across = vertical ? std::abs(dx) : std::abs(dy);
-        if (along < 2.0f) continue;
-        const float score = along + 2.0f * across;
-        if (score < bestScore) bestScore = score, best = s.id;
+    const bool vertical = dir == kUp || dir == kDown;
+    // Left / Right: an entry on the same row first (selector rows); else any within a narrow cone (callout columns).
+    for (int pass = vertical ? 1 : 0; pass < 2; ++pass) {
+        int best = from;
+        float bestScore = 1e30f;
+        for (int i = 0; i < g_cs.spotCount; ++i) {
+            const FocusSpot& s = g_cs.spots[i];
+            if (s.id == from) continue;
+            const float dx = s.x - f->x, dy = s.y - f->y;
+            const float along = dir == kUp ? -dy : dir == kDown ? dy : dir == kLeft ? -dx : dx;
+            const float across = vertical ? std::abs(dx) : std::abs(dy);
+            if (along < 2.0f) continue;
+            if (!vertical && across > (pass == 0 ? 4.0f : along / 2.0f)) continue;
+            const float score = along + 2.0f * across;
+            if (score < bestScore) bestScore = score, best = s.id;
+        }
+        if (best != from) return best;
     }
-    return best;
+    return from;
 }
 
 // Newly pressed menu inputs from the keyboard and every pad (edges); pad buttons pressed this frame in `padDown`.
 uint32_t ReadInput(uint32_t& padDown, int& padUsed) {
     padDown = 0;
     padUsed = -1;
-    if (GetForegroundWindow() != *reinterpret_cast<HWND*>(kGameWindow)) return 0;
+    if (!features::GameFocused()) return 0;
     uint32_t in = 0;
     const int count = std::min(*reinterpret_cast<int*>(kJoystickCount), 8);
     for (int j = 0; j < count; ++j) {
@@ -405,7 +412,7 @@ uint32_t ReadInput(uint32_t& padDown, int& padUsed) {
                                   {VK_TAB, kView}};
     uint32_t keysNow = 0;
     for (auto& k : keys)
-        if (GetAsyncKeyState(k[0]) & 0x8000) keysNow |= k[1];
+        if (features::KeyHeld(k[0])) keysNow |= k[1];
     const uint32_t keyEdge = keysNow & ~g_cs.prevKeys;
     g_cs.prevKeys = keysNow;
     if (keyEdge) g_cs.keyboardPrompts = true;
@@ -475,6 +482,11 @@ int __fastcall CtlUpdate(void*, void*) {
             else if (g_cs.cursor == 2) padlayout::SetVibration(g_cs.player, !padlayout::Vibration(g_cs.player));
             else if (g_cs.cursor == 3) padlayout::SetAdaptiveTriggers(g_cs.player, !padlayout::AdaptiveTriggers(g_cs.player));
             else if (g_cs.cursor == 4) g_cs.tab = (g_cs.tab + step + kTabs) % kTabs;
+            else if (g_cs.cursor == 5) features::SetPadDeadzone(static_cast<uint32_t>(
+                std::clamp(static_cast<int>(settings::Get().padDeadzone) + step * 5, 0, 90)));
+            else if (g_cs.cursor == 6)
+                padlayout::SetLookSensitivity(g_cs.player, padlayout::LookSensitivity(g_cs.player) + step * padlayout::kLookStep);
+            else if (g_cs.cursor == 7) padlayout::SetGyroMode(g_cs.player, (padlayout::GyroMode(g_cs.player) + step + 3) % 3);
         }
         if (in & (kAccept | kBack | kUp | kDown)) g_cs.editing = false;
         if (g_cs.cursor >= kHeaderRows + tab.count) g_cs.cursor = kHeaderRows;
@@ -532,28 +544,41 @@ void __fastcall CtlDraw(void* screen, void*) {
 
     // Selectors.
     char text[96];
-    const int selY = static_cast<int>(h * 0.19f);
-    const char* labels[5];
-    char player[32], preset[48], vibration[40], triggers[48], tabName[32];
+    const char* labels[8];
+    char player[32], preset[48], vibration[40], triggers[48], tabName[32], deadzone[40], look[48], gyro[48];
     snprintf(player, sizeof player, "<  PLAYER %d  >", g_cs.player + 1);
     snprintf(preset, sizeof preset, "<  LAYOUT: %s  >", kPresetNames[static_cast<int>(padlayout::PresetOf(g_cs.player))]);
     snprintf(tabName, sizeof tabName, "<  %s  >", tab.name);
     snprintf(vibration, sizeof vibration, "<  VIBRATION: %s  >", padlayout::Vibration(g_cs.player) ? "ON" : "OFF");
     snprintf(triggers, sizeof triggers, "<  ADAPTIVE TRIGGERS: %s  >", padlayout::AdaptiveTriggers(g_cs.player) ? "ON" : "OFF");
+    snprintf(deadzone, sizeof deadzone, "<  DEADZONE: %u%%  >", settings::Get().padDeadzone);
+    snprintf(look, sizeof look, "<  LOOK SENSITIVITY: %d%%  >", padlayout::LookSensitivity(g_cs.player));
     labels[0] = player, labels[1] = preset, labels[2] = vibration, labels[3] = triggers, labels[4] = tabName;
+    static const char* const kGyroModes[] = {"OFF", "WHILE AIMING", "ALWAYS"};
+    snprintf(gyro, sizeof gyro, "<  GYRO AIM (PLAYSTATION): %s  >", kGyroModes[padlayout::GyroMode(g_cs.player)]);
+    labels[5] = deadzone, labels[6] = look, labels[7] = gyro;
     g_cs.spotCount = 0;
-    // Two centred rows (player, layout, vibration / adaptive triggers, context tab), spaced by their measured widths
-    // so they don't run into each other on narrow (4:3) screens.
+    // Centred rows in this order (up to 4), filled up to 88% of the screen width by the labels' measured widths (so they don't
+    // run into each other on narrow 4:3 screens). Adaptive triggers: DualSense only (hidden on the Xbox picture); gyro
+    // works on PlayStation pads but is shown on both pictures (a per-player setting); deadzone is every pad's.
     const int gap = cap * 3;
-    const int rowItems[2][3] = {{0, 1, 2}, {3, 4, -1}};
-    for (int r = 0; r < 2; ++r) {
-        int total = 0, n = 0;
-        for (int i : rowItems[r])
-            if (i >= 0 && !(i == 3 && g_cs.xboxView)) total += overlay::TextWidth(font, labels[i]) + (n++ ? gap : 0);
-        int x = (w - total) / 2;
-        const int y = selY + r * static_cast<int>(h * 0.042f);
-        for (int i : rowItems[r]) {
-            if (i < 0 || (i == 3 && g_cs.xboxView)) continue;  // adaptive triggers: DualSense only
+    const int order[] = {0, 1, 4, 2, 3, 7, 6, 5};
+    int rows[4][8], rowCount[4] = {}, rowWidth[4] = {}, nRows = 1;
+    for (int i : order) {
+        if (i == 3 && g_cs.xboxView) continue;  // gyro stays: it is set per player, whatever pad drives this menu
+        const int tw = overlay::TextWidth(font, labels[i]);
+        int& r = nRows;
+        if (rowCount[r - 1] && rowWidth[r - 1] + gap + tw > w * 0.88f && r < 4) ++r;
+        rowWidth[r - 1] += (rowCount[r - 1] ? gap : 0) + tw;
+        rows[r - 1][rowCount[r - 1]++] = i;
+    }
+    // 4:3 needs a 4th row (above the callouts, which start at 0.285 of the height).
+    const int rowPitch = static_cast<int>(h * (nRows > 3 ? 0.03f : nRows > 2 ? 0.034f : 0.042f));
+    for (int r = 0; r < nRows; ++r) {
+        int x = (w - rowWidth[r]) / 2;
+        const int y = static_cast<int>(h * (nRows > 3 ? 0.16f : nRows > 2 ? 0.175f : 0.19f)) + r * rowPitch;
+        for (int k = 0; k < rowCount[r]; ++k) {
+            const int i = rows[r][k];
             const int tw = overlay::TextWidth(font, labels[i]);
             const bool focused = g_cs.cursor == i;
             if (focused && g_cs.editing)

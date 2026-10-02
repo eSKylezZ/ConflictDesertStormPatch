@@ -39,6 +39,7 @@ void settings::Load() {
         Read(key, "Controller", g_values.controller);
         Read(key, "PadDeadzone", g_values.padDeadzone, 0, 90);
         Read(key, "FpsCap", g_values.fpsCap, 0, 1000);
+        if (g_values.fpsCap == 0 || g_values.fpsCap > 240) g_values.fpsCap = 240;  // 240 is the most (older "unlimited")
         Read(key, "FpsCapToRefresh", g_values.fpsCapToRefresh);
         Read(key, "SplitScreenLayout", g_values.splitScreenLayout, 0, 1);
         Read(key, "DiscordPresence", g_values.discordPresence);
@@ -48,6 +49,8 @@ void settings::Load() {
         Read(key, "Antialiasing", g_values.antialiasing, 0, 16);
         Read(key, "Anisotropy", g_values.anisotropy, 0, 16);
         Read(key, "MouseAcceleration", g_values.mouseAcceleration);
+        Read(key, "VSync", g_values.vsync);
+        Read(key, "PerfOverlay", g_values.perfOverlay);
         RegCloseKey(key);
     }
     const Values& v = g_values;
@@ -71,7 +74,8 @@ bool settings::Save(const Values& v) {
               Put(key, "SplitScreenLayout", v.splitScreenLayout) && Put(key, "DiscordPresence", v.discordPresence) &&
               Put(key, "DisplayMode", v.displayMode) && Put(key, "SkipIntro", v.skipIntro) &&
               Put(key, "SkipCutscenes", v.skipCutscenes) && Put(key, "Antialiasing", v.antialiasing) &&
-              Put(key, "Anisotropy", v.anisotropy) && Put(key, "MouseAcceleration", v.mouseAcceleration);
+              Put(key, "Anisotropy", v.anisotropy) && Put(key, "MouseAcceleration", v.mouseAcceleration) &&
+              Put(key, "VSync", v.vsync) && Put(key, "PerfOverlay", v.perfOverlay);
     RegCloseKey(key);
     if (ok) g_values = v;
     return ok;
