@@ -1,0 +1,25 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "x86",
+      "displayName": "x86 dev (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "dist",
+      "displayName": "x86 distribution package (no diagnostics)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug",   "displayName": "Debug",   "configurePreset": "x86",  "configuration": "Debug" },
+    { "name": "release", "displayName": "Release", "configurePreset": "x86",  "configuration": "RelWithDebInfo" },
+    { "name": "dist",    "displayName": "Package", "configurePreset": "dist", "configuration": "Release" }
+  ]
+}
