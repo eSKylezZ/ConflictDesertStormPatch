@@ -1,6 +1,12 @@
 # ConflictDesertStormPatch
 Patch for the PC version of Conflict: Desert Storm, adding 16x9 support, controller support, split-screen and more
 
+## Download
+
+- **DesertStormFix (the compiled `dinput8.dll`)**: [Nexus Mods](https://www.nexusmods.com/games/conflictdesertstorm/mods/1)
+- **Blender add-on** (import / export the game's models, characters and animations for mods):
+  [Nexus Mods](https://www.nexusmods.com/games/conflictdesertstorm/mods/2)
+
 ## Features
 - Widescreen resolutions in the launcher (the 3D view is already Hor+)
 - HUD, text and menus scaled to the resolution (no stretching on 16:9)
