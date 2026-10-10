@@ -7,6 +7,7 @@
 tools/
 /TODO.md
 /SERVICE_RECORD_RESEARCH.md
+/research
 
 # AI assistant context and settings
 CLAUDE.md
@@ -70,8 +71,14 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# Files extracted from Xbox disc images
+# Files extracted from Xbox / PS2 / GameCube disc images
 xbox/
+xbox_eu/
+ps2/
+gc/
+demos/
+pcretail/
+/PLATFORM_DIFFERENCES.md
 
 # Screenshots / videos for the mod page (show game content) – kept local
 media/

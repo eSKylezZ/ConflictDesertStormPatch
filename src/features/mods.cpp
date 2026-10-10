@@ -61,11 +61,28 @@ struct ModFile {
 std::unordered_map<std::string, ModFile> g_files;  // upper-case file name -> file
 std::vector<std::string> g_mods;
 std::unordered_map<std::string, std::vector<ModFile>> g_tables;  // .txt parts per upper-case name, in mod order
+// <TABLE>.replace.txt parts (key = "<TABLE>.TXT"): their rows replace every game row with the same first column
+// (case-insensitive) at the first such row's place; "-KEY" deletes; new keys are appended. Later mods win per key.
+std::unordered_map<std::string, std::vector<ModFile>> g_tableReplace;
+// Streamed sounds (cutscene / objective speech, Data\Sound\<language>\*.psf): "AMERICAN\CS_M03_S01.PSF" for a file in
+// a language folder (SAS = English, Delta = American), "CS_M03_S01.PSF" for one that serves every language.
+std::unordered_map<std::string, std::string> g_streams;
 std::unordered_map<uint32_t, std::string> g_texts;               // catalog hash -> text (display names)
+// .strings "[M01]" sections: texts only for the mission whose text file (M01Strs.loc) the level loaded - missions
+// reuse keys (MOV_TXT1 date, MOV_TXT2 place, SPEECH1..) with their own texts
+std::unordered_map<std::string, std::unordered_map<uint32_t, std::string>> g_levelTexts;
+std::string g_levelLoc;                                            // "M01" of the mission texts the level loaded
 std::vector<ModFile> g_skinFiles;                                 // .skin: readable skin definitions
 std::vector<features::SkinVariant> g_skinVariants;                // .skin files with "uniform name"
 std::vector<ModFile> g_weaponFiles;                               // .weapon: readable weapon definitions
 std::vector<std::string> g_bankPacks;                             // .sch files: sound banks added to every level
+// Game data a mod uses without shipping it (built from the player's own install at start-up, BuildReferences):
+// .uses lists, .envpatch / .rmdpatch = a scene / route network as changes against the game's own file.
+std::vector<ModFile> g_usesFiles, g_envPatches, g_rmdPatches;
+// .sch files named like a game level cache (MISSION1.SCH ...): their samples replace that level's samples with the
+// same language + id (e.g. ModKit cli/ds_gc_audio.py: the GameCube's higher-rate sound effects). Upper-case name ->
+// files in mod order (a later mod wins).
+std::unordered_map<std::string, std::vector<std::string>> g_levelSounds;
 std::unordered_map<std::string, std::string> g_soundCaches;       // upper-case level .sch -> merged file ("" = failed)
 
 std::string Upper(std::string s) {
@@ -104,6 +121,46 @@ void BeginReport(const std::string& modsRoot) {
     CloseHandle(f);
 }
 
+std::string GameDir();
+bool ReadAll(const std::string& path, std::string& out);
+uint32_t TextureHash(const std::string& name);
+std::string Trim(const std::string& v);
+
+// A mod's .strings file: "KEY = text" lines (# comments; "\n" in a text = a new line). The text is found by the
+// catalog's hash of the lower-cased key (TextureHash), so a game key (an objective, a briefing page, a message) is
+// replaced and a new key is reachable by that hash - mission scripts and the editor compute the same value.
+void LoadStrings(const std::string& path) {
+    std::string text;
+    if (!ReadAll(path, text)) return;
+    int n = 0;
+    std::string section;   // "" = every level, else "M01"
+    for (size_t pos = 0; pos < text.size();) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] == '#') continue;
+        if (line[start] == '[') {   // "[M01]": the following texts only in that mission, "[all]": every level again
+            const size_t end = line.find(']', start);
+            section = Trim(line.substr(start + 1, end == std::string::npos ? std::string::npos : end - start - 1));
+            for (char& c : section) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            if (section == "ALL") section.clear();
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = Trim(line.substr(0, eq));
+        std::string value = Trim(line.substr(eq + 1));
+        for (size_t k; (k = value.find("\\n")) != std::string::npos;) value.replace(k, 2, "\n");
+        if (key.empty()) continue;
+        (section.empty() ? g_texts : g_levelTexts[section])[TextureHash(key)] = value;
+        ++n;
+    }
+    features::ModLog("Mods: %d text(s) from %s", n, path.substr(path.find_last_of("\\/") + 1).c_str());
+}
+
 void ScanFolder(const std::string& dir, int mod, int& count) {
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
@@ -116,8 +173,18 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             continue;
         }
         const std::string key = Upper(fd.cFileName);
+        if (key.size() > 12 && key.compare(key.size() - 12, 12, ".REPLACE.TXT") == 0) {
+            g_tableReplace[key.substr(0, key.size() - 12) + ".TXT"].push_back({path, mod});
+            ++count;
+            continue;
+        }
         if (key.size() > 4 && key.compare(key.size() - 4, 4, ".TXT") == 0) {
             g_tables[key].push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 8 && key.compare(key.size() - 8, 8, ".STRINGS") == 0) {
+            LoadStrings(path);
             ++count;
             continue;
         }
@@ -131,8 +198,38 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             ++count;
             continue;
         }
+        if (key.size() > 5 && key.compare(key.size() - 5, 5, ".USES") == 0) {
+            g_usesFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 9 && key.compare(key.size() - 9, 9, ".ENVPATCH") == 0) {
+            g_envPatches.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 9 && key.compare(key.size() - 9, 9, ".RMDPATCH") == 0) {
+            g_rmdPatches.push_back({path, mod});
+            ++count;
+            continue;
+        }
         if (key.size() > 4 && key.compare(key.size() - 4, 4, ".SCH") == 0) {
-            g_bankPacks.push_back(path);
+            if (GetFileAttributesA((GameDir() + "\\" + fd.cFileName).c_str()) != INVALID_FILE_ATTRIBUTES)
+                g_levelSounds[key].push_back(path);   // named like a level cache: replaces its samples
+            else
+                g_bankPacks.push_back(path);
+            ++count;
+            continue;
+        }
+        if (key.size() > 4 && key.compare(key.size() - 4, 4, ".PSF") == 0) {
+            std::string folder = Upper(dir.substr(dir.find_last_of("\\/") + 1));
+            if (folder == "SAS" || folder == "UK" || folder == "BRITISH") folder = "ENGLISH";
+            if (folder == "DELTA" || folder == "US") folder = "AMERICAN";
+            static const char* const kLanguages[] = {"ENGLISH", "FRENCH", "GERMAN", "SPANISH", "ITALIAN", "JAPANESE",
+                                                     "AMERICAN", "POLISH"};
+            bool language = false;
+            for (const char* l : kLanguages) language |= folder == l;
+            g_streams[language ? folder + "\\" + key : key] = path;
             ++count;
             continue;
         }
@@ -256,22 +353,88 @@ void AppendRows(std::string& text, const std::string& rows) {
     text += rows;
 }
 
-// Every mod table becomes one file: the game's rows (if the game has that file) + each mod's rows in order.
+// First column of a table row (trimmed, upper-case) - the key replace parts match on.
+std::string RowKey(const std::string& line) {
+    std::string k = Trim(line.substr(0, line.find(',')));
+    CharUpperBuffA(k.data(), static_cast<DWORD>(k.size()));
+    return k;
+}
+
+// Apply <TABLE>.replace.txt parts to a table's text: all rows of a replaced key give way to the mod's rows for it
+// (at the first old row's place), "-KEY" removes the key, keys the table doesn't have are appended.
+int ApplyReplacements(std::string& text, const std::vector<ModFile>& parts) {
+    std::unordered_map<std::string, std::vector<std::string>> rows;  // key -> new rows (empty = delete)
+    std::vector<std::string> order;                                   // keys in first-seen order (for appending)
+    for (const ModFile& part : parts) {
+        std::string body;
+        if (!ReadAll(part.path, body)) continue;
+        std::unordered_map<std::string, bool> seenHere;               // a later part replaces a key's rows as a whole
+        for (size_t pos = 0; pos < body.size();) {
+            size_t nl = body.find('\n', pos);
+            if (nl == std::string::npos) nl = body.size();
+            std::string line = body.substr(pos, nl - pos);
+            pos = nl + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (Trim(line).empty() || Trim(line)[0] == '#') continue;
+            const bool remove = Trim(line)[0] == '-';
+            const std::string key = RowKey(remove ? Trim(line).substr(1) : line);
+            if (key.empty()) continue;
+            if (!rows.count(key)) order.push_back(key);
+            if (!seenHere[key]) rows[key].clear(), seenHere[key] = true;
+            if (!remove) rows[key].push_back(line);
+        }
+    }
+    if (rows.empty()) return 0;
+    std::string out;
+    std::unordered_map<std::string, bool> done;
+    for (size_t pos = 0; pos < text.size();) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto it = rows.find(RowKey(line));
+        if (it == rows.end() || Trim(line).empty()) {
+            out += line + "\r\n";
+            continue;
+        }
+        if (done[it->first]) continue;  // further game rows of a replaced key
+        done[it->first] = true;
+        for (const std::string& r : it->second) out += r + "\r\n";
+    }
+    for (const std::string& key : order)
+        if (!done[key])
+            for (const std::string& r : rows[key]) out += r + "\r\n";
+    text.swap(out);
+    return static_cast<int>(rows.size());
+}
+
+// Every mod table becomes one file: the game's rows (if the game has that file) with the replace parts applied, then
+// each mod's appended rows in order.
 void MergeTables() {
+    for (auto& [key, parts] : g_tableReplace)   // a table that is only replaced still needs its merged copy
+        if (!g_tables.count(key)) g_tables[key];
     if (g_tables.empty()) return;
     const std::string dir = g_mergedRoot = TempDir();
     for (auto& [key, parts] : g_tables) {
         std::string text;
-        const std::string name = parts.front().path.substr(parts.front().path.find_last_of("\\/") + 1);
+        auto replace = g_tableReplace.find(key);
+        const ModFile& first = !parts.empty() ? parts.front() : replace->second.front();
+        std::string name = first.path.substr(first.path.find_last_of("\\/") + 1);
+        if (parts.empty()) name = name.substr(0, name.size() - 12) + ".txt";   // X.replace.txt -> X.txt
         const bool game = ReadGameFile(name, text);
+        int replaced = 0;
+        if (replace != g_tableReplace.end()) replaced = ApplyReplacements(text, replace->second);
         for (const ModFile& part : parts) {
             std::string rows;
             if (ReadAll(part.path, rows)) AppendRows(text, rows);
         }
-        if (!game && parts.size() == 1) {  // a new table: used as it is
+        if (!game && parts.size() == 1 && !replaced) {  // a new table: used as it is
             g_files[key] = parts.front();
             continue;
         }
+        if (replaced)
+            features::ModLog("Mods: %s - %d key(s) replaced by %zu file(s)", name.c_str(), replaced, replace->second.size());
         const std::string out = dir + "\\" + name;
         HANDLE f = CreateFileA(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
         if (f == INVALID_HANDLE_VALUE) {
@@ -281,7 +444,7 @@ void MergeTables() {
         DWORD written = 0;
         WriteFile(f, text.data(), static_cast<DWORD>(text.size()), &written, nullptr);
         CloseHandle(f);
-        g_files[key] = {out, parts.back().mod};
+        g_files[key] = {out, parts.empty() ? replace->second.back().mod : parts.back().mod};
         features::ModLog("Mods: %s = %s + %zu mod part(s)", name.c_str(), game ? "game rows" : "no game file", parts.size());
     }
 }
@@ -326,8 +489,53 @@ uint32_t BankKey(const Chunk& c) {
     return key;
 }
 
+uint32_t ElfHash(const std::string& s);
+
+// ---- squad voices in the other accent ----
+// The squad's speech banks (Bradley / Ramirez / Jones / Foley.sbk, UNITS.TXT col 11 -> soldier +0x40) refer to sample
+// ids shared by every language; each id has a PFSM per language (0 English = the SAS actors, 6 American = Delta's,
+// 1-4 French ...) and the cache loader FUN_0055f540 keeps only the current speech language ([[0x63C9AC]+0x24], set by
+// the uniform setter FUN_0040a320 in the English game) or -1. So the level cache gets, per hero bank, a copy for the
+// other accent: <Name>_US.sbk (or _UK) whose ids have the top bit set, with that accent's samples as language -1.
+const char* const kHeroBanks[4] = {"Bradley", "Ramirez", "Jones", "Foley"};
+constexpr uint32_t kVoiceIdBit = 0x80000000;
+
+int SpeechLanguageNow() {   // 0 UK or 6 US English; -1 = another language (one voice per soldier, no accents)
+    auto* catalog = *reinterpret_cast<uint8_t**>(0x60EDCC);
+    auto* sound = *reinterpret_cast<uint8_t**>(0x63C9AC);
+    if (!catalog || !sound || *reinterpret_cast<int*>(catalog + 0x44) != 0) return -1;
+    const int lang = *reinterpret_cast<int*>(sound + 0x24);
+    return lang == 0 || lang == 6 ? lang : -1;
+}
+
+// A copy of bank `bank` (chunk) for language `lang`: ids remapped, those samples as language -1.
+std::string AccentBank(const Chunk& bank, uint32_t newKey, int lang, const std::vector<Chunk>& chunks) {
+    std::unordered_map<uint32_t, const Chunk*> byId;   // the accent's samples
+    for (const Chunk& c : chunks)
+        if (c.tag == kTagSample && static_cast<int>(SampleKey(c) >> 32) == lang) byId[static_cast<uint32_t>(SampleKey(c))] = &c;
+    std::string copy(bank.data, bank.size), samples;
+    memcpy(copy.data() + 8, &newKey, 4);
+    std::unordered_map<uint32_t, bool> done;
+    for (uint32_t o = 12; o + 4 <= copy.size(); ++o) {   // bank entries aren't 4-byte aligned: every offset is a candidate
+        uint32_t v;
+        memcpy(&v, copy.data() + o, 4);
+        auto it = byId.find(v);
+        if (it == byId.end()) continue;
+        const uint32_t nv = v | kVoiceIdBit, all = 0xFFFFFFFF;
+        memcpy(copy.data() + o, &nv, 4);
+        if (done[v]) continue;
+        done[v] = true;
+        std::string c(it->second->data, it->second->size);
+        memcpy(c.data() + 8, &all, 4);
+        memcpy(c.data() + 12, &nv, 4);
+        samples += c;
+    }
+    return done.empty() ? std::string() : copy + samples;
+}
+
 std::string SoundCache(const char* name) {
-    const std::string key = Upper(name);
+    const int speech = SpeechLanguageNow();
+    const std::string key = Upper(name) + "|" + std::to_string(speech);
     auto cached = g_soundCaches.find(key);
     if (cached != g_soundCaches.end()) return cached->second;
     std::string& result = g_soundCaches[key];
@@ -335,6 +543,34 @@ std::string SoundCache(const char* name) {
     if (!ReadAll(GameDir() + "\\" + name, file)) return result;
     std::vector<Chunk> level = Chunks(file);
     if (level.empty()) return result;
+    int replaced = 0;
+    auto overlays = g_levelSounds.find(Upper(name));
+    if (overlays != g_levelSounds.end()) {   // mod samples replace the level's (same language + id), later mods win
+        std::vector<std::string> packs;
+        std::unordered_map<uint64_t, std::string> swap;
+        for (const std::string& path : overlays->second) {
+            std::string pack;
+            if (!ReadAll(path, pack)) continue;
+            for (const Chunk& c : Chunks(pack))
+                if (c.tag == kTagSample) swap[SampleKey(c)].assign(c.data, c.size);
+        }
+        if (!swap.empty()) {
+            std::string rebuilt(file.data(), 8);
+            for (const Chunk& c : level) {
+                auto it = c.tag == kTagSample ? swap.find(SampleKey(c)) : swap.end();
+                if (it == swap.end()) {
+                    rebuilt.append(c.data, c.size);
+                } else {
+                    rebuilt += it->second;
+                    ++replaced;
+                }
+            }
+            file.swap(rebuilt);
+            level = Chunks(file);
+            features::ModLog("Mods: %s - %d sample(s) replaced from %zu file(s)", name, replaced,
+                             overlays->second.size());
+        }
+    }
     std::unordered_map<uint32_t, bool> banks;
     std::unordered_map<uint64_t, bool> samples;
     for (const Chunk& c : level) {
@@ -343,6 +579,21 @@ std::string SoundCache(const char* name) {
     }
     std::string extra;
     int added = 0;
+    if (speech >= 0) {
+        for (const char* hero : kHeroBanks) {
+            const uint32_t heroKey = ElfHash(std::string(hero) + ".sbk");
+            const uint32_t altKey = ElfHash(std::string(hero) + (speech == 0 ? "_US" : "_UK") + ".sbk");
+            for (const Chunk& c : level)
+                if (c.tag == kTagBank && BankKey(c) == heroKey && !banks[altKey]) {
+                    const std::string alt = AccentBank(c, altKey, speech == 0 ? 6 : 0, level);
+                    if (!alt.empty()) {
+                        banks[altKey] = true;
+                        extra += alt;
+                        ++added;
+                    }
+                }
+        }
+    }
     for (const std::string& path : g_bankPacks) {
         std::string pack;
         if (!ReadAll(path, pack)) continue;
@@ -357,12 +608,12 @@ std::string SoundCache(const char* name) {
             }
         }
     }
-    if (extra.empty()) return result;
+    if (extra.empty() && !replaced) return result;
     file += extra;
     const uint32_t body = static_cast<uint32_t>(file.size() - 8);
     memcpy(file.data() + 4, &body, 4);
     if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
-    const std::string out = g_mergedRoot + "\\" + name;
+    const std::string out = g_mergedRoot + "\\" + (speech == 6 ? "us_" : "") + name;
     HANDLE f = CreateFileA(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return result;
     DWORD written = 0;
@@ -370,7 +621,7 @@ std::string SoundCache(const char* name) {
     CloseHandle(f);
     if (ok) {
         result = out;
-        features::ModLog("Mods: %s + %d sound bank(s), %zu bytes of mod sound", name, added, extra.size());
+        dslog::Write("Mods: %s + %d sound bank(s) (voices and mods), %zu bytes", name, added, extra.size());
     }
     return result;
 }
@@ -429,6 +680,8 @@ std::vector<std::vector<std::string>> g_weaponRows;  // Weaps.txt rows known so 
 std::unordered_map<std::string, int> g_weaponFactions;     // upper-case id -> features::kFaction* mask (.weapon "faction")
 std::unordered_map<std::string, std::string> g_weaponBase;  // upper-case id -> "based on" (factions are inherited)
 std::unordered_map<std::string, int> g_weaponMagazines;
+std::unordered_map<std::string, std::string> g_skinVoices;   // upper-case skin texture -> voice bank name
+std::unordered_map<std::string, std::string> g_skinNormals;  // upper-case skin texture -> normal map (.skin "normal map")
 std::unordered_map<std::string, std::string> g_skinBodies;  // upper-case skin texture -> body model (.skin "body")    // upper-case id -> "magazines" set in its .weapon file
 
 // "SAS, Delta" / "Russian Iraqi" / "allied" / "eastern" / "all" -> mask (0 = nothing recognised).
@@ -462,6 +715,7 @@ const std::vector<std::string>* WeaponRow(const std::string& id) {
 void LoadWeaponRows() {
     std::string text;
     ReadGameFile("Weaps.txt", text);
+    if (auto rep = g_tableReplace.find("WEAPS.TXT"); rep != g_tableReplace.end()) ApplyReplacements(text, rep->second);
     auto it = g_tables.find("WEAPS.TXT");
     if (it != g_tables.end())
         for (const ModFile& part : it->second) {
@@ -756,6 +1010,61 @@ bool MakeSoundBank(const std::string& donor, const std::string& newName, const s
     return true;
 }
 
+// A .skin's own voice: bank <newName> = squad bank <hero> ("Bradley", "Foley", "Ramirez", "Jones") in one accent
+// (language 0 = the SAS actors, 6 = Delta's), every sample under a new id as language -1 so it loads in any level and
+// game language, lines replaced by WAV files ("voice line N", N = the bank's samples in order from 1, as the ModKit's
+// ds_sound.py wav numbers them). The pack is added to every level's sound cache that lacks it.
+bool MakeVoiceBank(const std::string& hero, int lang, const std::string& newName, const std::string& dir,
+                   const std::unordered_map<int, std::string>& lines, const std::string& file) {
+    std::string bank;
+    std::vector<std::pair<uint32_t, std::string>> samples;
+    if (!FindBank(hero, bank, samples)) {
+        features::ModLog("[fail] Mods: %s - voice of %s not found in any level sound cache", file.c_str(), hero.c_str());
+        return false;
+    }
+    const std::vector<uint32_t> order = BankSampleOrder(bank, samples);
+    const uint32_t key = ElfHash(newName + ".sbk");
+    memcpy(&bank[8], &key, 4);
+    std::string chunks;
+    for (const auto& [line, wav] : lines)
+        if (line < 1 || line > static_cast<int>(order.size()))
+            features::ModLog("[fail] Mods: %s - voice line %d: %s has lines 1-%zu", file.c_str(), line, hero.c_str(), order.size());
+    for (size_t n = 0; n < order.size(); ++n) {
+        const uint32_t id = order[n], newId = ElfHash(newName + "#" + std::to_string(n + 1)) | 0x10000000;
+        std::string chunk;
+        auto wav = lines.find(static_cast<int>(n + 1));
+        if (wav != lines.end()) {
+            Pcm pcm;
+            if (!ReadWav(dir + "\\" + wav->second, pcm)) {
+                features::ModLog("[fail] Mods: %s - can't read %s (PCM or float WAV, up to 65535 Hz)", file.c_str(),
+                                 wav->second.c_str());
+                return false;
+            }
+            chunk = EncodeSample(pcm, newId);
+        } else {   // the accent's sample, else the one all languages share
+            const std::string* pick = nullptr;
+            for (const auto& [sid, data] : samples) {
+                if (sid != id || data.size() < 16) continue;
+                int32_t l;
+                memcpy(&l, data.data() + 8, 4);
+                if (l == lang || (!pick && l == -1)) pick = &data;
+            }
+            if (!pick) continue;
+            chunk = *pick;
+            const uint32_t all = 0xFFFFFFFF;
+            memcpy(&chunk[8], &all, 4);
+            memcpy(&chunk[12], &newId, 4);
+        }
+        for (size_t o = 12; o + 4 <= bank.size(); ++o)
+            if (!memcmp(&bank[o], &id, 4)) memcpy(&bank[o], &newId, 4);
+        chunks += chunk;
+    }
+    AddBankPack(newName, bank + chunks);
+    features::ModLog("Mods: voice %s = %s (%s) with %zu own line(s)", newName.c_str(), hero.c_str(), lang == 6 ? "Delta" : "SAS",
+                     lines.size());
+    return true;
+}
+
 // Texture key (FUN_004b9ab0): the archive LFSR over the lower-cased name, as stored in TEXL.
 uint32_t TextureHash(const std::string& name) {
     std::string lower = name;
@@ -821,7 +1130,7 @@ bool CopyModel(const std::string& model, const std::string& newName,
 void BuildWeapons() {
     if (g_weaponFiles.empty()) return;
     LoadWeaponRows();
-    std::string rows;
+    std::string rows, replaceRows;   // new weapons / game weapons changed in place
     for (const ModFile& wf : g_weaponFiles) {
         std::string text;
         if (!ReadAll(wf.path, text)) continue;
@@ -854,8 +1163,9 @@ void BuildWeapons() {
             for (auto& [k, v] : kv)
                 if (k == "displayname") g_texts[TextureHash(id)] = v;
                 else if (k != "id" && k != "faction" && k != "factions")
-                    features::ModLog("[fail] Mods: %s - \"%s\" ignored: %s is a game weapon - to change it, make a new one "
-                                 "(\"id = <new id>\", \"based on = %s\")", file.c_str(), k.c_str(), id.c_str(), id.c_str());
+                    features::ModLog("[fail] Mods: %s - \"%s\" ignored: %s is a game weapon - to change it in place add "
+                                 "\"based on = %s\", or make a new one (\"id = <new id>\")", file.c_str(), k.c_str(),
+                                 id.c_str(), id.c_str());
             if (std::find_if(g_modWeaponIds.begin(), g_modWeaponIds.end(),
                              [&](const std::string& w) { return _stricmp(w.c_str(), id.c_str()) == 0; }) == g_modWeaponIds.end())
                 g_modWeaponIds.push_back((*WeaponRow(id))[0]);
@@ -868,6 +1178,8 @@ void BuildWeapons() {
                          file.c_str(), base.c_str());
             continue;
         }
+        // "based on" = its own id: the game weapon itself is changed (its row replaced in place, no new weapon)
+        const bool inPlace = _stricmp(base.c_str(), id.c_str()) == 0;
         std::vector<std::string> row = *baseRow;
         const std::string baseSound = row.size() > kColSound ? row[kColSound] : "";
         row.resize(std::max<size_t>(row.size(), kWeapsColumns), "-1");
@@ -940,7 +1252,7 @@ void BuildWeapons() {
         // The weapons parser (FUN_00491xxx) keeps one weapon per category for GRENADE LAUNCH/RIFLE (the M16A2 + M203),
         // GRENADE LAUNCHER, GRENADE (frag) and FIST, and a second one stops the game with "More than one ... has been
         // loaded!". A copy of the M16A2 becomes a plain assault rifle; copies of the other three can't be made.
-        {
+        if (!inPlace) {
             const std::string cat = Upper(Trim(row[5]));
             if (cat == "GRENADE LAUNCH/RIFLE") {
                 row[5] = "ASSAULT RIFLE";
@@ -967,6 +1279,16 @@ void BuildWeapons() {
         }
         std::string line;
         for (size_t i = 0; i < row.size(); ++i) line += (i ? "," : "") + row[i];
+        if (inPlace) {
+            row[0] = (*baseRow)[0];   // keep the game's spelling of the id
+            line = row[0] + line.substr(line.find(','));
+            replaceRows += line + "\r\n";
+            for (auto& r : g_weaponRows)
+                if (!r.empty() && _stricmp(r[0].c_str(), id.c_str()) == 0) r = row;
+            if (!ownSound && row[kColSound] != "-1" && row[kColSound] != baseSound) BorrowBank(row[kColSound]);
+            features::ModLog("Mods: game weapon %s changed (%s)", row[0].c_str(), file.c_str());
+            continue;
+        }
         rows += line + "\r\n";
         g_weaponRows.push_back(row);
         g_modWeaponIds.push_back(id);
@@ -974,11 +1296,14 @@ void BuildWeapons() {
         features::ModLog("Mods: weapon %s (%s) based on %s, sound %s", id.c_str(), file.c_str(), base.c_str(),
                      row[kColSound].c_str());
     }
-    if (rows.empty()) return;
+    if (rows.empty() && replaceRows.empty()) return;
     if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
     CreateDirectoryA((g_mergedRoot + "\\weapons").c_str(), nullptr);
     const std::string path = g_mergedRoot + "\\weapons\\Weaps.txt";  // one more part of the Weaps.txt table
-    if (WriteAll(path, rows)) g_tables["WEAPS.TXT"].push_back({path, g_weaponFiles.back().mod});
+    if (!rows.empty() && WriteAll(path, rows)) g_tables["WEAPS.TXT"].push_back({path, g_weaponFiles.back().mod});
+    const std::string repPath = g_mergedRoot + "\\weapons\\Weaps.replace.txt";  // game weapons changed in place
+    if (!replaceRows.empty() && WriteAll(repPath, replaceRows))
+        g_tableReplace["WEAPS.TXT"].push_back({repPath, g_weaponFiles.back().mod});
 }
 
 // ---- readable skin files (.skin) ----
@@ -1006,6 +1331,34 @@ std::string NextNameRow(const char* table, const std::string& name, std::vector<
     return name + "," + std::to_string(maxId + 100 + static_cast<int>(added.size())) + "\r\n";
 }
 
+// A renamed copy of a body model (a mod's, else the game's): every object header's model name (EOBJ +8, char[64])
+// becomes newName, so the game loads it as a model of its own. Written to the merged folder and indexed like a mod file.
+bool CopyBody(const std::string& source, const std::string& newName, const std::string& file) {
+    std::string evo;
+    auto it = g_files.find(Upper(source + ".evo"));
+    if (!(it != g_files.end() ? ReadAll(it->second.path, evo) : ReadGameFile(source + ".evo", evo))) {
+        features::ModLog("[fail] Mods: %s - body %s not found", file.c_str(), source.c_str());
+        return false;
+    }
+    int objects = 0;
+    for (size_t p = evo.find("EOBJ"); p != std::string::npos; p = evo.find("EOBJ", p + 4)) {
+        if (p + 8 + 64 > evo.size() || _stricmp(evo.c_str() + p + 8, source.c_str()) != 0) continue;
+        memset(&evo[p + 8], 0, 64);
+        memcpy(&evo[p + 8], newName.c_str(), newName.size());
+        ++objects;
+    }
+    if (!objects) {
+        features::ModLog("[fail] Mods: %s - %s.evo has no objects named %s", file.c_str(), source.c_str(), source.c_str());
+        return false;
+    }
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    CreateDirectoryA((g_mergedRoot + "\\bodies").c_str(), nullptr);
+    const std::string path = g_mergedRoot + "\\bodies\\" + newName + ".evo";
+    if (!WriteAll(path, evo)) return false;
+    g_files[Upper(newName + ".evo")] = {path, g_skinFiles.back().mod};
+    return true;
+}
+
 void BuildSkins() {
     if (g_skinFiles.empty()) return;
     static const char* const kRoles[][3] = {{"bradley", "rifleman", "R"}, {"foley", "sniper", "S"},
@@ -1017,7 +1370,8 @@ void BuildSkins() {
         std::string text;
         if (!ReadAll(sf.path, text)) continue;
         const std::string file = sf.path.substr(sf.path.find_last_of("\\/") + 1);
-        std::string uniform, soldier, texture, portrait, first, last, uniformName, body;
+        std::string uniform, soldier, texture, portrait, first, last, uniformName, body, normalMap, voice, voiceFrom, voiceFolder;
+        std::unordered_map<int, std::string> voiceLines;
         for (size_t pos = 0; pos < text.size();) {
             size_t nl = text.find('\n', pos);
             if (nl == std::string::npos) nl = text.size();
@@ -1035,6 +1389,12 @@ void BuildSkins() {
             else if (k == "lastname") last = v;
             else if (k == "uniformname") uniformName = v;
             else if (k == "body" || k == "model") body = v;
+            else if (k == "normalmap" || k == "bumpmap") normalMap = v;
+            else if (k == "voice" || k == "accent") voice = KeyOf(v);
+            else if (k == "voicefrom" || k == "voiceof") voiceFrom = KeyOf(v);
+            else if (k == "voicefolder" || k == "voicelines") voiceFolder = v;
+            else if (k.compare(0, 9, "voiceline") == 0 && k.size() > 9 && isdigit(static_cast<unsigned char>(k[9])))
+                voiceLines[atoi(k.c_str() + 9)] = v;
             else features::ModLog("[fail] Mods: %s - unknown setting \"%s\"", file.c_str(), k.c_str());
         }
         static const char* const kSideTables[4] = {"SAS", "US", "RU", "IR"};
@@ -1079,11 +1439,66 @@ void BuildSkins() {
         ++n;
         tables[table] += std::string(kKeys[role]) + (uniformName.empty() ? "SkinMod" : "SkinUni") + std::to_string(n) +
                          "," + texture + "," + portrait + "," + first + "," + last + "," + std::to_string(900 + n) + "\r\n";
-        if (!body.empty()) {  // bodies.cpp swaps the soldier's model whenever this texture's skin is put on
-            if (g_files.find(Upper(body + ".evo")) == g_files.end())
-                features::ModLog("[fail] Mods: %s - body %s: no %s.evo in a mod folder", file.c_str(), body.c_str(), body.c_str());
-            else
-                g_skinBodies[Upper(texture)] = body;
+        if (!body.empty() && g_files.find(Upper(body + ".evo")) == g_files.end()) {
+            features::ModLog("[fail] Mods: %s - body %s: no %s.evo in a mod folder", file.c_str(), body.c_str(), body.c_str());
+            body.clear();
+        }
+        if (!normalMap.empty()) {
+            // The game binds a normal map to a body model (Characters_*.rfx: REFX_DOT3_BUMP "model" NORMAL_MAP "x"), and
+            // the model is shared by everyone wearing it - so this skin gets a body of its own: a renamed copy of its
+            // body (or the soldier's game body) that bodies.cpp swaps in and binds the normal map to.
+            bool found = false;
+            for (const char* ext : {".tga", ".dds"}) found |= g_files.count(Upper(normalMap + ext)) > 0;
+            if (!found) {
+                features::ModLog("[fail] Mods: %s - normal map %s: no %s.tga / .dds in a mod folder", file.c_str(),
+                                 normalMap.c_str(), normalMap.c_str());
+            } else {
+                static const char* const kBodies[4] = {"HERO01_ARMSTRONG", "HERO04_FOLEY", "HERO02_RAMIREZ", "HERO03_JONES"};
+                const std::string source = body.empty() ? kBodies[role] : body;
+                std::string copy = "DSFIX_NM_";
+                for (char c : Upper(texture)) copy += isalnum(static_cast<unsigned char>(c)) ? c : '_';
+                if (copy.size() > 60) copy.resize(60);
+                if (CopyBody(source, copy, file)) {
+                    body = copy;
+                    g_skinNormals[Upper(texture)] = normalMap;
+                }
+            }
+        }
+        if (!body.empty()) g_skinBodies[Upper(texture)] = body;  // bodies.cpp swaps it in with this texture's skin
+        const std::string skinDir = sf.path.substr(0, sf.path.find_last_of("\\/"));
+        if (!voiceFolder.empty()) {   // every "...lineNN.wav" in a folder (ds_sound.py wav names them so)
+            WIN32_FIND_DATAA fd;
+            HANDLE h = FindFirstFileA((skinDir + "\\" + voiceFolder + "\\*.wav").c_str(), &fd);
+            int found = 0;
+            if (h != INVALID_HANDLE_VALUE) {
+                do {
+                    const std::string name = Upper(fd.cFileName);
+                    const size_t at = name.rfind("LINE");
+                    if (at == std::string::npos || !isdigit(static_cast<unsigned char>(name[at + 4]))) continue;
+                    const int line = atoi(name.c_str() + at + 4);
+                    if (!voiceLines.count(line)) voiceLines[line] = voiceFolder + "\\" + fd.cFileName, ++found;
+                } while (FindNextFileA(h, &fd));
+                FindClose(h);
+            }
+            if (!found)
+                features::ModLog("[fail] Mods: %s - voice folder %s: no ...line01.wav ... files", file.c_str(), voiceFolder.c_str());
+        }
+        if (!voice.empty() || !voiceFrom.empty() || !voiceLines.empty()) {   // a voice of its own (voices.cpp)
+            static const char* const kVoiceBanks[4] = {"Bradley", "Foley", "Ramirez", "Jones"};
+            int from = role;
+            for (int r = 0; r < 4; ++r)
+                if (voiceFrom == kRoles[r][0] || voiceFrom == kRoles[r][1] || (r == 2 && voiceFrom == "ramirez")) from = r;
+            if (!voiceFrom.empty() && from == role && voiceFrom != kRoles[role][0] && voiceFrom != kRoles[role][1] &&
+                !(role == 2 && voiceFrom == "ramirez"))
+                features::ModLog("[fail] Mods: %s - voice from \"%s\": Bradley, Foley, Connors or Jones", file.c_str(), voiceFrom.c_str());
+            int lang = sideIndex == 1 ? 6 : 0;
+            if (voice == "delta" || voice == "us" || voice == "american") lang = 6;
+            else if (voice == "sas" || voice == "uk" || voice == "british") lang = 0;
+            else if (!voice.empty())
+                features::ModLog("[fail] Mods: %s - voice \"%s\": SAS or Delta", file.c_str(), voice.c_str());
+            std::string name = "DSFIX_V_";
+            for (char c : Upper(texture)) name += isalnum(static_cast<unsigned char>(c)) ? c : '_';
+            if (MakeVoiceBank(kVoiceBanks[from], lang, name, skinDir, voiceLines, file)) g_skinVoices[Upper(texture)] = name;
         }
         tables["fNames.txt"] += NextNameRow("fNames.txt", first, firstAdded);
         tables["sNames.txt"] += NextNameRow("sNames.txt", last, lastAdded);
@@ -1172,7 +1587,7 @@ const ModFile* Find(const char* name) {
 }
 
 char* __cdecl Resolve(const char* name, void* paths, int flags) {
-    if (!g_bankPacks.empty() && name && !strchr(name, ':') && !strpbrk(name, "\\/")) {
+    if (name && !strchr(name, ':') && !strpbrk(name, "\\/")) {   // level sound caches: voices + mod banks
         const size_t len = strlen(name);
         if (len > 4 && _stricmp(name + len - 4, ".sch") == 0) {
             const std::string merged = SoundCache(name);
@@ -1229,9 +1644,196 @@ const std::vector<features::SkinVariant>& features::SkinVariants() { return g_sk
 namespace {
 int g_generation = 0;  // bumped by every reload (features::ModsGeneration: caches of mod data refresh)
 
+// ---- game data by reference (no game files in the mod) ----
+// A mission made with the editor reuses the game's own files - models and textures from other levels, a level's AI
+// walk map, its scene - and must not ship them. Instead:
+//   <name>.uses       lines  "file T72M1.EVO"                  the player's copy (any game .dat) under that name
+//                            "file BASETEST.QTD = MISSION1.QTD" the player's copy of the right-hand file, renamed
+//                            "bank VehicleTankWeaponT72"       a sound bank from the game's level sound caches
+//   <name>.envpatch  "base MISSION1.ENV", then hunks "@ <start> <delete> <insert>" + <insert> lines: the scene as
+//                    line changes against the game's scene (start = 0-based line of the base) -> <name>.ENV
+//   <name>.rmdpatch  "base MISSION1.RMD", "count <n>", then "<i> x y z l0 l1 l2 l3 l4 flags weight" for every route
+//                    marker that differs from the base marker <i> -> <name>.RMD
+// Built into %TEMP%\DesertStormFix\merged\game at start-up and indexed like mod files; a real file of the same name in
+// a mod wins. ModKit editor/commands.py writes them (save_mission), conflict_ds_tools/env.py applies them too.
+std::vector<std::string> SplitLines(const std::string& text) {
+    std::vector<std::string> out;
+    size_t a = 0;
+    while (a < text.size()) {
+        size_t b = text.find('\n', a);
+        if (b == std::string::npos) b = text.size();
+        std::string line = text.substr(a, b - a);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        out.push_back(line);
+        a = b + 1;
+    }
+    return out;
+}
+
+std::string GameDataDir() {
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    const std::string dir = g_mergedRoot + "\\game";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    return dir;
+}
+
+void AddBuilt(const std::string& name, const std::string& data, int mod, const char* what) {
+    const std::string key = Upper(name);
+    if (g_files.count(key)) return;   // the mod ships its own
+    const std::string path = GameDataDir() + "\\" + name;
+    if (!WriteAll(path, data)) {
+        features::ModLog("[fail] Mods: %s: can't write %s", g_mods[mod].c_str(), path.c_str());
+        return;
+    }
+    g_files[key] = {path, mod};
+    (void)what;
+}
+
+bool ApplyEnvPatch(const std::string& patch, std::string& out, std::string& base) {
+    const std::vector<std::string> p = SplitLines(patch);
+    if (p.empty() || p[0].compare(0, 5, "base ") != 0) return false;
+    base = p[0].substr(5);
+    std::string text;
+    if (!ReadGameFile(base, text)) return false;
+    const bool crlf = text.find("\r\n") != std::string::npos;
+    const std::vector<std::string> lines = SplitLines(text);
+    std::vector<std::string> result;
+    size_t at = 0;   // next base line to copy
+    for (size_t i = 1; i < p.size(); ++i) {
+        if (p[i].empty() || p[i][0] != '@') continue;
+        unsigned start = 0, del = 0, ins = 0;
+        if (sscanf_s(p[i].c_str(), "@ %u %u %u", &start, &del, &ins) != 3 || start < at || start + del > lines.size() ||
+            i + ins >= p.size() + 1)
+            return false;
+        while (at < start) result.push_back(lines[at++]);
+        at += del;
+        for (unsigned k = 0; k < ins; ++k) result.push_back(p[++i]);
+    }
+    while (at < lines.size()) result.push_back(lines[at++]);
+    out.clear();
+    for (const std::string& l : result) out += l + (crlf ? "\r\n" : "\n");
+    return true;
+}
+
+bool ApplyRmdPatch(const std::string& patch, std::string& out, std::string& base) {
+    const std::vector<std::string> p = SplitLines(patch);
+    if (p.size() < 2 || p[0].compare(0, 5, "base ") != 0) return false;
+    base = p[0].substr(5);
+    std::string file;
+    unsigned count = 0;
+    if (!ReadGameFile(base, file) || file.size() < 12 || sscanf_s(p[1].c_str(), "count %u", &count) != 1 || count > 65535)
+        return false;
+    out.assign(file.data(), 12);
+    uint32_t n = count;
+    memcpy(out.data() + 8, &n, 4);
+    out.resize(12 + 32 * count, '\0');
+    const size_t baseCount = (file.size() - 12) / 32;
+    memcpy(out.data() + 12, file.data() + 12, 32 * std::min<size_t>(baseCount, count));
+    for (size_t i = 2; i < p.size(); ++i) {
+        unsigned idx, l[5], flags;
+        float x, y, z, w;
+        if (sscanf_s(p[i].c_str(), "%u %f %f %f %u %u %u %u %u %u %f", &idx, &x, &y, &z, &l[0], &l[1], &l[2], &l[3], &l[4],
+                     &flags, &w) != 11 || idx >= count)
+            continue;
+        char* m = out.data() + 12 + 32 * idx;
+        if (idx >= baseCount) { const uint16_t filler = 0xCDCD; memcpy(m + 26, &filler, 2); }   // like the editor's
+        memcpy(m, &x, 4); memcpy(m + 4, &y, 4); memcpy(m + 8, &z, 4);
+        for (int k = 0; k < 5; ++k) { const uint16_t v = static_cast<uint16_t>(l[k]); memcpy(m + 12 + 2 * k, &v, 2); }
+        const uint16_t f = static_cast<uint16_t>(flags);
+        memcpy(m + 24, &f, 2);
+        memcpy(m + 28, &w, 4);
+    }
+    return true;
+}
+
+// Kit piece: object `index` of a world-piece model (no transform keys - every object is in world space) as a one-object
+// static prop: the bytes from its EOBJ to its NEXT / DONE, header patched (model name +8, node type +0x8C = 0, parent
+// +0xB0 = "ROOT"), last tag DONE. Objects are found by their "EOBJ" + version 0x2F tag after the previous one's NEXT.
+// Same rules as ModKit conflict_ds_tools/kits.py.
+bool CutPiece(const std::string& model, int index, const std::string& name, std::string& out) {
+    std::string data;
+    if (!ReadGameFile(model, data) || data.size() < 8 || data.compare(0, 4, "EOBJ") != 0) return false;
+    static const char kNext[] = "NEXTEOBJ/   ";
+    std::vector<size_t> starts = {0};
+    for (size_t p = data.find(std::string(kNext, 12)); p != std::string::npos; p = data.find(std::string(kNext, 12), p + 4))
+        starts.push_back(p + 4);
+    if (index < 0 || index >= static_cast<int>(starts.size())) return false;
+    const size_t a = starts[index], b = index + 1 < static_cast<int>(starts.size()) ? starts[index + 1] : data.size();
+    out = data.substr(a, b - a);
+    if (out.size() < 0xF0 || (out.compare(out.size() - 4, 4, "NEXT") && out.compare(out.size() - 4, 4, "DONE"))) return false;
+    std::string n = name.substr(0, 63);
+    memset(&out[8], 0, 64);
+    memcpy(&out[8], n.data(), n.size());
+    const uint32_t staticType = 0;
+    memcpy(&out[0x8C], &staticType, 4);
+    memset(&out[0xB0], 0, 64);
+    memcpy(&out[0xB0], "ROOT", 4);
+    memcpy(&out[out.size() - 4], "DONE", 4);
+    return true;
+}
+
+void BuildReferences() {
+    for (const ModFile& u : g_usesFiles) {
+        std::string text;
+        if (!ReadAll(u.path, text)) continue;
+        int files = 0, banks = 0;
+        for (std::string line : SplitLines(text)) {
+            const size_t hash = line.find('#');
+            if (hash != std::string::npos) line.resize(hash);
+            char kind[8] = {}, a[128] = {}, eq[4] = {}, b[128] = {};
+            const int n = sscanf_s(line.c_str(), "%7s %127s %3s %127s", kind, 8, a, 128, eq, 4, b, 128);
+            if (n < 2) continue;
+            if (!_stricmp(kind, "bank")) {
+                BorrowBank(a);
+                ++banks;
+            } else if (!_stricmp(kind, "piece")) {            // piece KIT_X = MODEL.EVO <index>
+                char model[128] = {};
+                int index = -1;
+                if (sscanf_s(line.c_str(), "%*s %*s = %127s %d", model, 128, &index) != 2) continue;
+                std::string data;
+                if (g_files.count(Upper(std::string(a) + ".EVO"))) { ++files; continue; }
+                if (!CutPiece(model, index, a, data)) {
+                    features::ModLog("[fail] Mods: %s uses piece %d of %s, which this game's data doesn't have",
+                                     g_mods[u.mod].c_str(), index, model);
+                    continue;
+                }
+                AddBuilt(std::string(a) + ".EVO", data, u.mod, "piece");
+                ++files;
+            } else if (!_stricmp(kind, "file")) {
+                const std::string source = n == 4 && !strcmp(eq, "=") ? b : a;
+                std::string data;
+                if (g_files.count(Upper(a))) { ++files; continue; }
+                if (!ReadGameFile(source, data)) {
+                    features::ModLog("[fail] Mods: %s uses %s, which isn't in this game's data", g_mods[u.mod].c_str(),
+                                     source.c_str());
+                    continue;
+                }
+                AddBuilt(a, data, u.mod, "file");
+                ++files;
+            }
+        }
+        features::ModLog("Mods: %s uses %d game file(s) and %d sound bank(s) from your install", g_mods[u.mod].c_str(),
+                         files, banks);
+    }
+    for (int kind = 0; kind < 2; ++kind)
+        for (const ModFile& m : kind ? g_rmdPatches : g_envPatches) {
+            std::string patch, out, base;
+            const std::string file = m.path.substr(m.path.find_last_of("\\/") + 1);
+            const std::string name = file.substr(0, file.find_last_of('.')) + (kind ? ".RMD" : ".ENV");
+            if (!ReadAll(m.path, patch) || !(kind ? ApplyRmdPatch(patch, out, base) : ApplyEnvPatch(patch, out, base))) {
+                features::ModLog("[fail] Mods: %s: %s doesn't fit this game's %s", g_mods[m.mod].c_str(), file.c_str(),
+                                 base.empty() ? "files" : base.c_str());
+                continue;
+            }
+            AddBuilt(name, out, m.mod, kind ? "routes" : "scene");
+            features::ModLog("Mods: %s = %s + %s", name.c_str(), base.c_str(), file.c_str());
+        }
+}
+
 void BuildAll() {
     BeginReport(GameDir() + "\\Mods");
     BuildIndex();
+    BuildReferences();
     BuildWeapons();
     BuildSkins();
     MergeTables();
@@ -1242,19 +1844,28 @@ void ResetState() {
     g_files.clear();
     g_mods.clear();
     g_tables.clear();
+    g_tableReplace.clear();
     g_texts.clear();
+    g_levelTexts.clear();
     g_skinFiles.clear();
     g_skinVariants.clear();
     g_weaponFiles.clear();
     g_bankPacks.clear();
+    g_levelSounds.clear();
+    g_streams.clear();
     g_soundCaches.clear();
     g_modWeaponIds.clear();
     g_weaponFactions.clear();
     g_weaponBase.clear();
     g_weaponMagazines.clear();
     g_skinBodies.clear();
+    g_skinNormals.clear();
+    g_skinVoices.clear();
     g_weaponRows.clear();
     g_borrowed.clear();
+    g_usesFiles.clear();
+    g_envPatches.clear();
+    g_rmdPatches.clear();
 }
 
 // The game's start-up tables (FUN_00411740: file -> parser(text, size[, a, b])), in its order - names before the skins
@@ -1383,10 +1994,88 @@ int __fastcall TextureLoad(uint8_t* tex) {
     return reinterpret_cast<int(__fastcall*)(uint8_t*)>(kTextureLoad)(tex);
 }
 
+// ---- streamed sounds ----
+// Cutscene and objective speech are streams: PFST entries of the level sound cache {id, u32 ADPCM bytes per channel,
+// u16 rate 44097, u8 format 4, u8 n, path "data\\sound\\English\\CS_M03_S01.psf"}, read by WaveDataSourcePsfStream
+// (vtable 0x5DAF70) - its load-from-cache 0x5610E0 (thiscall, ret 4) keeps the path at +0x18 and the length at +0x14;
+// open 0x561250 fopens the path itself (no resolver), skips the 8-byte header and the reader stops at +0x14. Each
+// file is a whole mix (music, effects, speech), stereo 44.1 kHz, 16-byte ADPCM blocks interleaved L / R. The load is
+// wrapped: a mod's file for that language (or for all) takes the path, and its length the size.
+constexpr uint32_t kStreamLoad = 0x5610E0, kStreamLoadCont = 0x5610E7;
+constexpr uint8_t kStreamLoadEntry[] = {0x83, 0xEC, 0x0C, 0x8D, 0x44, 0x24, 0x00};  // sub esp,0xC; lea eax,[esp]
+using StreamLoadFn = char(__thiscall*)(void*, void*);
+StreamLoadFn g_streamLoad = nullptr;
+
+char __fastcall StreamLoad(uint8_t* reader, void*, void* cache) {
+    const char r = g_streamLoad(reader, cache);
+    char*& path = *reinterpret_cast<char**>(reader + 0x18);
+    if (!r || !path || g_streams.empty()) return r;
+    const std::string game = Upper(path);
+    const size_t slash = game.find_last_of("\\/");
+    const std::string name = game.substr(slash + 1);
+    const size_t folderStart = game.find_last_of("\\/", slash - 1);
+    const std::string language = slash == std::string::npos || folderStart == std::string::npos
+                                     ? std::string() : game.substr(folderStart + 1, slash - folderStart - 1);
+    auto it = g_streams.find(language + "\\" + name);
+    if (it == g_streams.end()) it = g_streams.find(name);
+    if (it == g_streams.end()) return r;
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (!GetFileAttributesExA(it->second.c_str(), GetFileExInfoStandard, &info) || info.nFileSizeLow < 8 + 32) return r;
+    using Alloc = char*(__cdecl*)(int, int);
+    char* copy = reinterpret_cast<Alloc>(0x4B8450)(static_cast<int>(it->second.size()) + 1, 0x14);
+    if (!copy) return r;
+    memcpy(copy, it->second.c_str(), it->second.size() + 1);
+    reinterpret_cast<void(__cdecl*)(void*)>(0x4B8590)(path);
+    path = copy;
+    *reinterpret_cast<uint32_t*>(reader + 0x14) = (info.nFileSizeLow - 8) / 32 * 16;   // whole L / R block pairs
+    static std::unordered_map<std::string, bool> logged;
+    if (!logged[it->second]) {
+        logged[it->second] = true;
+        features::ModLog("Mods: %s %s -> %s", language.c_str(), name.c_str(), it->second.c_str());
+    }
+    return r;
+}
+
+#ifndef DS_DIST
+// Dev: the stream open's fopen (call 0x56732D at 0x561269) logs each stream file opened.
+void* __cdecl StreamOpen(const char* path, const char* mode) {
+    dslog::Write("[dev] stream opened: %s", path ? path : "(null)");
+    return reinterpret_cast<void*(__cdecl*)(const char*, const char*)>(0x56732D)(path, mode);
+}
+#endif
+
+// "Does this file exist?" FUN_004bfc80(name): in archive mode it only asks the archive index (tail jump at 0x4BFC89 to
+// FUN_004be360, name still on the stack) - a file only a mod has was "missing". Its callers then skip the file without
+// opening it, e.g. a vehicle's <model>.dyn (FUN_00512a30: tracks, wheels, physics) for a vehicle a mod brings into a
+// level that has none (user: tanks placed in Mission 1 had no treads).
+namespace {
+constexpr uint32_t kArchiveExistsJump = 0x4BFC89, kArchiveExists = 0x4BE360;
+int __cdecl ArchiveExists(const char* name) {
+    if (Find(name)) return 1;
+    return reinterpret_cast<int(__cdecl*)(const char*)>(kArchiveExists)(name);
+}
+}  // namespace
+
+// Script API +0x58 (0x481360) loads a mission's texts: thiscall FUN_004f56d0([0x60EDCC], "M01Strs.loc") at 0x48136F.
+// The name picks the "[M01]" section of the .strings files.
+constexpr uint32_t kLoadLocCall = 0x48136F, kLoadLoc = 0x4F56D0;
+int __fastcall LoadLevelTexts(void* self, void*, const char* name) {
+    std::string base = name ? name : "";
+    base = base.substr(base.find_last_of("\\/") + 1);
+    for (char& c : base) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    const size_t cut = base.find("STRS");
+    g_levelLoc = cut != std::string::npos ? base.substr(0, cut) : base.substr(0, base.find('.'));
+    using Fn = int(__thiscall*)(void*, const char*);
+    return reinterpret_cast<Fn>(kLoadLoc)(self, name);
+}
+
 void features::ApplyMods() {
     static bool done = false;
     if (done) return;
     done = true;
+    if (!patch::HookCall(kLoadLocCall, reinterpret_cast<const void*>(&LoadLevelTexts), kLoadLoc))
+        features::ModLog("[fail] Mods: mission text load at 0x%08X not recognised - [M01] text sections apply nowhere",
+                         kLoadLocCall);
     for (uint32_t site : kTextureLoadCalls)
         if (!patch::HookCall(site, reinterpret_cast<const void*>(&TextureLoad), kTextureLoad))
             features::ModLog("[fail] Mods: texture load call at 0x%08X not recognised - mission textures can't be replaced", site);
@@ -1397,9 +2086,22 @@ void features::ApplyMods() {
         features::ModLog("[fail] Mods: unexpected game code - mods not loaded");
         return;
     }
+    if (patch::Matches(kStreamLoad, kStreamLoadEntry, sizeof kStreamLoadEntry) &&
+        (g_streamLoad = reinterpret_cast<StreamLoadFn>(Trampoline(kStreamLoadEntry, sizeof kStreamLoadEntry, kStreamLoadCont))))
+        patch::WriteJump(kStreamLoad, reinterpret_cast<const void*>(&StreamLoad));
+    else
+        features::ModLog("[fail] Mods: stream load at 0x%08X not recognised - cutscene sounds can't be replaced", kStreamLoad);
+#ifndef DS_DIST
+    patch::HookCall(0x561269, reinterpret_cast<const void*>(&StreamOpen), 0x56732D);
+#endif
     g_resolve = reinterpret_cast<ResolveFn>(Trampoline(kResolveEntry, sizeof kResolveEntry, kResolveCont));
     g_open = reinterpret_cast<OpenFn>(Trampoline(kOpenEntry, sizeof kOpenEntry, kOpenCont));
     if (!g_resolve || !g_open) return;
+    const uint8_t existsJump[] = {0xE9, 0xD2, 0xE6, 0xFF, 0xFF};   // jmp 0x4BE360
+    if (!patch::Matches(kArchiveExistsJump, existsJump, sizeof existsJump) ||
+        !patch::WriteJump(kArchiveExistsJump, reinterpret_cast<const void*>(&ArchiveExists)))
+        features::ModLog("[fail] Mods: exists check at 0x%08X not recognised - files only a mod has (vehicle .dyn) are skipped",
+                         kArchiveExistsJump);
     if (patch::WriteJump(kResolve, reinterpret_cast<const void*>(&Resolve)) &&
         patch::WriteJump(kOpen, reinterpret_cast<const void*>(&Open)))
         features::ModLog("Mods: %zu mods, %zu files", g_mods.size(), g_files.size());
@@ -1435,14 +2137,38 @@ bool features::ReadGameTable(const char* name, std::string& out) {
 }
 
 bool features::ModHasFile(const char* name) { return Find(name) != nullptr; }
+std::string features::ModFilePath(const char* name) {
+    const ModFile* f = Find(name);
+    return f ? f->path : std::string();
+}
 
 const char* features::ModText(uint32_t hash) {
+    if (!g_levelLoc.empty() && !g_levelTexts.empty()) {
+        auto lv = g_levelTexts.find(g_levelLoc);
+        if (lv != g_levelTexts.end()) {
+            auto it = lv->second.find(hash);
+            if (it != lv->second.end()) return it->second.c_str();
+        }
+    }
     if (g_texts.empty()) return nullptr;
     auto it = g_texts.find(hash);
     return it == g_texts.end() ? nullptr : it->second.c_str();
 }
 
 const std::vector<std::string>& features::ModWeapons() { return g_modWeaponIds; }
+int features::SpeechLanguage() { return SpeechLanguageNow(); }
+
+std::string features::SkinVoice(const char* texture) {
+    auto it = g_skinVoices.find(Upper(texture ? texture : ""));
+    return it == g_skinVoices.end() ? std::string() : it->second;
+}
+
+std::string features::SkinNormalMap(const char* texture) {
+    if (!texture || g_skinNormals.empty()) return {};
+    auto it = g_skinNormals.find(Upper(texture));
+    return it == g_skinNormals.end() ? std::string() : it->second;
+}
+
 std::string features::SkinBody(const char* texture) {
     if (!texture || g_skinBodies.empty()) return {};
     auto it = g_skinBodies.find(Upper(texture));

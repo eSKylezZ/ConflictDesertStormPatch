@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DesertStormFix VERSION 2.0.0 LANGUAGES CXX RC)
+project(DesertStormFix VERSION 3.0.0 LANGUAGES C CXX RC)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "DesertStorm.exe is 32-bit: configure with -A Win32 (use the CMake presets).")
@@ -13,6 +13,11 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")   # stat
 set(DS_GAME_DIR "" CACHE PATH "Conflict: Desert Storm install folder (optional deploy target)")
 # Distribution build: no log file, no debug output, no PDB. Packages dist/ + a zip.
 option(DS_DIST "Build the release package (no diagnostics)" OFF)
+
+# Lua 5.4.7 (MIT, third_party/lua): mission scripts (src/features/scripthost.cpp). Library sources only.
+file(GLOB LUA_SOURCES CONFIGURE_DEPENDS third_party/lua/*.c)
+add_library(lua_static STATIC ${LUA_SOURCES})
+target_compile_definitions(lua_static PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 configure_file(src/version.rc.in ${CMAKE_BINARY_DIR}/version.rc @ONLY)
 
@@ -33,6 +38,9 @@ add_library(dinput8 SHARED
     src/features/ingame_input.cpp
     src/features/splitscreen.cpp
     src/features/dev.cpp
+    src/features/scripthost.cpp
+    src/features/movie.cpp
+    src/features/campaigns.cpp
     src/features/discord.cpp
     src/features/display.cpp
     src/features/cinematics.cpp
@@ -45,6 +53,8 @@ add_library(dinput8 SHARED
     src/features/padio.cpp
     src/features/hotplug.cpp
     src/features/mouse.cpp
+    src/features/menus.cpp
+    src/features/followers.cpp
     src/features/tooltips.cpp
     src/features/rumble.cpp
     src/features/audio.cpp
@@ -56,7 +66,13 @@ add_library(dinput8 SHARED
     src/features/mods.cpp
     src/features/weaponicons.cpp
     src/features/bodies.cpp
+    src/features/timeofday.cpp
+    src/features/voices.cpp
+    src/features/overview.cpp
     src/features/versus.cpp
+    src/features/cheats.cpp
+    src/features/freecam.cpp
+    src/features/developer.cpp
     src/features/modsmenu.cpp
     ${CMAKE_BINARY_DIR}/version.rc
     src/game_icons.rc
@@ -66,8 +82,15 @@ target_compile_definitions(dinput8 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SEC
     DS_VERSION="${PROJECT_VERSION}" $<$<BOOL:${DS_DIST}>:DS_DIST>)
 target_compile_options(dinput8 PRIVATE /W4 /permissive- /utf-8)
 # dinput8.lib only for its static data (c_dfDIJoystick2); DirectInput8Create is called via the real DLL.
-target_link_libraries(dinput8 PRIVATE winmm msimg32 dxguid dinput8.lib ole32 windowscodecs)
+target_link_libraries(dinput8 PRIVATE lua_static winmm msimg32 dxguid dinput8.lib ole32 windowscodecs)
 target_link_options(dinput8 PRIVATE /SAFESEH:NO $<$<BOOL:${DS_DIST}>:/DEBUG:NONE>)
+# Non-dist builds always get a PDB, in every configuration (plain Release has no /Zi or /DEBUG by default, so the
+# deploy step below had no PDB to copy). /DEBUG turns /OPT:REF and /OPT:ICF off - put them back for Release
+# (RelWithDebInfo links /INCREMENTAL, which /OPT:ICF would override with a warning).
+if(NOT DS_DIST)
+    target_compile_options(dinput8 PRIVATE /Zi)
+    target_link_options(dinput8 PRIVATE /DEBUG $<$<CONFIG:Release,MinSizeRel>:/OPT:REF /OPT:ICF>)
+endif()
 # Release package: no build timestamp (/Brepro: a content hash instead, reproducible builds) and no Rich header
 # (toolchain fingerprint).
 if(DS_DIST)
@@ -93,6 +116,7 @@ if(DS_DIST)
     endif()
 elseif(DS_GAME_DIR)
     add_custom_command(TARGET dinput8 POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:dinput8> $<TARGET_PDB_FILE:dinput8> "${DS_GAME_DIR}"
-        COMMENT "Deploying dinput8.dll to ${DS_GAME_DIR}")
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:dinput8> "${DS_GAME_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_PDB_FILE:dinput8> "${DS_GAME_DIR}"
+        COMMENT "Deploying dinput8.dll + .pdb to ${DS_GAME_DIR}")
 endif()

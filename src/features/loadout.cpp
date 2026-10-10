@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -415,6 +416,7 @@ int __cdecl ReadScene(const char* name, char** buf, int* size, int a4, int type)
 
 void ApplyRuntimeSpawn();
 void ApplyUnlocks();
+void ApplySaveKits();
 
 bool features::LoadoutUsesFillers() { return g_fillers; }
 
@@ -425,6 +427,7 @@ void features::ApplyLoadout() {
     dslog::Write("Loadout: scene hook %s", hooked ? "installed" : "FAILED");
     ApplyRuntimeSpawn();
     ApplyUnlocks();
+    ApplySaveKits();
 }
 
 // ---- runtime weapon spawn (customise screen kit changes; dev F8) ----
@@ -442,10 +445,12 @@ using NewHloFn = void*(__cdecl*)(uint8_t*);
 NewHloFn g_newHloOriginal = nullptr;
 std::vector<uint8_t> g_weaponRecord;
 bool g_recordIsGun = false;  // the captured record is a real gun's (not the Fist's)
+std::vector<uint8_t> g_medikitRecord;  // a MediKit's (equipment), for followers.cpp
 
 void ForgetWeaponRecord() {
     g_weaponRecord.clear();
     g_recordIsGun = false;
+    g_medikitRecord.clear();
 }
 
 bool SafeCopy(void* dst, const void* src, size_t n) {
@@ -458,8 +463,25 @@ bool SafeCopy(void* dst, const void* src, size_t n) {
 }
 
 
+// The object is a MediKit: its stat name (a soldier's kit) or its definition's id (+0x24 -> +4; scene pick-ups have
+// numbered stats).
+bool IsMedikit(const uint8_t* record, const uint8_t* obj) {
+    if (_stricmp(reinterpret_cast<const char*>(record + 0xAB), "MediKit") == 0) return true;
+    __try {
+        const auto* def = *reinterpret_cast<const uint8_t* const*>(obj + 0x24);
+        const char* id = def ? *reinterpret_cast<const char* const*>(def + 4) : nullptr;
+        return id && _stricmp(id, "MediKit") == 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 void* __cdecl NewHlo(uint8_t* record) {
     void* obj = g_newHloOriginal(record);
+    if (obj && g_medikitRecord.empty() && IsMedikit(record, static_cast<uint8_t*>(obj))) {
+        std::vector<uint8_t> copy(kRecordSize);
+        if (SafeCopy(copy.data(), record, kRecordSize)) g_medikitRecord.swap(copy);
+    }
     if (!obj || *reinterpret_cast<int*>(static_cast<uint8_t*>(obj) + 4) != 6 || g_recordIsGun) return obj;
     // Prefer a main weapon's record: weapons cloned from the first one (the Fist, an invisible melee weapon) were not
     // drawn - the soldier fell back to his knife. The Fist's is only kept until a gun comes along.
@@ -694,6 +716,187 @@ bool features::KitSwap(void* soldier, void* oldItem, const std::string& weapon, 
         if (throwable) *cls = saved;
     }
     return true;
+}
+
+// A weapon for a soldier outside the kit system (followers.cpp: Franklin's / the Emir's pistol), in his hands, not
+// counted as an unlock.
+void* features::GiveSpawnedWeapon(void* soldier, const char* weapon, int mags) {
+    auto* item = static_cast<uint8_t*>(SpawnWeapon(weapon));
+    if (!item) return nullptr;
+    g_kitSwapping = true;
+    GiveWeapon(static_cast<uint8_t*>(soldier), item, mags, true);
+    g_kitSwapping = false;
+    return item;
+}
+
+// A MediKit (cloned from the level's first MediKit record) into a soldier's inventory.
+bool features::GiveSpawnedMedikit(void* soldier) {
+    if (g_medikitRecord.empty()) return false;
+    std::vector<uint8_t> rec = g_medikitRecord;
+    void* obj = reinterpret_cast<NewHloFn>(kNewHlo)(rec.data());
+    if (!obj) return false;
+    reinterpret_cast<void(__cdecl*)(void*)>(0x495EC0)(obj);
+    g_kitSwapping = true;
+    reinterpret_cast<void(__thiscall*)(void*, void*, int, int)>(0x4314D0)(soldier, obj, 0, 0);
+    g_kitSwapping = false;
+    return true;
+}
+
+// ---- spawned weapons in saves ----
+// A save stores a soldier's inventory as object ids (item +8, FUN_00416830; restored by FUN_00417180 through the id
+// table). Weapons made by SpawnWeapon (loadout screen, carried kits, mod weapons) aren't in that table (id -1), so a
+// save dropped them and the soldier came back without his main weapon. They are kept in "<save>.dsfix" next to the
+// save (one line per weapon: role|weapon id|reserve|magazine|held) and handed out again after the restore.
+//   save  FUN_00415650(this, path, flag) thiscall - writes the file when flag = 0 and path set (call sites below)
+//   load  FUN_00415b60(this, path) - reads it (path null = the save buffer already in memory)
+//   restore FUN_00416310 at 0x40CBAE (level init, when a save is being loaded)
+namespace {
+constexpr uint32_t kSaveGame = 0x415650, kLoadGame = 0x415B60, kRestoreSave = 0x416310;
+constexpr uint32_t kSaveSites[] = {0x475404, 0x4772CA, 0x4A6D14};
+constexpr uint32_t kLoadSite = 0x449B73, kRestoreSite = 0x40CBAE;
+
+struct SavedWeapon {
+    int role;
+    std::string id;
+    int reserve, magazine;
+    bool held;
+};
+std::vector<SavedWeapon> g_saveKits;  // of the last save written or read (a save without a path reloads from memory)
+
+template <class F>
+void ForEachSquadSoldier(F f) {
+    auto mgr = *reinterpret_cast<const uint8_t* const*>(0x63C9A0);
+    if (!mgr) return;
+    const uint8_t team = *reinterpret_cast<const uint8_t*>(0x5F9B94);
+    if (team >= mgr[0x10] || 1 >= mgr[0x11]) return;
+    auto lists = *reinterpret_cast<const uintptr_t* const*>(mgr + 4);
+    if (!lists) return;
+    for (uintptr_t s = lists[team * mgr[0x11] + 1]; s; s = *reinterpret_cast<uintptr_t*>(s + 0x14)) {
+        auto* soldier = reinterpret_cast<uint8_t*>(s);
+        auto* unit = *reinterpret_cast<uint8_t**>(soldier + 0x24);
+        const int role = unit ? *reinterpret_cast<int8_t*>(unit + 0x1C7) : -1;
+        if (role >= 0 && role <= 3) f(soldier, role);
+    }
+}
+
+void CaptureSquadKits(std::vector<SavedWeapon>& out) {
+    out.clear();
+    __try {
+        ForEachSquadSoldier([&out](uint8_t* soldier, int role) {
+            auto* inv = *reinterpret_cast<uint8_t***>(soldier + 0x26B8);
+            if (!inv) return;
+            for (int i = 0; i < 25; ++i) {
+                uint8_t* it = inv[i];
+                if (!it || *reinterpret_cast<int*>(it + 4) != 6 || *reinterpret_cast<int*>(it + 8) != -1) continue;
+                auto* def = *reinterpret_cast<uint8_t**>(it + 0x24);
+                const char* id = def ? *reinterpret_cast<const char**>(def + 4) : nullptr;
+                if (!id || !*id) continue;
+                out.push_back({role, id, *reinterpret_cast<int*>(it + 0x54), *reinterpret_cast<int*>(it + 0x80),
+                               *reinterpret_cast<uint8_t**>(soldier + 0x26B0) == it});
+            }
+        });
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        dslog::Write("[fail] Loadout: reading the squad's spawned weapons for a save faulted");
+    }
+}
+
+std::string SidecarPath(const char* save) { return std::string(save) + ".dsfix"; }
+
+int __fastcall SaveGameHook(void* self, void*, const char* path, int flag) {
+    using Fn = int(__thiscall*)(void*, const char*, int);
+    const int r = reinterpret_cast<Fn>(kSaveGame)(self, path, flag);
+    if (!r || flag) return r;
+    CaptureSquadKits(g_saveKits);
+    if (!path) return r;
+    const std::string side = SidecarPath(path);
+    if (g_saveKits.empty()) {
+        DeleteFileA(side.c_str());
+        return r;
+    }
+    if (FILE* f = fopen(side.c_str(), "w")) {
+        for (const SavedWeapon& w : g_saveKits)
+            fprintf(f, "%d|%s|%d|%d|%d\n", w.role, w.id.c_str(), w.reserve, w.magazine, w.held ? 1 : 0);
+        fclose(f);
+        dslog::Write("Loadout: %zu spawned weapon(s) kept with the save", g_saveKits.size());
+    }
+    return r;
+}
+
+int __fastcall LoadGameHook(void* self, void*, const char* path) {
+    if (path) {
+        g_saveKits.clear();
+        if (FILE* f = fopen(SidecarPath(path).c_str(), "r")) {
+            char line[256];
+            while (fgets(line, sizeof line, f)) {
+                SavedWeapon w{};
+                char id[128] = {};
+                int held = 0;
+                if (sscanf(line, "%d|%127[^|]|%d|%d|%d", &w.role, id, &w.reserve, &w.magazine, &held) == 5) {
+                    w.id = id;
+                    w.held = held != 0;
+                    g_saveKits.push_back(w);
+                }
+            }
+            fclose(f);
+        }
+    }
+    using Fn = int(__thiscall*)(void*, const char*);
+    return reinterpret_cast<Fn>(kLoadGame)(self, path);
+}
+
+void GiveSaved(uint8_t* soldier, const SavedWeapon& w) {
+    auto* item = static_cast<uint8_t*>(SpawnWeapon(w.id.c_str()));
+    if (!item) {
+        dslog::Write("[fail] Loadout: saved weapon %s couldn't be made (%s)", w.id.c_str(),
+                     g_weaponRecord.empty() ? "no weapon record" : "spawn failed");
+        return;
+    }
+    using SetRounds = void(__thiscall*)(void*, int);
+    using Vcall = void(__thiscall*)(void*, int);
+    using Fill = void(__thiscall*)(void*);
+    using AddItem = void(__thiscall*)(void*, void*, int, int);
+    using Hold = void(__thiscall*)(void*, void*, int);
+    // One magazine loaded (as GiveWeapon does) to learn its size, then the saved counts; rounds before AddItem so a
+    // stack keeps them (see GiveWeapon).
+    reinterpret_cast<SetRounds>(0x4A4BA0)(item, 0);
+    (*reinterpret_cast<Vcall*>(*reinterpret_cast<uint8_t**>(item) + 0x38))(item, 1);
+    reinterpret_cast<Fill>(0x4A1350)(item);
+    int& mag = *reinterpret_cast<int*>(item + 0x80);
+    const int full = mag + *reinterpret_cast<int*>(item + 0x78);
+    mag = std::clamp(w.magazine, 0, full);
+    *reinterpret_cast<int*>(item + 0x78) = full - mag;
+    *reinterpret_cast<int*>(item + 0x54) = std::max(0, w.reserve);
+    g_kitSwapping = true;  // handed back, not found
+    reinterpret_cast<AddItem>(0x4314D0)(soldier, item, 0, 0);
+    g_kitSwapping = false;
+    if (w.held) reinterpret_cast<Hold>(0x42EC10)(soldier, item, 1);
+    dslog::Write("Loadout: saved weapon %s back to role %d (%d + %d rounds%s)", w.id.c_str(), w.role, w.magazine,
+                 w.reserve, w.held ? ", held" : "");
+}
+
+void __fastcall RestoreSaveHook(void* self) {
+    reinterpret_cast<void(__fastcall*)(void*)>(kRestoreSave)(self);
+    if (g_saveKits.empty()) return;
+    __try {
+        ForEachSquadSoldier([](uint8_t* soldier, int role) {
+            for (const SavedWeapon& w : g_saveKits)
+                if (w.role == role) GiveSaved(soldier, w);
+        });
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        dslog::Write("[fail] Loadout: handing back the save's spawned weapons faulted");
+    }
+}
+}  // namespace
+
+void ApplySaveKits() {
+    static bool hooked = false;
+    if (hooked) return;
+    hooked = true;
+    bool ok = patch::HookCall(kLoadSite, reinterpret_cast<const void*>(&LoadGameHook), kLoadGame) &&
+              patch::HookCall(kRestoreSite, reinterpret_cast<const void*>(&RestoreSaveHook), kRestoreSave);
+    for (uint32_t site : kSaveSites)
+        ok = patch::HookCall(site, reinterpret_cast<const void*>(&SaveGameHook), kSaveGame) && ok;
+    dslog::Write("Loadout: save kit hooks %s", ok ? "installed" : "FAILED");
 }
 
 void ApplyRuntimeSpawn() {

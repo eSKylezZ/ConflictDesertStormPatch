@@ -200,6 +200,7 @@ DWORD g_forcedAction = 0;  // dev: Dev\ForceActionPrompt = action type (block +0
 #endif
 
 void __fastcall ActionPrompt(uint8_t* block) {
+    if (features::HudHidden()) return;  // free camera / customise screen: no "[X] MOUNT"
     g_promptPlayer = static_cast<int>((reinterpret_cast<uintptr_t>(block) - kInputBlocks) / kInputBlockSize) & 3;
 #ifndef DS_DIST
     if (g_forcedAction) *reinterpret_cast<int32_t*>(block + 0x374) = static_cast<int32_t>(g_forcedAction);
@@ -279,7 +280,7 @@ const char* __fastcall BindingName(void* table, void*, uint32_t code) {
 }
 
 // Which of an action's bindings the tutorial / tip texts list (FUN_00486b00 joins set 0's slots with " / "): the game
-// dropped pad codes unless [0x606368] (a joystick-present flag) was set and always kept the keys - "Press objectives
+// dropped pad codes unless [0x606368] (the cheats-unlocked flag, which also turned on these developer views) was set and always kept the keys - "Press objectives
 // (F1)" on a pad. The check at 0x486B5E (22 bytes) now calls ListBinding: bindings of the device in use (player 1's
 // co-op device, else the last input), or all of them when the action has none for that device.
 constexpr uint32_t kListCheck = 0x486B5E, kListSkip = 0x486BE9, kListKeep = 0x486B74;
@@ -344,9 +345,13 @@ const char* GameLookup(void* table, uint32_t hash) {
 
 const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
     if (const char* own = features::VersusText(hash)) return own;
+    if (const char* own = features::CampaignsText(hash)) return own;
+    if (const char* own = features::ScriptText(hash)) return own;
     if (const char* own = features::ModsMenuText(hash)) return own;
     if (const char* own = features::CoopText(hash)) return own;
     if (const char* own = features::ControlsText(hash)) return own;
+    if (const char* own = features::CheatsText(hash)) return own;
+    if (const char* own = features::DeveloperText(hash)) return own;
     if (const char* own = features::ModText(hash)) return own;
     const char* text = GameLookup(table, hash);
     if (!text) return text;

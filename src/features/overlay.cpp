@@ -354,6 +354,14 @@ void overlay::QueueScreenImage(void* texture, float x, float y, float w, float h
                                      {x, y + h, 0, 1, white, 0, v1}, {x + w, y + h, 0, 1, white, u1, v1}}});
 }
 
+void overlay::QueueScreenQuad(void* texture, const float (&c)[4][2], float u0, float v0, float u1, float v1, uint32_t argb) {
+    const DWORD col = argb;
+    g_queue.push_back({-1, texture, {{c[0][0] - 0.5f, c[0][1] - 0.5f, 0, 1, col, u0, v0},
+                                     {c[1][0] - 0.5f, c[1][1] - 0.5f, 0, 1, col, u1, v0},
+                                     {c[2][0] - 0.5f, c[2][1] - 0.5f, 0, 1, col, u0, v1},
+                                     {c[3][0] - 0.5f, c[3][1] - 0.5f, 0, 1, col, u1, v1}}});
+}
+
 void overlay::QueueScreenRect(float x, float y, float w, float h, uint32_t argb) {
     x -= 0.5f, y -= 0.5f;
     g_queue.push_back({-1, nullptr, {{x, y, 0, 1, argb, 0, 0}, {x + w, y, 0, 1, argb, 1, 0},

@@ -63,6 +63,40 @@ int Objects(uint8_t* model) {
     return n;
 }
 
+// Normal maps. The level binds them once, when it reads Characters_*.rfx: REFX_DOT3_BUMP "model" NORMAL_MAP "x" ->
+// FUN_004e4130 registers x (texture manager FUN_0054a0b0(name, 0x11)) and calls FUN_004ebf00(part, texture, model, 0)
+// (thiscall, ret 0xC) on every part; for a skinned part that builds tangents and stores the map in its skin data
+// (+0xB4: +0x8 = 1 bound, +0xC texture, +0x24 tangent vertex buffer; already bound parts are skipped). A body loaded
+// mid-level misses that pass and was drawn without one, so it is bound here: the skin's own normal map, else the
+// soldier's (the one on his own body, from the level's .rfx).
+constexpr uint32_t kRegisterTexture = 0x54A0B0, kBindNormalMap = 0x4EBF00;
+
+uint8_t* SkinData(uint8_t* model) {  // the skinned part's skin data
+    for (uint8_t* o = model; o; o = At<uint8_t*>(o, 0xE8))
+        if (At<int>(o, 0xC) == 2) return At<uint8_t*>(o, 0xB4);
+    return nullptr;
+}
+
+void BindNormalMap(uint8_t* model, uint8_t* original, const std::string& name) {
+    uint8_t* sd = SkinData(model);
+    if (!sd || At<int>(sd, 8)) return;  // no skinned part, or bound already (a body is loaded once per level)
+    void* texture = nullptr;
+    if (!name.empty()) {
+        using Register = void*(__thiscall*)(void*, const char*, int);
+        texture = reinterpret_cast<Register>(kRegisterTexture)(*reinterpret_cast<void**>(kTextureManager), name.c_str(), 0x11);
+    } else if (uint8_t* own = SkinData(original); own && At<int>(own, 8)) {
+        texture = At<void*>(own, 0xC);
+    }
+    if (!texture) return;
+    using ControlFp = uint32_t(__cdecl*)(uint32_t, uint32_t);
+    const uint32_t old = reinterpret_cast<ControlFp>(kControlFp)(0, 0);
+    reinterpret_cast<ControlFp>(kControlFp)(*reinterpret_cast<uint32_t*>(kLoadPrecision), 0xFFFFF);
+    using Bind = int(__thiscall*)(void*, void*, void*, void*);
+    for (uint8_t* o = model; o; o = At<uint8_t*>(o, 0xE8)) reinterpret_cast<Bind>(kBindNormalMap)(o, texture, model, nullptr);
+    reinterpret_cast<ControlFp>(kControlFp)(old, 0xFFFFF);
+    dslog::Write("Bodies: normal map %s bound, flag %d", name.empty() ? "(the soldier's own)" : name.c_str(), At<int>(sd, 8));
+}
+
 void UpdateBody(uint8_t* soldier) {
     uint8_t* inst = At<uint8_t*>(soldier, 0x2C);
     if (!inst || !At<uint8_t*>(inst, 0xC8)) return;
@@ -84,24 +118,58 @@ void UpdateBody(uint8_t* soldier) {
                              body.c_str(), Bones(model), Objects(model), Bones(original), Objects(original));
         } else {
             want = model;
+            BindNormalMap(model, original, features::SkinNormalMap(reinterpret_cast<const char*>(entry + 4)));
         }
     }
     if (At<uint8_t*>(inst, 0xC8) == want) return;
     if (!rec) g_swapped.push_back({inst, original});
     At<uint8_t*>(inst, 0xC8) = want;
-    // A model loaded mid-level only registers its textures: load the pending batch (else it is drawn white).
-    using Batch = void(__thiscall*)(void*, void*, int);
-    reinterpret_cast<Batch>(kTextureBatch)(*reinterpret_cast<void**>(kTextureManager), nullptr, 0);
     dslog::Write("Bodies: soldier %p -> %s", soldier, want == original ? "his own body" : body.c_str());
+}
+
+// The skin apply (and a body loaded mid-level) only registers textures (skin, portrait, the body's own); the level
+// load loads them in one batch FUN_0054a3e0 (a no-op unless something is pending). A skin applied after that - a
+// loaded save (FUN_00417180 re-applies each soldier's saved skin), the loadout screen - was drawn black with a white
+// portrait. Run the batch then; during a level load wait for its end (an early batch would skip the loading bar).
+bool g_texturesPending = false;
+
+void LoadPendingTextures() {
+    if (*reinterpret_cast<uint8_t*>(kLoadPending) == 1) {
+        g_texturesPending = true;
+        return;
+    }
+    g_texturesPending = false;
+    if (void* mgr = *reinterpret_cast<void**>(kTextureManager)) {
+        using Batch = void(__thiscall*)(void*, void*, int);
+        reinterpret_cast<Batch>(kTextureBatch)(mgr, nullptr, 0);
+    }
 }
 
 void __fastcall ApplySkinHook(void* soldier, void*, void* entry) {
     g_apply(soldier, entry);
     __try {
         UpdateBody(static_cast<uint8_t*>(soldier));
+        LoadPendingTextures();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         dslog::Write("[fail] Bodies: body swap faulted for soldier %p", soldier);
     }
+}
+
+// Save loading (FUN_00417180, call 0x417449) finds the saved skin key FUN_00496500(key, uniform, role) in the table of
+// the global uniform [0x60ED1C] only - always SAS since the uniform screen is gone (coop.cpp), and the loadout screen
+// mixes sides per soldier. A key missing there (Delta / Russian / Iraqi faces, Delta mod variants) came back null and
+// the soldier lost his skin. Not found -> the other sides.
+constexpr uint32_t kSaveSkinLookupSite = 0x417449, kSkinLookup = 0x496500;
+
+void* __cdecl SaveSkinLookup(int key, int uniform, int role) {
+    using Lookup = void*(__cdecl*)(int, int, int);
+    auto lookup = reinterpret_cast<Lookup>(kSkinLookup);
+    if (void* e = lookup(key, uniform, role)) return e;
+    for (int side = 0; side < 4; ++side)
+        if (side != uniform)
+            if (void* e = lookup(key, side, role)) return e;
+    dslog::Write("Bodies: saved skin key %08X (role %d) not in any skin table", key, role);
+    return nullptr;
 }
 }  // namespace
 
@@ -121,9 +189,13 @@ void features::ApplyBodies() {
     memcpy(tramp + sizeof kApplySkinEntry + 1, &rel, 4);
     g_apply = reinterpret_cast<ApplyFn>(tramp);
     patch::WriteJump(kApplySkin, reinterpret_cast<const void*>(&ApplySkinHook));
+    if (!patch::HookCall(kSaveSkinLookupSite, reinterpret_cast<const void*>(&SaveSkinLookup), kSkinLookup))
+        dslog::Write("[fail] Bodies: save skin lookup at 0x%08X not recognised", kSaveSkinLookupSite);
 }
 
-// A level load frees the soldiers and their instances: forget the swaps.
+// A level load frees the soldiers and their instances: forget the swaps. After it, load what skins applied during it
+// registered.
 void features::OnFrameBodies() {
     if (*reinterpret_cast<uint8_t*>(kLoadPending) == 1) g_swapped.clear();
+    else if (g_texturesPending) LoadPendingTextures();
 }

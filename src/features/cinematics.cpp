@@ -44,7 +44,7 @@ bool InMissionCutscene() {
 
 int __cdecl MovieSkipFlag(int option) {
     if (reinterpret_cast<OptionFlagFn>(kOptionFlag)(option)) return 1;
-    return settings::Get().skipCutscenes && InMissionCutscene() ? 1 : 0;
+    return (settings::Get().skipCutscenes || features::OverviewSkipPending()) && InMissionCutscene() ? 1 : 0;
 }
 }  // namespace
 

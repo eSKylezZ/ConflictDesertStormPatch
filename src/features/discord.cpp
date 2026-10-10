@@ -288,3 +288,19 @@ void features::OnFrameDiscord() {
     LeaveCriticalSection(&g_lock);
     if (changed) SetEvent(g_wake);
 }
+
+// The level's title as the game shows it (e.g. "RESCUE"), "" if unknown - for the mission screen.
+std::string features::LevelTitleText(const char* level) {
+    uint32_t hash = 0;
+    for (const auto& t : kTitles)
+        if (_strnicmp(level, t.prefix, strlen(t.prefix)) == 0) {
+            hash = t.hash;
+            break;
+        }
+    void* table = *reinterpret_cast<void**>(kStrings);
+    if (!hash || !table) return "";
+    const char* text = reinterpret_cast<const char*(__thiscall*)(void*, uint32_t)>(kLookup)(table, hash);
+    return text ? text : "";
+}
+
+std::string features::LevelDisplayName(const char* level) { return LevelTitle(level); }

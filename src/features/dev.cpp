@@ -8,6 +8,8 @@
 // DtClampLo / DtClampHi (DWORD, index range into kDtSites): those callers of the frame-time getter FUN_004BA480
 // (float seconds, timer+0xA8) get at least 1/120 s - used to bisect which system breaks below 8 ms steps.
 #include <windows.h>
+#include <audiopolicy.h>
+#include <mmdeviceapi.h>
 
 #include <intrin.h>
 
@@ -149,6 +151,46 @@ void __fastcall SetTimeScale(uint8_t* timer, void*, float scale) {
 }
 bool g_playLog = false;
 
+// Stand-in for the start-up flag query FUN_004b9cd0 (cdecl(letter) -> bool) at one call site: always set.
+bool __cdecl ForceFlag(uint8_t) { return true; }
+
+// RouteProbe (REG_SZ "start,goal[;start,goal...]", marker indices, at most 3): once per loaded route network, run the game's
+// A* (FUN_00509d00, thiscall(router [0x63C9A8], start, goal, mode 1 = from the start marker itself); result 0 found,
+// 1 closest reachable, 2/3 none; path = list from router +0xC, node +0 marker, +0x10 next) and log the marker path.
+// Marker set [0x63C9C0]: +0 markers (32 bytes, links u16[5] at +0xC), +4 count.
+char g_routeProbe[128] = "";
+void RouteProbeTick() {
+    static void* done = nullptr;
+    uint8_t* router = *reinterpret_cast<uint8_t**>(0x63C9A8);
+    const uint8_t* set = *reinterpret_cast<uint8_t**>(0x63C9C0);
+    if (!g_routeProbe[0] || !router || !set || router == done) return;
+    done = router;
+    const uint32_t count = *reinterpret_cast<const uint32_t*>(set + 4);
+    using Search = int(__thiscall*)(void*, uint32_t, uint32_t, int);
+    const char* p = g_routeProbe;
+    while (*p) {
+        unsigned a = 0, b = 0;
+        if (sscanf_s(p, "%u,%u", &a, &b) != 2) break;
+        if (a < count && b < count) {
+            const int result = reinterpret_cast<Search>(0x509D00)(router, a, b, 1);
+            char path[512] = "";
+            size_t len = 0;
+            int steps = 0;
+            // result 2 = refused: the router allows +0x30 (3) searches per frame (counter +0x2C) - the list is stale then
+            for (auto* node = result < 2 ? *reinterpret_cast<uint8_t**>(router + 0xC) : nullptr;
+                 node && steps < 64 && len < sizeof path - 8;
+                 node = *reinterpret_cast<uint8_t**>(node + 0x10), ++steps)
+                len += snprintf(path + len, sizeof path - len, " %u", *reinterpret_cast<uint32_t*>(node));
+            dslog::Write("[dev]  route %u -> %u (of %u markers): result %d, path%s", a, b, count, result, path);
+        } else {
+            dslog::Write("[dev]  route %u -> %u: out of range (%u markers)", a, b, count);
+        }
+        p = strchr(p, ';');
+        if (!p) break;
+        ++p;
+    }
+}
+
 void WatchPlayers() {
     static uintptr_t lastSoldier[4];
     static uint32_t lastView[4], lastDevices[4];
@@ -180,23 +222,47 @@ void features::ApplyDevHooks() {
 #ifndef DS_DIST
     ApplyDtClamp();
     g_playLog = DevDword("PlayLog", 0) != 0;
+    {
+        DWORD size = sizeof g_routeProbe;
+        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "RouteProbe", RRF_RT_REG_SZ, nullptr,
+                         g_routeProbe, &size) != ERROR_SUCCESS)
+            g_routeProbe[0] = 0;
+    }
     if (g_playLog) {
         static const uint8_t entry[] = {0x8B, 0x44, 0x24, 0x04, 0xC7, 0x81, 0xD8, 0x00, 0x00, 0x00};
         if (patch::Matches(0x4BA4E0, entry, sizeof entry)) patch::WriteJump(0x4BA4E0, reinterpret_cast<const void*>(&SetTimeScale));
         dslog::Write("[dev]  play-test logging on");
     }
+    // BuildOctree (DWORD 1): level init takes the start-up flag 'c' branch at 0x40C633 – FUN_004e3560(level, 1)
+    // builds every zone's octree, writes <level>.OCT ("wb", relative to the game directory) and loads it back.
+    if (DevDword("BuildOctree", 0)) {
+        if (patch::HookCall(0x40C635, reinterpret_cast<const void*>(&ForceFlag), 0x4B9CD0))
+            dslog::Write("[dev]  octree build + write on level load");
+    }
     constexpr uint32_t kOptionsPtr = 0x5E7050, kOptionsDefault = 0x5E708C;  // -> "-f -d"
     static char options[64];
-    char level[32] = {};
+    char level[32] = {}, flags[16] = {};
     DWORD size = sizeof level;
     if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "StartLevel", RRF_RT_REG_SZ, nullptr, level,
-                     &size) != ERROR_SUCCESS || !level[0] || strlen(level) > 20)
-        return;
+                     &size) != ERROR_SUCCESS || strlen(level) > 20)
+        level[0] = 0;
+    // StartFlags (REG_SZ letters, case-insensitive – the game indexes letter & 0x1f): extra start-up flags, e.g. "m" =
+    // Pivotal's debug key map (FUN_00447150 registers its 73 bindings only then).
+    size = sizeof flags;
+    if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "StartFlags", RRF_RT_REG_SZ, nullptr, flags,
+                     &size) != ERROR_SUCCESS)
+        flags[0] = 0;
+    for (char* c = flags; *c; ++c)
+        if (!isalpha(static_cast<unsigned char>(*c))) { flags[0] = 0; break; }
+    if (!level[0] && !flags[0]) return;
     const uint32_t expected = kOptionsDefault;
     if (!patch::Matches(kOptionsPtr, &expected, 4)) return;
-    snprintf(options, sizeof options, "-d %s", level);
+    if (level[0])
+        snprintf(options, sizeof options, "-d%s %s", flags, level);
+    else
+        snprintf(options, sizeof options, "-f -d%s", flags);
     patch::WriteValue(kOptionsPtr, reinterpret_cast<uint32_t>(options));
-    dslog::Write("[dev]  Start level: %s", level);
+    dslog::Write("[dev]  start-up options: %s", options);
 #endif
 }
 
@@ -289,6 +355,40 @@ bool g_background = false;
 bool features::DevBackground() { return g_background; }
 
 #ifndef DS_DIST
+// Background mode: no sound - the game's own audio session (DirectSound, the movie .wavs through PlaySound) is muted in
+// the Windows mixer, so the PC's other sound is untouched. Re-applied every second on a worker thread: the session is
+// the process's default one, which exists before the game opens its first stream (and the mute sticks to it).
+DWORD WINAPI MuteThread(void*) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool logged = false;
+    for (;;) {
+        IMMDeviceEnumerator* en = nullptr;
+        if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                       reinterpret_cast<void**>(&en)))) {
+            IMMDevice* dev = nullptr;
+            if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev))) {
+                IAudioSessionManager* mgr = nullptr;
+                if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager), CLSCTX_ALL, nullptr,
+                                            reinterpret_cast<void**>(&mgr)))) {
+                    ISimpleAudioVolume* vol = nullptr;
+                    if (SUCCEEDED(mgr->GetSimpleAudioVolume(nullptr, FALSE, &vol))) {
+                        BOOL muted = FALSE;
+                        vol->GetMute(&muted);
+                        if (!muted) vol->SetMute(TRUE, nullptr);
+                        if (!logged) dslog::Write("[dev]  background mode: game audio muted");
+                        logged = true;
+                        vol->Release();
+                    }
+                    mgr->Release();
+                }
+                dev->Release();
+            }
+            en->Release();
+        }
+        Sleep(1000);
+    }
+}
+
 // Background mode: the game must never take the mouse of whoever uses the PC (its window sits off-screen).
 BOOL WINAPI NoSetCursorPos(int, int) { return TRUE; }
 HWND WINAPI NoSetCapture(HWND) { return nullptr; }
@@ -327,7 +427,9 @@ void features::ApplyDevBackground() {
     patch::HookIndirectCall(0x44B4E1, reinterpret_cast<const void*>(&NoSetCursorPos), 0x5D8268);  // mounted gun re-centre
     patch::HookIndirectCall(0x538363, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
     patch::HookIndirectCall(0x55E08A, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
-    dslog::Write("[dev]  running in the background (no pause without focus, no cursor clip / move / capture)");
+    CloseHandle(CreateThread(nullptr, 0, MuteThread, nullptr, 0, nullptr));
+    dslog::Write("[dev]  running in the background (no pause without focus, no cursor clip / move / capture, muted, "
+                 "windows off-screen and never activated)");
 #endif
 }
 
@@ -336,6 +438,7 @@ void features::ApplyDevBackground() {
 void features::OnFrameDev() {
 #ifndef DS_DIST
     WatchTick();
+    RouteProbeTick();
     if (g_playLog) WatchPlayers();
     {
         static uint32_t last = 0xFFFFFFFF;

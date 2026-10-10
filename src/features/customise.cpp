@@ -20,10 +20,12 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,7 @@ constexpr uint32_t kGameState = 0x63C948;       // +0x1B8C bit 0 = cutscene
 constexpr uint32_t kTimeMultiplier = 0x5F7E64;  // float
 constexpr uint32_t kDispatchMode = 0x60EC8C;    // 0 = playing
 constexpr uint32_t kFrontEndState = 0x617C18;   // 0xE in play, 0x14 briefing
+constexpr uint32_t kBriefingState = 0x14;
 constexpr uint32_t kBlocks = 0x60F5B8, kBlockSize = 0x478, kBlockDevices = 0x38, kBlockCount = 0x610798;
 constexpr uint32_t kRenderer = 0x63C924;
 constexpr uint32_t kGameWindow = 0x606A60;
@@ -70,6 +73,19 @@ Member g_squad[4];
 int g_squadCount = 0;
 int g_sel = 0;  // selected soldier
 int g_row = 0;  // selected option row
+int g_mrow = 0;  // MISSION tab row: objectives, then TIME OF DAY, TIME FLOW
+int g_textPage = 0, g_textPages = 1;  // page of the text shown (BRIEFING tab, MISSION tab descriptions)
+// A level that continues the previous one (Mission4 -> 5A, 11B -> 12A -> 12B): the briefing opens with the carried kit,
+// view-only, and the time continues (timeofday.cpp).
+bool g_briefingClosed = false, g_briefingMessageSent = false;   // the game's briefing popup closed by us (per level)
+bool g_linkedLevel = false;   // this level continues g_linkedFrom
+bool g_scriptLevel = false;   // a Lua mission (scripthost.cpp)
+std::string g_linkedFrom;     // "Mission4"
+enum Tab { kTabBriefing, kTabMission, kTabSquad, kTabOverview, kTabCount };
+const char* const kTabNames[kTabCount] = {"BRIEFING", "MISSION", "SQUAD", "OVERVIEW"};
+int g_tab = kTabBriefing;
+bool MapTab() { return g_tab == kTabBriefing || g_tab == kTabMission || g_tab == kTabOverview; }
+bool TabAvailable(int t) { return t != kTabOverview || features::OverviewAvailable(); }
 
 // Co-op: players take turns (player 1 first); each edits only the soldiers they control (soldier +0x2B00 = owning
 // player, set by the game's squad-to-player mapping FUN_00436f70) with their own device. Single player: one turn.
@@ -131,7 +147,7 @@ void __fastcall SetView(void* view, void* /*edx*/, float* pos, float* rot) {
                                                  RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS && v;
     }
 #endif
-    if ((g_phase != Phase::Open && !keepOrbit) || g_sel >= g_squadCount) {
+    if ((g_phase != Phase::Open && !keepOrbit) || g_sel >= g_squadCount || features::OverviewPlaying()) {
         reinterpret_cast<Fn>(kSetView)(view, pos, rot);
         return;
     }
@@ -159,7 +175,7 @@ void __fastcall SetView(void* view, void* /*edx*/, float* pos, float* rot) {
 // Tutorial / objective bar (FUN_00486d20, drawn after the HUD passes from the render loop): hidden on the screen.
 constexpr uint32_t kObjectiveBarSite = 0x40F2AF, kObjectiveBar = 0x486D20;
 void __cdecl ObjectiveBar() {
-    if (g_phase != Phase::Open) reinterpret_cast<void(__cdecl*)()>(kObjectiveBar)();
+    if (!features::CustomiseHidesHud()) reinterpret_cast<void(__cdecl*)()>(kObjectiveBar)();
 }
 
 // ---- skins ----
@@ -388,6 +404,28 @@ void ChangeKit(uint8_t* soldier, Slot slot, int dir) {
 // ---- remembered choices (registry Enhancements\Loadout<SP|Coop><role> = "uniform;face;main;sidearm;launcher") ----
 constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 
+// The exe has no manifest, so HKLM writes normally land in the VirtualStore. Where virtualization is off (or the key
+// is locked down) HKLM refuses with ERROR_ACCESS_DENIED - the values then go to the same path under HKCU. Reads take
+// HKCU first: a value is only there while HKLM can't be written (a successful HKLM write removes the HKCU copy).
+bool OpenChoiceKey(HKEY* key, bool* fallback) {
+    LSTATUS r = RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key, nullptr);
+    *fallback = r == ERROR_ACCESS_DENIED;
+    if (*fallback) r = RegCreateKeyExA(HKEY_CURRENT_USER, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key, nullptr);
+    return r == ERROR_SUCCESS;
+}
+void SetChoiceString(HKEY key, bool fallback, const std::string& name, const std::string& value) {
+    RegSetValueExA(key, name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+                   static_cast<DWORD>(value.size() + 1));
+    if (!fallback) RegDeleteKeyValueA(HKEY_CURRENT_USER, kRegKey, name.c_str());  // no stale HKCU copy
+}
+bool GetChoiceString(const std::string& name, char* buf, DWORD size) {
+    DWORD n = size;
+    if (RegGetValueA(HKEY_CURRENT_USER, kRegKey, name.c_str(), RRF_RT_REG_SZ, nullptr, buf, &n) == ERROR_SUCCESS)
+        return true;
+    n = size;
+    return RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, name.c_str(), RRF_RT_REG_SZ, nullptr, buf, &n) == ERROR_SUCCESS;
+}
+
 std::string ChoiceValue(int role) {
     char name[32];
     snprintf(name, sizeof name, "Loadout%s%d", *reinterpret_cast<int*>(0x606410) ? "Coop" : "SP", role);
@@ -396,6 +434,7 @@ std::string ChoiceValue(int role) {
 
 void HoldMain(uint8_t* soldier) {
     auto items = KitItems(soldier, Slot::Main);
+    if (items.empty()) items = KitItems(soldier, Slot::Sidearm);   // a mission kit without a main weapon
     if (items.empty()) return;
     using Hold = void(__thiscall*)(void*, void*, int);
     // Once when the screen opens: the game's own animated switch (argument 3 = 0, as the inventory does), so a soldier
@@ -575,26 +614,88 @@ void FollowFaction(Member& m, int from, int to) {
 
 void SaveChoices() {
     HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    for (int i = 0; i < g_squadCount; ++i) {
-        const std::string v = CurrentChoice(g_squad[i]);
-        RegSetValueExA(key, ChoiceValue(g_squad[i].role).c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(v.c_str()),
-                       static_cast<DWORD>(v.size() + 1));
-    }
+    bool fallback;
+    if (!OpenChoiceKey(&key, &fallback)) return;
+    for (int i = 0; i < g_squadCount; ++i)
+        SetChoiceString(key, fallback, ChoiceValue(g_squad[i].role), CurrentChoice(g_squad[i]));
     RegCloseKey(key);
 }
 
 void ApplyChoices() {
     for (int i = 0; i < g_squadCount; ++i) {
         char buf[512] = {};
-        DWORD size = sizeof buf;
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, ChoiceValue(g_squad[i].role).c_str(), RRF_RT_REG_SZ, nullptr, buf,
-                         &size) != ERROR_SUCCESS)
-            continue;
+        if (!GetChoiceString(ChoiceValue(g_squad[i].role), buf, sizeof buf)) continue;
         ApplyChoice(g_squad[i], buf);
         dslog::Write("Customise: %s - last choices applied", kRoleNames[g_squad[i].role]);
     }
+}
+
+// ---- Lua missions (scripthost.cpp): a mission script's own loadout rules ----
+// game.kit(id, {...}) forces a soldier's uniform (skin texture) and kit (weapon ids, "-" = none) and locks those rows;
+// game.briefing(text) is the BRIEFING tab's text; game.loadout(false) skips the screen (the kits still apply). Rules
+// belong to the running .lua level (features::ScriptLevelActive) and are cleared when the next one starts.
+struct ScriptKit {
+    std::string uniform;   // skin texture, "" = keep
+    std::string slot[4];   // main, sidearm, launcher, grenades: weapon id ("a+b" grenade set), "-" none, "" keep
+    bool lock = true;
+};
+std::map<int, ScriptKit> g_scriptKits;   // by script id (object +8)
+bool g_scriptLoadout = true;
+std::string g_scriptBriefing;
+
+const ScriptKit* KitRule(uint8_t* soldier) {
+    if (!features::ScriptLevelActive() || !soldier) return nullptr;
+    auto it = g_scriptKits.find(*reinterpret_cast<int*>(soldier + 8));
+    return it == g_scriptKits.end() ? nullptr : &it->second;
+}
+
+const char* ItemId(const std::pair<uint8_t*, uint8_t*>& item) { return *reinterpret_cast<const char**>(item.second + 4); }
+
+void ApplyScriptKit(uint8_t* soldier, const ScriptKit& k) {
+    const int role = RoleOf(soldier);
+    if (!k.uniform.empty() && role >= 0 && role < 4) {
+        [&] {
+            for (int u = 0; u < kSides; ++u)
+                for (int i = 0, n = SkinCount(u, role); i < n; ++i)
+                    if (uint8_t* e = SkinEntry(u, role, i); e && _stricmp(reinterpret_cast<const char*>(e + 4), k.uniform.c_str()) == 0) {
+                        if (e != *reinterpret_cast<uint8_t**>(soldier + 0x2A68)) ApplySkin(soldier, e);
+                        return;
+                    }
+            dslog::Write("[fail] Customise: mission uniform %s not in the skin tables", k.uniform.c_str());
+        }();
+    }
+    const Slot slots[3] = {Slot::Main, Slot::Sidearm, Slot::Launcher};
+    for (int s = 0; s < 3; ++s) {
+        const std::string& want = k.slot[s];
+        if (want.empty()) continue;
+        auto items = KitItems(soldier, slots[s]);
+        size_t keep = 0;
+        if (want != "-") {
+            if (items.empty() || _stricmp(ItemId(items[0]), want.c_str()) != 0) {
+                if (!features::KitSwap(soldier, items.empty() ? nullptr : items[0].first, want, s)) continue;
+                items = KitItems(soldier, slots[s]);
+            }
+            keep = 1;   // one of that slot; the rest go
+        }
+        for (size_t j = keep; j < items.size(); ++j) features::KitSwap(soldier, items[j].first, "", s);
+    }
+    if (!k.slot[3].empty()) SetGrenades(soldier, k.slot[3]);
+    if (KitItems(soldier, Slot::Main).empty()) {   // no main weapon: the sidearm in his hands, not the knife
+        auto side = KitItems(soldier, Slot::Sidearm);
+        if (!side.empty()) reinterpret_cast<void(__thiscall*)(void*, void*, int)>(0x42EC10)(soldier, side[0].first, 1);
+    }
+    dslog::Write("Customise: mission kit for %d applied (%s / %s / %s / %s / %s)", *reinterpret_cast<int*>(soldier + 8),
+                 k.uniform.empty() ? "-" : k.uniform.c_str(), k.slot[0].c_str(), k.slot[1].c_str(), k.slot[2].c_str(),
+                 k.slot[3].c_str());
+}
+
+void ApplyScriptKits() {
+    if (!features::ScriptLevelActive()) return;
+    auto* mgr = *reinterpret_cast<uint8_t**>(0x63C9A0);
+    auto* table = mgr ? *reinterpret_cast<uint8_t***>(mgr + 0x30) : nullptr;
+    if (!table) return;
+    for (const auto& [id, rule] : g_scriptKits)
+        if (uint8_t* soldier = table[id]) ApplyScriptKit(soldier, rule);
 }
 
 // ---- linked missions: the squad's kit carries on between levels that continue the same operation (Mission4 ->
@@ -629,32 +730,24 @@ std::string CarryValue(const char* what) {
 
 void SnapshotCarry(const std::string& level) {
     HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    for (int i = 0; i < g_squadCount; ++i) {
-        const std::string v = CurrentChoice(g_squad[i]);
-        RegSetValueExA(key, CarryValue(std::to_string(g_squad[i].role).c_str()).c_str(), 0, REG_SZ,
-                       reinterpret_cast<const BYTE*>(v.c_str()), static_cast<DWORD>(v.size() + 1));
-    }
-    RegSetValueExA(key, CarryValue("From").c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(level.c_str()),
-                   static_cast<DWORD>(level.size() + 1));
+    bool fallback;
+    if (!OpenChoiceKey(&key, &fallback)) return;
+    for (int i = 0; i < g_squadCount; ++i)
+        SetChoiceString(key, fallback, CarryValue(std::to_string(g_squad[i].role).c_str()), CurrentChoice(g_squad[i]));
+    SetChoiceString(key, fallback, CarryValue("From"), level);
     RegCloseKey(key);
 }
 
 std::string CarryFrom() {
     char buf[64] = {};
-    DWORD size = sizeof buf;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, CarryValue("From").c_str(), RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS)
-        return "";
+    if (!GetChoiceString(CarryValue("From"), buf, sizeof buf)) return "";
     return buf;
 }
 
 void ApplyCarry() {
     for (int i = 0; i < g_squadCount; ++i) {
         char buf[512] = {};
-        DWORD size = sizeof buf;
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, CarryValue(std::to_string(g_squad[i].role).c_str()).c_str(),
-                         RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS)
+        if (GetChoiceString(CarryValue(std::to_string(g_squad[i].role).c_str()), buf, sizeof buf))
             ApplyChoice(g_squad[i], buf);
     }
 }
@@ -692,7 +785,7 @@ int BlockCount() {
 void LateDraw();
 bool g_primed = false;  // input: ignore whatever is held when the screen opens
 
-void Open() {
+void Open(bool linked = false) {
     FindSquad();
     if (!g_squadCount) {
         g_phase = Phase::Done;
@@ -700,7 +793,9 @@ void Open() {
         return;
     }
     g_phase = Phase::Open;
-    g_sel = g_row = 0;
+    g_sel = g_row = g_mrow = 0;
+    g_tab = kTabBriefing;
+    g_textPage = 0;
     g_turn = 0;
     if (Players()) {   // player 1 may control none of the soldiers listed first
         for (int p = 0; p < Players(); ++p) {
@@ -713,7 +808,8 @@ void Open() {
         for (Slot slot : {Slot::Main, Slot::Sidearm, Slot::Launcher, Slot::Grenades})
             for (auto& [item, def] : KitItems(g_squad[i].soldier, slot))
                 features::KitUnlock(*reinterpret_cast<const char**>(def + 4));
-    ApplyChoices();
+    if (features::ScriptLevelActive()) ApplyScriptKits();   // a Lua mission's own kits, not the remembered choices
+    else if (!linked) ApplyChoices();   // a linked level has the carried kit (ApplyCarry) instead
     for (int i = 0; i < g_squadCount; ++i) {
         HoldMain(g_squad[i].soldier);
         g_squad[i].openSide = SideOf(g_squad[i].soldier);
@@ -729,6 +825,7 @@ void Open() {
         g_savedDevices[i] = *dev;
         *dev = 0;
     }
+    features::RuleTimeOfDay();   // the mission's start-up set-up (after the overview) may have set its own hour
     overlay::SetLateDraw(&LateDraw);
     g_orbitStart = 0;
     SingleView(true);
@@ -737,7 +834,7 @@ void Open() {
 }
 
 void Close() {
-    SaveChoices();
+    if (!g_linkedLevel && !features::ScriptLevelActive()) SaveChoices();   // (carried / mission kits aren't choices)
     SingleView(false);
     *reinterpret_cast<float*>(kTimeMultiplier) = g_savedMultiplier;
     for (int i = 0; i < BlockCount(); ++i)
@@ -749,7 +846,8 @@ void Close() {
 }
 
 // ---- input ----
-enum : uint32_t { kUp = 1, kDown = 2, kLeft = 4, kRight = 8, kAccept = 16, kPrev = 32, kNext = 64 };
+enum : uint32_t { kUp = 1, kDown = 2, kLeft = 4, kRight = 8, kAccept = 16, kPrev = 32, kNext = 64, kTabPrev = 128, kTabNext = 256,
+                  kPlay = 512 };
 uint32_t g_prevPad[8] = {}, g_prevKeys = 0;
 
 uint32_t ReadInput() {
@@ -766,16 +864,21 @@ uint32_t ReadInput() {
         if (edge & (1u << 15 | 1u << 19)) in |= kLeft;
         if (edge & (1u << 13 | 1u << 17)) in |= kRight;
         if (edge & (1u << 2)) in |= kAccept;
-        if (edge & (1u << 4 | 1u << 6)) in |= kPrev;  // L2 / L1
-        if (edge & (1u << 5 | 1u << 7)) in |= kNext;  // R2 / R1
+        if (edge & (1u << 6)) in |= kPrev;      // L1
+        if (edge & (1u << 7)) in |= kNext;      // R1
+        if (edge & (1u << 4)) in |= kTabPrev;   // L2
+        if (edge & (1u << 5)) in |= kTabNext;   // R2
+        if (edge & (1u << 3)) in |= kPlay;      // Square / X: play the overview
     }
     static const int map[][2] = {{VK_UP, kUp},       {VK_DOWN, kDown}, {VK_LEFT, kLeft},  {VK_RIGHT, kRight},
                                  {VK_RETURN, kAccept}, {'Q', kPrev},    {'E', kNext},      {VK_PRIOR, kPrev},
-                                 {VK_NEXT, kNext}};
+                                 {VK_NEXT, kNext},     {VK_SPACE, kPlay}};
     uint32_t keys = 0;
-    if (onlyPad < 0)
+    if (onlyPad < 0) {
         for (auto& k : map)
             if (features::KeyHeld(k[0])) keys |= k[1];
+        if (features::KeyHeld(VK_TAB)) keys |= features::KeyHeld(VK_SHIFT) ? kTabPrev : kTabNext;   // Shift+Tab: back
+    }
     if (g_primed) in |= keys & ~g_prevKeys;
     g_prevKeys = keys;
     g_primed = true;
@@ -783,11 +886,217 @@ uint32_t ReadInput() {
 }
 
 // ---- rows ----
-enum Row { kRowUniform, kRowFace, kRowMain, kRowSidearm, kRowLauncher, kRowGrenades, kRowCount };
-const char* const kRowNames[kRowCount] = {"UNIFORM", "SOLDIER", "MAIN WEAPON", "SIDEARM", "LAUNCHER", "GRENADES"};
+// SQUAD tab rows (per soldier).
+enum Row { kRowUniform, kRowFace, kRowVoice, kRowMain, kRowSidearm, kRowLauncher, kRowGrenades, kRowCount };
+
+// A row a Lua mission fixed for this soldier (game.kit with lock): uniform / soldier rows when it set a uniform, the
+// kit rows it named.
+bool RowLocked(const Member& m, int row) {
+    const ScriptKit* k = KitRule(m.soldier);
+    if (!k || !k->lock) return false;
+    if (row == kRowUniform || row == kRowFace) return !k->uniform.empty();
+    if (row == kRowMain) return !k->slot[0].empty();
+    if (row == kRowSidearm) return !k->slot[1].empty();
+    if (row == kRowLauncher) return !k->slot[2].empty();
+    if (row == kRowGrenades) return !k->slot[3].empty();
+    return false;
+}
+const char* const kRowNames[kRowCount] = {"UNIFORM", "SOLDIER", "VOICE", "MAIN WEAPON", "SIDEARM", "LAUNCHER", "GRENADES"};
+constexpr float kRowTop = 0.20f, kOptH = 0.075f;  // fractions of the screen height
+float RowY(int r, float H) { return H * (kRowTop + r * kOptH); }
+
+// ---- tabs ----
+// MISSION (map, objectives, time of day), SQUAD (the soldiers' rows) and OVERVIEW (the mission's night-vision
+// fly-over, only where it has one). L2 / R2 (Tab) switch.
+
+// ---- MISSION tab: the level's map and objectives, as the game's OBJECTIVES screen (state 0xD) has them ----
+// Objectives: list [[0x60EDC0]+0x12E4] (next +0xD8), entry +4 text hashes [0] title / [1] description, +0x14 flags (2
+// shown, 4 complete, 8 tracked), +0x15 marker index, +0x18 positions (vec3 cm, y up). Map: image [0x6107C0] (-1 =
+// none) of sheet [0x60EE20] (records +4: 24 B, +0 page, +0xE w, +0x10 h; UVs +8: 16 B; page textures sheet +0xC
+// [page] +0x10); world bounds origin 0x6107D0 / 0x6107D8 (x / z), extents 0x6107C4 / 0x6107CC: u = (x - ox) / ex,
+// v = |(z - oz) / ez - 1| (the game's 0x454CF0).
+constexpr uint32_t kCampaign = 0x60EDC0, kStrings = 0x60EDCC, kLookup = 0x4F6730;
+constexpr uint32_t kMapSheet = 0x60EE20, kMapImage = 0x6107C0;
+struct Objective {
+    std::string title, text;
+    bool done = false, hasPos = false;
+    float x = 0, z = 0;
+};
+std::vector<Objective> g_objectives;   // the shown objectives
+std::string g_briefing;                // the game's briefing popup text (BRIEFING tab)
+struct Rect {
+    float x = 0, y = 0, w = 0, h = 0;
+};
+Rect g_map;                            // where the map was drawn this frame (w = 0: no map)
+
+std::string Upper(std::string s) {
+    for (char& ch : s) ch = static_cast<char>(toupper(static_cast<unsigned char>(ch)));
+    return s;
+}
+
+std::string GameText(uint32_t hash) {
+    void* table = *reinterpret_cast<void**>(kStrings);
+    if (hash == 0xFFFFFFFF || !table) return "";
+    const char* t = reinterpret_cast<const char*(__thiscall*)(void*, uint32_t)>(kLookup)(table, hash);
+    return t ? t : "";
+}
+
+void ReadObjectives() {
+    g_objectives.clear();
+    auto* campaign = *reinterpret_cast<uint8_t**>(kCampaign);
+    if (!campaign) return;
+    {   // the briefing (FUN_00458800: campaign +0x12EC title, +0x12F0 date, +0x12F4 place, pages +0x12F8..+0x130C)
+        std::string story;
+        for (uint32_t off = 0x12F8; off <= 0x130C; off += 4) {
+            const std::string page = GameText(*reinterpret_cast<uint32_t*>(campaign + off));
+            if (!page.empty()) story += (story.empty() ? "" : " ") + page;
+        }
+        const std::string date = GameText(*reinterpret_cast<uint32_t*>(campaign + 0x12F0));
+        const std::string place = GameText(*reinterpret_cast<uint32_t*>(campaign + 0x12F4));
+        const std::string head = date + (date.empty() || place.empty() ? "" : ", ") + place;
+        g_briefing = head.empty() ? story : story.empty() ? head : head + "\n" + story;
+        if (features::ScriptLevelActive() && !g_scriptBriefing.empty()) g_briefing = g_scriptBriefing;
+    }
+    int guard = 0;
+    for (auto* e = *reinterpret_cast<uint8_t**>(campaign + 0x12E4); e && guard < 32; e = *reinterpret_cast<uint8_t**>(e + 0xD8), ++guard) {
+        const uint8_t flags = e[0x14];
+        if (!(flags & 2)) continue;
+        Objective o;
+        o.title = GameText(*reinterpret_cast<uint32_t*>(e + 4));
+        o.text = GameText(*reinterpret_cast<uint32_t*>(e + 8));
+        o.done = (flags & 4) != 0;
+        float pos[3] = {};   // the game's marker position: the set position, else the attached object's (FUN_00457270)
+        reinterpret_cast<void(__thiscall*)(void*, float*)>(0x457270)(e, pos);
+        o.hasPos = pos[0] != 0.0f || pos[2] != 0.0f;
+        o.x = pos[0], o.z = pos[2];
+        g_objectives.push_back(o);
+    }
+}
+
+int MissionRows() { return static_cast<int>(g_objectives.size()) + 2; }
+
+// World (cm) -> point on the drawn map; false if outside it.
+bool MapPoint(float x, float z, float& sx, float& sy) {
+    const float ox = *reinterpret_cast<float*>(0x6107D0), oz = *reinterpret_cast<float*>(0x6107D8);
+    const float ex = *reinterpret_cast<float*>(0x6107C4), ez = *reinterpret_cast<float*>(0x6107CC);
+    if (g_map.w <= 0 || ex == 0 || ez == 0) return false;
+    const float u = (x - ox) / ex, v = std::fabs((z - oz) / ez - 1.0f);
+    if (u < 0 || u > 1 || v < 0 || v > 1) return false;
+    sx = g_map.x + u * g_map.w, sy = g_map.y + v * g_map.h;
+    return true;
+}
+
+void Ring(float cx, float cy, float r, float width, uint32_t argb) {
+    constexpr int kSegments = 24;
+    for (int i = 0; i < kSegments; ++i) {
+        const float a0 = 6.2831853f * i / kSegments, a1 = 6.2831853f * (i + 1) / kSegments;
+        overlay::QueueLine(cx + r * std::cos(a0), cy + r * std::sin(a0), cx + r * std::cos(a1), cy + r * std::sin(a1), width, argb);
+    }
+}
+
+// The map with the objectives and the squad on it, fitted into the area (queued with the frame's shapes).
+void DrawMap(const Rect& area, float H) {
+    g_map = {};
+    auto* sheet = *reinterpret_cast<uint8_t**>(kMapSheet);
+    const int img = *reinterpret_cast<int*>(kMapImage);
+    if (!sheet || img < 0) return;
+    const uint8_t* header = *reinterpret_cast<uint8_t**>(sheet);
+    const uint8_t* records = *reinterpret_cast<uint8_t**>(sheet + 4);
+    const float* uvs = *reinterpret_cast<float**>(sheet + 8);
+    auto* const* pages = *reinterpret_cast<uint8_t* const* const*>(sheet + 0xC);
+    if (!header || !records || !uvs || !pages || img >= *reinterpret_cast<const uint16_t*>(header + 6)) return;
+    const uint8_t* rec = records + img * 24;
+    const float* uv = uvs + img * 4;
+    const uint8_t* page = pages[*reinterpret_cast<const uint16_t*>(rec)];
+    void* texture = page ? *reinterpret_cast<void* const*>(page + 0x10) : nullptr;
+    const float iw = *reinterpret_cast<const uint16_t*>(rec + 0xE), ih = *reinterpret_cast<const uint16_t*>(rec + 0x10);
+    if (!texture || iw <= 0 || ih <= 0) return;
+    const float scale = std::min(area.w / iw, area.h / ih);
+    g_map = {area.x + (area.w - iw * scale) / 2, area.y + (area.h - ih * scale) / 2, iw * scale, ih * scale};
+    const float c[4][2] = {{g_map.x, g_map.y}, {g_map.x + g_map.w, g_map.y}, {g_map.x, g_map.y + g_map.h},
+                           {g_map.x + g_map.w, g_map.y + g_map.h}};
+    overlay::QueueScreenQuad(texture, c, uv[0], uv[1], uv[2], uv[3]);
+    const float r = H * 0.022f, line = std::max(2.0f, H / 360.0f);
+    for (int i = 0; i < static_cast<int>(g_objectives.size()); ++i) {
+        const Objective& o = g_objectives[i];
+        float sx, sy;
+        if (!o.hasPos || !MapPoint(o.x, o.z, sx, sy)) continue;
+        const bool sel = i == g_mrow && g_tab == kTabMission;
+        Ring(sx, sy, sel ? r * 1.3f : r, sel ? line * 1.6f : line, o.done ? 0xFF40C040 : sel ? 0xFFE8C060 : 0xFF2050E0);
+    }
+    for (int i = 0; i < g_squadCount; ++i) {   // the squad: small squares (the soldier being looked at in gold)
+        const float* pos = reinterpret_cast<const float*>(g_squad[i].soldier + 0x30);
+        float sx, sy;
+        if (!MapPoint(pos[0], pos[2], sx, sy)) continue;
+        const float d = H * 0.008f;
+        overlay::QueueScreenRect(sx - d - 1, sy - d - 1, 2 * d + 2, 2 * d + 2, 0xFF000000);
+        overlay::QueueScreenRect(sx - d, sy - d, 2 * d, 2 * d, i == 0 ? 0xFF40D040 : 0xFF90E090);
+    }
+}
+
+void ChangeMission(int dir) {
+    const int n = static_cast<int>(g_objectives.size());
+    if (g_mrow < n) {   // briefing / objective rows: Left / Right turn the text's pages
+        g_textPage = std::max(0, std::min(g_textPages - 1, g_textPage + dir));
+        return;
+    }
+    int t = features::TimeOfDay(), f = features::TimeFlow();
+    if (g_mrow == n) t = (t + dir + features::kTimeOfDayCount) % features::kTimeOfDayCount;
+    else f = (f + dir + features::kTimeFlowCount) % features::kTimeFlowCount;
+    features::SetTimeOfDay(t, f);
+}
+
+void Fill(float x, float y, float w, float h, uint32_t argb) {   // drawn at once (late draw: under the text that follows)
+    const float r[1][4] = {{x, y, w, h}};
+    overlay::FillRects(r, 1, argb);
+}
+
+// Text cut into lines of at most maxW pixels (at spaces).
+std::vector<std::string> Wrap(void* font, const std::string& text, float maxW) {
+    std::vector<std::string> lines;
+    std::string line, word;
+    auto flush = [&] {
+        if (!word.empty()) {
+            const std::string tryLine = line.empty() ? word : line + " " + word;
+            if (!line.empty() && overlay::TextWidth(font, tryLine.c_str()) > maxW) lines.push_back(line), line = word;
+            else line = tryLine;
+            word.clear();
+        }
+    };
+    for (char c : text) {
+        if (c == ' ' || c == '\n' || c == '\r') {
+            flush();
+            if (c == '\n' && !line.empty()) lines.push_back(line), line.clear();
+        } else {
+            word += c;
+        }
+    }
+    flush();
+    if (!line.empty()) lines.push_back(line);
+    return lines;
+}
 
 void Change(int dir) {
+    if (g_linkedLevel) return;   // carried kit and continuing time: view only
+    if (g_tab == kTabMission) return ChangeMission(dir);
+    if (g_tab == kTabBriefing) {
+        g_textPage = std::max(0, std::min(g_textPages - 1, g_textPage + dir));
+        return;
+    }
     Member& m = g_squad[g_sel];
+    if (RowLocked(m, g_row)) return;
+    if (g_row == kRowVoice) {   // AUTO, SAS, DELTA (English game only), OWN (when his skin brings a voice)
+        const bool own = features::SoldierHasOwnVoice(m.soldier), accents = features::SpeechLanguage() >= 0;
+        int v = features::VoiceChoice(m.role);
+        for (int k = 0; k < features::kVoiceCount; ++k) {
+            v = (v + dir + features::kVoiceCount) % features::kVoiceCount;
+            if ((v == 3 && !own) || ((v == 1 || v == 2) && !accents)) continue;
+            break;
+        }
+        features::SetVoiceChoice(m.role, v);
+        dslog::Write("Customise: %s voice -> %s", kRoleNames[m.role], features::VoiceLabel(v));
+        return;
+    }
     if (g_row == kRowGrenades) {
         ChangeGrenades(m.soldier, dir);
         return;
@@ -865,8 +1174,31 @@ void Update() {
             }
         }
     }
-    if (in & kUp) g_row = (g_row + kRowCount - 1) % kRowCount;
-    if (in & kDown) g_row = (g_row + 1) % kRowCount;
+    for (int step : {in & kTabPrev ? -1 : 0, in & kTabNext ? 1 : 0}) {
+        if (!step) continue;
+        for (int k = 1; k < kTabCount; ++k) {
+            const int t = ((g_tab + step * k) % kTabCount + kTabCount) % kTabCount;
+            if (TabAvailable(t)) {
+                g_tab = t;
+                break;
+            }
+        }
+        g_textPage = 0;
+    }
+    if (MapTab()) ReadObjectives();
+    if (g_tab == kTabOverview && (in & kPlay)) features::StartOverview();
+    if (g_tab == kTabBriefing) {
+        if (in & kUp) g_textPage = std::max(0, g_textPage - 1);
+        if (in & kDown) g_textPage = std::min(g_textPages - 1, g_textPage + 1);
+    } else if (g_tab == kTabMission) {
+        const int n = MissionRows();
+        if (g_mrow >= n) g_mrow = n - 1;
+        if (in & kUp) g_mrow = (g_mrow + n - 1) % n, g_textPage = 0;
+        if (in & kDown) g_mrow = (g_mrow + 1) % n, g_textPage = 0;
+    } else {
+        if (in & kUp) g_row = (g_row + kRowCount - 1) % kRowCount;
+        if (in & kDown) g_row = (g_row + 1) % kRowCount;
+    }
     if (in & kLeft) Change(-1);
     if (in & kRight) Change(1);
     if (in & kAccept) NextTurn();
@@ -896,9 +1228,17 @@ void DrawShapes() {
     // panels + selection bars
     band(W * 0.04f, H * 0.14f, W * 0.30f, H * 0.72f, kPanel);
     band(W * 0.66f, H * 0.14f, W * 0.30f, H * 0.72f, kPanel);
-    const float rowH = H * 0.09f, optH = H * 0.075f;
+    if (MapTab()) {   // cover the soldier window: map left, mission text right
+        band(wx0 - t, wy0 - t, wx1 - wx0 + 2 * t, wy1 - wy0 + 2 * t, kBack);
+        band(W * 0.04f, H * 0.14f, W * 0.50f, H * 0.72f, kPanel);
+        band(W * 0.56f, H * 0.14f, W * 0.40f, H * 0.72f, kPanel);
+        const float m = H * 0.025f;
+        DrawMap({W * 0.04f + m, H * 0.14f + m, W * 0.50f - 2 * m, H * 0.72f - 2 * m}, H);
+        return;
+    }
+    const float rowH = H * 0.09f;
     band(W * 0.04f, H * 0.20f + g_sel * rowH, W * 0.30f, rowH, kSel);
-    band(W * 0.66f, H * 0.20f + g_row * optH, W * 0.30f, optH, kSel);
+    band(W * 0.66f, RowY(g_row, H), W * 0.30f, H * kOptH, kSel);
 }
 
 // Text shortened with "..." to fit maxW pixels (the value, not the arrows around it, gets cut).
@@ -932,25 +1272,30 @@ std::string PromptLine(bool last) {
     if (style < 0) style = features::KeyboardInUse() ? 0 : features::PadStyleXbox() ? 2 : 1;
     const char* action = last ? "START MISSION" : "NEXT PLAYER";
     if (!overlay::GlyphsReady()) {
-        return std::string(style ? "D-PAD  CHOOSE / CHANGE     L1/R1  SOLDIER     CROSS  " : "UP/DOWN  CHOOSE     LEFT/RIGHT  CHANGE     Q/E  SOLDIER     ENTER  ") + action;
+        return std::string(style ? "D-PAD  CHOOSE / CHANGE     L1/R1  SOLDIER     L2/R2  TAB     CROSS  "
+                                 : "UP/DOWN  CHOOSE     LEFT/RIGHT  CHANGE     Q/E  SOLDIER     TAB  NEXT TAB     ENTER  ") + action;
     }
     auto icon = [](Icon i) { return std::string(overlay::IconChar(i)); };
     auto pad = [&](int button) {  // game button numbering (0 Triangle .. 7 R1)
         return static_cast<Icon>(static_cast<int>(style == 2 ? Icon::XbTriangle : Icon::PsTriangle) + button);
     };
     if (!style)
-        return icon(Icon::KbArrowUp) + icon(Icon::KbArrowDown) + " CHOOSE     " + icon(Icon::KbArrowLeft) +
-               icon(Icon::KbArrowRight) + " CHANGE     " +
-               icon(Icon::KbQ) + icon(Icon::KbE) + " SOLDIER     " + icon(Icon::KbEnter) + " " + action;
+        return icon(Icon::KbArrowUp) + icon(Icon::KbArrowDown) + " CHOOSE     " +
+               (g_linkedLevel ? std::string() : icon(Icon::KbArrowLeft) + icon(Icon::KbArrowRight) + " CHANGE     ") +
+               (g_tab == kTabSquad ? icon(Icon::KbQ) + icon(Icon::KbE) + " SOLDIER     " : std::string()) +
+               icon(Icon::KbShift) + icon(Icon::KbTab) + icon(Icon::KbTab) + " TAB     " + icon(Icon::KbEnter) + " " + action;
     const Icon vertical = style == 2 ? Icon::XbDpadVertical : Icon::PsDpadVertical;
     const Icon horizontal = style == 2 ? Icon::XbDpadHorizontal : Icon::PsDpadHorizontal;
-    return icon(vertical) + " CHOOSE     " + icon(horizontal) + " CHANGE     " + icon(pad(6)) + icon(pad(7)) +
-           " SOLDIER     " + icon(pad(2)) + " " + action;
+    return icon(vertical) + " CHOOSE     " + (g_linkedLevel ? std::string() : icon(horizontal) + " CHANGE     ") +
+           (g_tab == kTabSquad ? icon(pad(6)) + icon(pad(7)) + " SOLDIER     " : std::string()) + icon(pad(4)) + icon(pad(5)) +
+           " TAB     " + icon(pad(2)) + " " + action;
 }
 
 // Whether Left / Right on a row has anything else to switch to for this soldier.
 bool HasOptions(const Member& m, int row) {
     int u = 0, idx = 0;
+    if (g_linkedLevel || RowLocked(m, row)) return false;
+    if (row == kRowVoice) return features::SpeechLanguage() >= 0 || features::SoldierHasOwnVoice(m.soldier);
     const bool known = CurrentSkin(m.soldier, m.role, u, idx);
     if (row == kRowUniform) return known && UniformOptions(m.role).size() > 1;
     if (row == kRowFace) return known && StepSkin(u, m.role, idx, 1, OptionOf(u, m.role, idx)) != idx;
@@ -970,25 +1315,146 @@ bool HasOptions(const Member& m, int row) {
     return false;
 }
 
+// MISSION tab text: the mission's title, its objectives (the selected one's description below), the time rows.
+void MissionLateDraw(float W, float H) {
+    constexpr uint32_t kWhite = 0xFFFFFFFF, kDim = 0xFFA0A8B0, kGoldText = 0xFFE8C060, kDone = 0xFF70C070;
+    const char* level = reinterpret_cast<const char*>(kLevelName);
+    std::string name = features::LevelDisplayName(level), title = features::LevelTitleText(level);
+    for (char& c : name) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+    const float x = W * 0.58f, maxW = W * 0.36f;
+    Text((name + (title.empty() ? "" : " - " + title)).c_str(), x, H * 0.185f, kGoldText, true, false, maxW);
+    if (g_map.w <= 0) Text("NO MAP AVAILABLE", W * 0.29f, H * 0.5f, kDim, true, true);
+    for (int i = 0; i < static_cast<int>(g_objectives.size()); ++i) {   // numbers next to the rings on the map
+        float sx, sy;
+        if (g_objectives[i].hasPos && MapPoint(g_objectives[i].x, g_objectives[i].z, sx, sy))
+            Text(std::to_string(i + 1).c_str(), sx + H * 0.03f, sy + H * 0.01f,
+                 i == g_mrow && g_tab == kTabMission ? kGoldText : kWhite);
+    }
+    float y = H * 0.25f;
+    if (g_tab == kTabOverview) {   // what the tab plays, and how
+        Text("NIGHT-VISION OVERVIEW", x, y, kGoldText);
+        y += H * 0.05f;
+        for (const std::string& l : Wrap(overlay::MenuFont(), "A fly-over of the mission area in night vision, showing each objective, with the "
+                                                              "radio briefing. Skip it any time with Esc, Enter, Cross or Circle.", maxW)) {
+            Text(l.c_str(), x, y, kWhite);
+            y += H * 0.032f;
+        }
+        y += H * 0.04f;
+        int style = Players() ? features::CoopPromptStyle(g_turn) : -1;
+        if (style < 0) style = features::KeyboardInUse() ? 0 : features::PadStyleXbox() ? 2 : 1;
+        const std::string key = !overlay::GlyphsReady() ? (style ? "SQUARE" : "SPACE")
+                                : overlay::IconChar(style == 0 ? overlay::Icon::KbSpace
+                                                               : style == 2 ? overlay::Icon::XbSquare : overlay::Icon::PsSquare);
+        Text((key + "  PLAY OVERVIEW").c_str(), x, y, kGoldText, true);
+        return;
+    }
+    if (g_tab == kTabBriefing) {   // the story, in pages of the panel's height
+        const float lineH = H * 0.032f, bottom = H * 0.80f;
+        const std::vector<std::string> lines = Wrap(overlay::MenuFont(), g_briefing, maxW);
+        const int perPage = std::max(1, static_cast<int>((bottom - y) / lineH));
+        g_textPages = std::max(1, (static_cast<int>(lines.size()) + perPage - 1) / perPage);
+        g_textPage = std::min(g_textPage, g_textPages - 1);
+        for (int k = g_textPage * perPage; k < std::min<int>(static_cast<int>(lines.size()), (g_textPage + 1) * perPage); ++k) {
+            Text(lines[k].c_str(), x, y, k == 0 ? kGoldText : kWhite);   // the first line: date and place
+            y += lineH;
+        }
+        if (lines.empty()) Text("NO BRIEFING", x, y, kDim);
+        if (g_textPages > 1) {
+            char page[32];
+            snprintf(page, sizeof page, "< PAGE %d/%d >", g_textPage + 1, g_textPages);
+            Text(page, x, H * 0.835f, kGoldText);
+        }
+        return;
+    }
+    Text("OBJECTIVES", x, y, kDim);
+    y += H * 0.045f;
+    const float rowH = H * 0.045f;
+    for (int i = 0; i < static_cast<int>(g_objectives.size()); ++i) {
+        const Objective& o = g_objectives[i];
+        if (i == g_mrow) Fill(W * 0.56f, y - rowH * 0.72f, W * 0.40f, rowH, 0xFF3A4652);
+        std::string line = std::to_string(i + 1) + "  " + (o.title.empty() ? "OBJECTIVE" : o.title) + (o.done ? "  (DONE)" : "");
+        Text(line.c_str(), x, y, o.done ? kDone : i == g_mrow ? kWhite : kDim, false, false, maxW);
+        y += rowH;
+    }
+
+    const int n = static_cast<int>(g_objectives.size());
+    const float ty = H * 0.72f;   // time rows at the bottom of the panel
+    g_textPages = 1;
+    if (g_mrow < n && !g_objectives[g_mrow].text.empty()) {   // the selected row's text, in pages that fit above them
+        y += H * 0.01f;
+        const float lineH = H * 0.03f;
+        const std::vector<std::string> lines = Wrap(overlay::MenuFont(), g_objectives[g_mrow].text, maxW);
+        const int perPage = std::max(1, static_cast<int>((ty - H * 0.06f - y) / lineH));
+        g_textPages = (static_cast<int>(lines.size()) + perPage - 1) / perPage;
+        g_textPage = std::min(g_textPage, g_textPages - 1);
+        for (int k = g_textPage * perPage; k < std::min<int>(static_cast<int>(lines.size()), (g_textPage + 1) * perPage); ++k) {
+            Text(lines[k].c_str(), x, y, kWhite);
+            y += lineH;
+        }
+        if (g_textPages > 1) {
+            char page[32];
+            snprintf(page, sizeof page, "< PAGE %d/%d >", g_textPage + 1, g_textPages);
+            Text(page, x, ty - H * 0.045f, kGoldText);
+        }
+    }
+    for (int r = 0; r < 2; ++r) {
+        const float ry = ty + r * H * 0.07f;
+        const bool sel = g_mrow == n + r;
+        if (sel) Fill(W * 0.56f, ry - H * 0.03f, W * 0.40f, H * 0.068f, 0xFF3A4652);
+        Text(r ? "TIME FLOW" : "TIME OF DAY", x, ry, kDim);
+        const std::string label = r ? features::TimeFlowLabel(features::TimeFlow()) : features::TimeOfDayLabel(features::TimeOfDay());
+        std::string value = "< " + label + " >";
+        if (g_linkedLevel)
+            value = features::TimeContinues() && r == 0 ? "CONTINUES FROM " + Upper(features::LevelDisplayName(g_linkedFrom.c_str())) : label;
+        Text(value.c_str(), x, ry + H * 0.032f, sel ? kWhite : kDim);
+    }
+}
+
 void LateDraw() {
-    if (g_phase == Phase::Armed || g_phase == Phase::Waiting) {
-        // The frame the briefing / intro ends is rendered before OnFrameCustomise sees it: cover it at render time.
+    if (g_phase == Phase::Armed || g_phase == Phase::Waiting || g_phase == Phase::Carry || g_phase == Phase::CarryWaiting) {
+        // From the end of the intro until the screen opens - the game's own briefing (closed at once), the skipped
+        // overview, the frame play starts (rendered before OnFrameCustomise sees it) - the backdrop covers the frame.
         const auto* r = *reinterpret_cast<uint8_t* const*>(kRenderer);
-        if (r && Playing()) {
+        const uint32_t fe = *reinterpret_cast<uint32_t*>(kFrontEndState);
+        if (r && *reinterpret_cast<int8_t*>(kDispatchMode) == 0 &&
+            (Playing() || fe == kBriefingState || features::OverviewSkipPending())) {
             const float rects[1][4] = {{0, 0, static_cast<float>(*reinterpret_cast<const int*>(r + 0x40688)),
                                         static_cast<float>(*reinterpret_cast<const int*>(r + 0x4068C))}};
             overlay::FillRects(rects, 1, 0xFF12161A);
         }
         return;
     }
-    if (g_phase != Phase::Open) return;
+    if (g_phase != Phase::Open || features::OverviewPlaying()) return;
     const float W = g_W, H = g_H;
     if (W <= 0) return;
     constexpr uint32_t kWhite = 0xFFFFFFFF, kDim = 0xFFA0A8B0, kGoldText = 0xFFE8C060;
     char title[64];
-    if (Players()) snprintf(title, sizeof title, "SQUAD LOADOUT - PLAYER %d", g_turn + 1);
-    else strcpy_s(title, "SQUAD LOADOUT");
-    Text(title, W * 0.5f, H * 0.09f, kGoldText, true, true);
+    if (Players()) snprintf(title, sizeof title, "MISSION BRIEFING - PLAYER %d", g_turn + 1);
+    else strcpy_s(title, "MISSION BRIEFING");
+    Text(title, W * 0.5f, H * 0.065f, kGoldText, true, true);
+    {   // tab bar
+        std::string bar;
+        float x = W * 0.5f;
+        std::vector<int> tabs;
+        for (int tb = 0; tb < kTabCount; ++tb)
+            if (TabAvailable(tb)) tabs.push_back(tb);
+        void* font = overlay::MenuFont();
+        float total = 0;
+        for (int tb : tabs) total += overlay::TextWidth(font, kTabNames[tb]) + W * 0.04f;
+        x -= total / 2;
+        for (int tb : tabs) {
+            Text(kTabNames[tb], x, H * 0.115f, tb == g_tab ? kGoldText : kDim);
+            const float w = static_cast<float>(overlay::TextWidth(font, kTabNames[tb]));
+            if (tb == g_tab) Fill(x, H * 0.122f, w, std::max(2.0f, H / 360.0f), kGoldText);
+            x += w + W * 0.04f;
+        }
+    }
+    if (MapTab()) {
+        MissionLateDraw(W, H);
+        const bool lastTurn = !Players() || g_turn >= Players() - 1;
+        Text(PromptLine(lastTurn).c_str(), W * 0.5f, H * 0.93f, kDim, false, true);
+        return;
+    }
     Text("SQUAD", W * 0.06f, H * 0.185f, kGoldText, true);
     Text("EQUIPMENT", W * 0.68f, H * 0.185f, kGoldText, true);
     const float rowH = H * 0.09f;
@@ -1010,9 +1476,9 @@ void LateDraw() {
         Text(sub, W * 0.06f, y + rowH * 0.80f, Mine(i) ? kDim : 0xFF606870);
     }
     const Member& m = g_squad[g_sel];
-    const float optH = H * 0.075f;
+    const float optH = H * kOptH;
     for (int r = 0; r < kRowCount; ++r) {
-        const float y = H * 0.20f + r * optH;
+        const float y = RowY(r, H);
         Text(kRowNames[r], W * 0.68f, y + optH * 0.40f, kDim);
         char value[160] = {};
         int u = 0, idx = 0;
@@ -1021,6 +1487,7 @@ void LateDraw() {
         switch (r) {
         case kRowUniform: snprintf(value, sizeof value, "%s", known ? UniformLabel(u, m.role, idx).c_str() : "?"); break;
         case kRowFace: snprintf(value, sizeof value, "%s %s", NamePart(entry, 0x50), NamePart(entry, 0x54)); break;
+        case kRowVoice: snprintf(value, sizeof value, "%s", features::VoiceText(m.soldier, m.role).c_str()); break;
         case kRowMain: KitText(m.soldier, Slot::Main, value, sizeof value); break;
         case kRowSidearm: KitText(m.soldier, Slot::Sidearm, value, sizeof value); break;
         case kRowLauncher: KitText(m.soldier, Slot::Launcher, value, sizeof value); break;
@@ -1033,6 +1500,9 @@ void LateDraw() {
         }
         Text(shown.c_str(), W * 0.68f, y + optH * 0.85f, r == g_row ? kWhite : kDim, false, false, maxW);
     }
+    if (g_linkedLevel)
+        Text(("KIT CARRIED OVER FROM " + Upper(features::LevelDisplayName(g_linkedFrom.c_str()))).c_str(), W * 0.68f,
+             H * 0.83f, kGoldText, false, false, W * 0.27f);
     const bool last = !Players() || g_turn >= Players() - 1;
     Text(PromptLine(last).c_str(), W * 0.5f, H * 0.93f, kDim, false, true);
 }
@@ -1045,22 +1515,95 @@ bool Playing() {
 
 bool features::CustomiseOpen() { return g_phase == Phase::Open; }
 
+void features::ResetScriptLoadout() {
+    g_scriptKits.clear();
+    g_scriptLoadout = true;
+    g_scriptBriefing.clear();
+}
+void features::SetScriptLoadout(bool on) { g_scriptLoadout = on; }
+void features::SetScriptBriefing(const std::string& text) { g_scriptBriefing = text; }
+void features::SetScriptKit(int id, const std::string& uniform, const std::string (&slots)[4], bool lock) {
+    ScriptKit& k = g_scriptKits[id];
+    k.uniform = uniform;
+    for (int i = 0; i < 4; ++i) k.slot[i] = slots[i];
+    k.lock = lock;
+}
+void features::ApplyScriptKitNow(int id) {   // game.kit after the start: at once
+    auto* mgr = *reinterpret_cast<uint8_t**>(0x63C9A0);
+    auto* table = mgr ? *reinterpret_cast<uint8_t***>(mgr + 0x30) : nullptr;
+    auto it = g_scriptKits.find(id);
+    if (table && table[id] && it != g_scriptKits.end()) ApplyScriptKit(table[id], it->second);
+}
+bool features::CustomiseHidesHud() {
+    return (g_phase == Phase::Open && !features::OverviewPlaying()) || features::ScriptFilmPlaying();
+}
+
+// The level this one continues ("Mission4"), "" if it doesn't continue another.
+std::string features::LinkedFrom() { return g_linkedLevel ? g_linkedFrom : std::string(); }
+
 void features::OnFrameCustomise() {
     char level[32] = {};
     memcpy(level, reinterpret_cast<const char*>(kLevelName), sizeof level - 1);
     if (strcmp(level, g_level) != 0) {  // new level
         if (g_phase == Phase::Open) Close();
         memcpy(g_level, level, sizeof g_level);
-        g_phase = _strnicmp(level, "Mission", 7) == 0 ? Phase::Armed : Phase::Idle;
-        if (g_phase == Phase::Armed && ChainNext(CarryFrom(), LevelBase(level))) g_phase = Phase::Carry;
+        g_scriptLevel = features::ScriptLevelActive();
+        g_phase = _strnicmp(level, "Mission", 7) == 0 || g_scriptLevel ? Phase::Armed : Phase::Idle;
+        g_linkedLevel = false;
+        g_briefingClosed = g_briefingMessageSent = false;
+        if (g_phase == Phase::Armed && ChainNext(CarryFrom(), LevelBase(level))) {
+            g_phase = Phase::Carry;
+            g_linkedLevel = true;
+            g_linkedFrom = CarryFrom();
+        }
         g_armedFrames = 0;
-        overlay::SetLateDraw(g_phase == Phase::Armed ? &LateDraw : nullptr);
+        // (the backdrop over the intro's last frames; a Lua mission has no intro - its opening film must stay visible)
+        overlay::SetLateDraw((g_phase == Phase::Armed || g_phase == Phase::Carry) && !g_scriptLevel ? &LateDraw : nullptr);
     }
     if (*reinterpret_cast<int8_t*>(kDispatchMode) != 0) return;  // loading / other
+    if ((g_phase == Phase::Armed || g_phase == Phase::Waiting || g_phase == Phase::Carry || g_phase == Phase::CarryWaiting) &&
+        *reinterpret_cast<uint32_t*>(kFrontEndState) == kBriefingState) {
+        // The game's briefing popup (map + story): closed as its Esc does (state 0xE; its leave sets [0x61079C] and its
+        // update then starts the overview, which overview.cpp skips). The setter ignores calls during a transition.
+        reinterpret_cast<void(__cdecl*)(uint32_t)>(0x47EF20)(0xE);
+        if (!g_briefingClosed) dslog::Write("Customise: game briefing closed");
+        g_briefingClosed = true;
+    }
+    // The briefing's own update sends the mission script message 0x3B once the state is 0xE (0x4024F4: [0x60F578]+8
+    // (0x3B, 0)) - the script's step from its intro state to the overview and then its mission set-up (state 2 of
+    // MissionN.dll; without it no trigger or AI logic ever runs). Closed by us, the briefing's update doesn't run
+    // again, so the message is sent here, once.
+    if (g_briefingClosed && !g_briefingMessageSent && *reinterpret_cast<uint32_t*>(kFrontEndState) == 0xE) {
+        g_briefingMessageSent = true;
+        if (auto* scripts = *reinterpret_cast<uint8_t**>(0x60F578)) {
+            reinterpret_cast<void(__cdecl*)(int, int)>(*reinterpret_cast<uint32_t*>(scripts + 8))(0x3B, 0);
+            dslog::Write("Customise: briefing message 0x3B sent to the mission script");
+        }
+    }
     const bool playing = Playing();
     switch (g_phase) {
     case Phase::Armed:  // intro / briefing first
     case Phase::Carry:
+        if (g_scriptLevel) {   // a Lua mission goes straight into play: its update() runs a few frames first
+            if (!playing) break;
+            if (features::ScriptFilmPlaying()) {   // its opening film first (movie.cpp)
+                g_armedFrames = 0;
+                break;
+            }
+            if (features::ScriptLoadingSave()) {
+                g_phase = Phase::Done;
+                overlay::SetLateDraw(nullptr);
+            } else if (++g_armedFrames > 15) {
+                if (g_scriptLoadout) {
+                    Open();
+                } else {
+                    ApplyScriptKits();
+                    g_phase = Phase::Done;
+                    overlay::SetLateDraw(nullptr);
+                }
+            }
+            break;
+        }
         if (!playing) {
             g_phase = g_phase == Phase::Carry ? Phase::CarryWaiting : Phase::Waiting;
         } else if (++g_armedFrames > 10) {
@@ -1073,6 +1616,19 @@ void features::OnFrameCustomise() {
         if (playing) Open();
         break;
     case Phase::Open:
+        {   // the overview (OVERVIEW tab) plays in the running world, unfogged, with the screen out of the way
+            static bool overview = false;
+            const bool now = features::OverviewPlaying();
+            if (now != overview) {
+                overview = now;
+                if (now) features::SetSceneFog(false, 0, 0, 0);
+                else features::SetSceneFog(true, kFogColour, kFogStart, kFogEnd), g_primed = false;   // back on OVERVIEW
+            }
+            if (now) {
+                *reinterpret_cast<float*>(kTimeMultiplier) = g_savedMultiplier;
+                break;
+            }
+        }
         {
             const bool settling = GetTickCount() < g_settleUntil;
             *reinterpret_cast<float*>(kTimeMultiplier) = settling ? g_savedMultiplier : 0.0001f;
@@ -1084,8 +1640,8 @@ void features::OnFrameCustomise() {
         if (playing) {
             FindSquad();
             ApplyCarry();
-            g_phase = Phase::Done;
             dslog::Write("Customise: %s continues from %s - kits carried over", g_level, CarryFrom().c_str());
+            Open(true);
         }
         break;
     default:

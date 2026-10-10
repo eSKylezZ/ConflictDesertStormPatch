@@ -133,12 +133,49 @@ bool ApplyLandingFix() {
     const uint32_t operand = reinterpret_cast<uint32_t>(&g_landThreshold);
     return patch::WriteValue(kLandCompare + 2, operand);
 }
+// Physics at high frame rates: vehicles and dynamic props run on MathEngine Karma, stepped once per frame with the
+// frame's dt by FUN_004fe520 (world step stdcall 0x58D660(world [0x643A30], float dt) at 0x4FE61C). Karma pushes
+// penetrating bodies apart at about gamma * penetration / step (world +0x11C gamma = 0.2, next to epsilon +0x118 and
+// gravity +0x120): at 240 fps the step is 8x smaller and the push 8x harder, so a body that starts slightly inside
+// the ground is thrown (Mission 1's fuel truck flew ~13 m and landed facing backwards). gamma is scaled by
+// step / (1/30 s) before each step - the push per second the game was tuned for at ~30 fps, smooth stepping kept.
+// Verified: 240 fps with gamma 0.025 -> the truck settles at yaw 318 like at 30 fps (320); without it, yaw 183.
+constexpr uint32_t kWorldStepCall = 0x4FE61C, kWorldStep = 0x58D660;
+constexpr float kPhysicsBaseStep = 1.0f / 30.0f;
+
+void __stdcall WorldStep(uint8_t* world, float dt) {
+    static uint8_t* seen = nullptr;
+    static float baseGamma = 0.2f;
+    float& gamma = *reinterpret_cast<float*>(world + 0x11C);
+    if (world != seen) {   // a new world (level load): its own gamma is the base
+        seen = world;
+        if (gamma > 0.0f && gamma < 1.0f) baseGamma = gamma;
+    }
+    bool off = false;
+#ifndef DS_DIST
+    static DWORD checked = 0;
+    static bool devOff = false;
+    if (GetTickCount() - checked > 2000) {   // dev: Dev\NoPhysicsFix = 1 for before / after comparisons
+        checked = GetTickCount();
+        DWORD v = 0, size = sizeof v;
+        devOff = RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "NoPhysicsFix", RRF_RT_REG_DWORD, nullptr, &v,
+                              &size) == ERROR_SUCCESS && v;
+    }
+    off = devOff;
+#endif
+    gamma = baseGamma * (!off && dt > 0.0f && dt < kPhysicsBaseStep ? dt / kPhysicsBaseStep : 1.0f);
+    reinterpret_cast<void(__stdcall*)(uint8_t*, float)>(kWorldStep)(world, dt);
+}
+
+bool ApplyPhysicsFix() { return patch::HookCall(kWorldStepCall, reinterpret_cast<const void*>(&WorldStep), kWorldStep); }
 }  // namespace
 
 void features::ApplyTiming() {
     patch::ApplyGroup("Frame timing", gen::kTiming);
     static bool landing = false;
     if (!landing && (landing = ApplyLandingFix())) dslog::Write("[ok]   High-FPS landing fix (character mover)");
+    static bool physics = false;
+    if (!physics && (physics = ApplyPhysicsFix())) dslog::Write("[ok]   High-FPS physics fix (Karma push-apart scaled to the step)");
     static bool exact = false;
     if (!exact && (exact = ApplyExactFrameTime())) dslog::Write("[ok]   Exact frame time (frame timer wrapped)");
 }

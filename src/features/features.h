@@ -5,6 +5,8 @@
 
 // Each Apply* brings the game in line with the current settings (patch or un-patch). Called once before
 // WinMain, and again when the launcher saves new settings (before any game code uses the patched sites).
+struct lua_State;  // Lua (third_party/lua), for the script host's registrations
+
 namespace features {
 enum class DisplayMode : uint32_t { Fullscreen, Windowed, Borderless };  // settings::Values::displayMode
 enum class PadType { Keyboard, PlayStation, Xbox, Generic };
@@ -25,6 +27,11 @@ void ApplyCoop();        // front-end CO-OP entry + join screen (Xbox-style loca
 void ApplyFontSharp();   // sharper text: font texture enlarged to the HUD scale
 void ApplyControls();    // Options -> CONTROLS: keyboard & mouse / controller (per-player pad layouts)
 void ApplyMouse();       // mouse acceleration off by default (game option, value kept in our settings)
+void ApplyMenus();       // menu lists: the pointer selects only when moved; overwrite question defaults to YES
+void ApplyFollowers();   // the Emir / Franklin: player-controllable followers with a pistol (followers.cpp)
+void OnFrameFollowers();
+void* GiveSpawnedWeapon(void* soldier, const char* weapon, int mags);  // loadout.cpp: weapon in his hands, no unlock
+bool GiveSpawnedMedikit(void* soldier);                                // loadout.cpp: a MediKit (level's own record)
 void ApplyAudio();       // audio listener stays behind the soldier while aiming (no louder mix when zoomed)
 void ApplyShadows();      // shadow volumes end below the caster (no shadows through floors / walls)
 void ApplyTooltips();    // inventory: "use" hints (MediKit on yourself, fire mode)
@@ -34,14 +41,41 @@ void ApplyMods();          // loose files from Mods\<mod>\ replace / add game fi
 int ModCount();
 bool ReadGameTable(const char* name, std::string& out);  // mods.cpp: game table incl. mod rows
 bool ModHasFile(const char* name);  // mods.cpp: a mod (or a file the plugin made) provides this file
+std::string ModFilePath(const char* name);  // mods.cpp: full path of that file ("" = no mod has it)
 const char* ModText(uint32_t hash);  // mods.cpp: texts mods define (weapon display names), by catalog hash
 const std::vector<std::string>& ModWeapons();  // mods.cpp: weapon ids made by .weapon files
 void ModLog(const char* fmt, ...);  // mods.cpp: a mod message - log + Mods\DesertStormFix-report.txt ("[fail]" = problem)
 int ModProblems();                  // mods.cpp: "[fail]" messages since the last build of the mod state
-int ModWeaponMagazines(const std::string& id);
-std::string SkinBody(const char* texture);  // mods.cpp: body model a .skin gives the soldiers wearing this texture
+int ModWeaponMagazines(const std::string& id);   // mods.cpp: a .weapon file's "magazines" (0 = not set)
+std::string SkinBody(const char* texture);        // mods.cpp: body model a .skin gives the soldiers wearing this texture
+std::string SkinNormalMap(const char* texture);  // mods.cpp: normal map a .skin gives its body ("" = the soldier's own)
 void ApplyBodies();                          // bodies.cpp: soldier bodies from .skin files
-void OnFrameBodies();  // mods.cpp: a .weapon file's "magazines" (0 = not set)
+void OnFrameBodies();
+// Time of day (timeofday.cpp): TIME OF DAY 0 mission default, 1 dawn, 2 day, 3 dusk, 4 night; TIME FLOW 0 mission
+// default (stopped at a chosen hour), 1-4 one game hour per 10 / 5 / 2 / 1 real minutes.
+constexpr int kTimeOfDayCount = 5, kTimeFlowCount = 5;
+void ApplyTimeOfDay();
+void OnFrameTimeOfDay();
+int TimeOfDay();
+int TimeFlow();
+void SetTimeOfDay(int time, int flow);  // applied at once in a mission, remembered (not on a linked level)
+bool TimeContinues();                   // this linked level continues the previous one's hour
+void RuleTimeOfDay();                   // apply the setting now (the briefing screen opened)
+const char* TimeOfDayLabel(int i);
+const char* TimeFlowLabel(int i);
+std::string LevelTitleText(const char* level);    // discord.cpp: the level's title text ("RESCUE"), "" if unknown
+std::string LevelDisplayName(const char* level);  // discord.cpp: "Mission4.env" -> "Mission 4"
+// Squad voices (voices.cpp): VOICE 0 auto (the uniform's accent, or the skin's own voice), 1 SAS, 2 Delta, 3 the skin's own.
+constexpr int kVoiceCount = 4;
+void ApplyVoices();   // dev builds: counts plays from an assigned voice bank
+void OnFrameVoices();
+int VoiceChoice(int role);
+void SetVoiceChoice(int role, int v);   // remembered per soldier and mode
+const char* VoiceLabel(int v);
+std::string VoiceText(uint8_t* soldier, int role);   // what the VOICE row shows
+bool SoldierHasOwnVoice(uint8_t* soldier);           // his skin brings a voice (.skin "voice line")
+int SpeechLanguage();                     // mods.cpp: 0 UK / 6 US English speech; -1 another language (no accents)
+std::string SkinVoice(const char* texture);  // mods.cpp: bank name of a .skin's own voice ("" = none)
 // Factions = the skin tables' sides (uniform index 0 SAS, 1 US Delta, 2 Russian, 3 Iraqi) as bits.
 constexpr int kFactionSas = 1, kFactionDelta = 2, kFactionRussian = 4, kFactionIraqi = 8;
 int WeaponFactions(const char* id);  // mods.cpp: a weapon's factions (.weapon "faction", else by its id)
@@ -50,6 +84,27 @@ void SetSceneFog(bool on, uint32_t colour, float start, float end);  // graphics
 void SceneFogBegin();
 bool LoadoutUsesFillers();
 bool CustomiseOpen();        // squad customise screen is up (customise.cpp)
+// Lua missions' loadout rules (customise.cpp, set by scripthost.cpp's game.kit / game.briefing / game.loadout)
+void ResetScriptLoadout();
+void SetScriptLoadout(bool on);
+void SetScriptBriefing(const std::string& text);
+void SetScriptKit(int id, const std::string& uniform, const std::string (&slots)[4], bool lock);
+void ApplyScriptKitNow(int id);
+bool ScriptLevelActive();    // scripthost.cpp: a .lua level is running
+bool ScriptLoadingSave();    // ... and it was started by LOAD GAME
+// movie.cpp: scripted 2D films for Lua missions (game.image / draw / music / film ...)
+void RegisterFilmFunctions(::lua_State* L);   // into the `game` table on top of the stack
+bool ScriptFilmPlaying();   // world frozen, HUD hidden, the loadout screen waits
+void ResetScriptFilm();
+bool CustomiseHidesHud();    // ... and hides the HUD (not while its overview plays)
+std::string LinkedFrom();    // the level this one continues ("Mission4"), "" if none (customise.cpp)
+// Mission overview (overview.cpp): the night-vision fly-over, skipped after the briefing, replayed on demand.
+bool OverviewAvailable();    // the loaded mission's script has one
+void StartOverview();
+bool OverviewPlaying();
+bool OverviewSkipPending();  // the automatic one is starting: cinematics.cpp answers its movie-cancel query
+void ApplyOverview();
+void OnFrameOverview();
 void OnFrameCustomise();
 void OnFrameLoadoutDev();   // dev: F8 spawns an MP5SD, F7 swaps the uniform (loadout.cpp)
 // Kit changes on the customise screen (loadout.cpp): slots 0 main weapon, 1 sidearm, 2 launcher, 3 grenades.
@@ -82,6 +137,14 @@ void* VersusScreen();                 // screen for front-end state 0x42
 void* VersusSetupScreen();            // MATCH SETUP screen, front-end state 0x44
 uint32_t VersusItemText();            // the main menu item's text hash
 const char* VersusText(uint32_t hash);
+// campaigns.cpp: custom campaigns (Mods\<mod>\campaign.txt -> SINGLE PLAYER -> CUSTOM CAMPAIGNS, state 0x45)
+void ApplyCampaigns();
+void OnFrameCampaigns();
+void CampaignsMenuItem(void* singlePlayerScreen);  // from coop.cpp's SINGLE PLAYER set-up wrapper
+void* CampaignsScreen();
+const char* CampaignsText(uint32_t hash);
+const char* ScriptText(uint32_t hash);   // scripthost.cpp: texts a Lua mission made with game.text
+const char* CampaignNext(const char* level);         // next mission of the level's campaign, "FrontEnd.dll" after the last
 void ApplyVersus();
 void OnFrameVersus();
 bool VersusSession();                // a local versus match (MP level, local host session) is set up
@@ -93,6 +156,8 @@ const char* ModsMenuText(uint32_t hash);
 void OnFrameModsMenu();
 void ApplyModsMenu();   // main menu: "DESERTSTORMFIX x INSTALLED" / mod count overlay
 void LogLayoutOffsetHits();  // hud.cpp, dev: which screen uses which layout-offset site
+const char* QuickStartLevel();  // scripthost.cpp: "+level <name>" on the command line (editor Play), else nullptr
+void ApplyScriptHost();  // scripthost.cpp: ".lua" levels run by an embedded Lua instead of a MissionN.dll
 void ApplyRumble();      // weapon rumble retuned (nothing for throwing / placing); notes what fired per player
 void ApplyDevHooks();    // development builds only: test hooks (start level)
 void OnFrameDev();       // development builds only: F9 = test pop-up message
@@ -115,6 +180,16 @@ uint32_t ReadJoystick(int joystick);
 void FollowActivePad();  // once per frame: player 1's joystick = the pad used last (not in co-op missions)
 void SetPadDeadzone(uint32_t percent);  // CONTROLLER screen: saved + applied to the open pads at once
 void ForgetJoystick(int joystick);  // slot j emptied / re-filled (hot-plug): forget its pad type and direct I/O
+void ApplyCheats();                     // cheats.cpp: OPTIONS > CHEATS (unlock code from any pad, extra rows, cheat saves)
+bool CheatsActive();                    // any cheat on (save names get "Cheats ")
+bool CheatsUnlocked();
+void* DeveloperScreen();                // developer.cpp: CHEATS > DEVELOPER (state 0x46)
+const char* DeveloperText(uint32_t hash);
+void ApplyFreeCam();
+void OnFrameFreeCam();
+bool FreeCamActive();                   // freecam.cpp: player 1 flies the free camera
+bool HudHidden();                       // customise screen or free camera: the HUD wrappers draw nothing                  // freecam.cpp: F6 / L3 + R3 in a mission once cheats are unlocked
+const char* CheatsText(uint32_t hash);  // the cheat rows' own texts (Lookup hook)
 void OnFrameHotplug();   // hotplug.cpp: pads plugged in / out while the game runs, "controller disconnected" pause
 int SplitScreenPlayers();
 bool DevBackground();    // dev background test mode is on (no cursor clipping / capture)
