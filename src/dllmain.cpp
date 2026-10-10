@@ -55,21 +55,29 @@ void Init() {
     features::ApplyGraphics();
     features::ApplyCoop();
     features::ApplyVersus();
+    features::ApplyCheats();
+    features::ApplyFreeCam();
     features::ApplyModsMenu();
     features::ApplyFontSharp();
     features::ApplyControls();
     features::ApplyMouse();
+    features::ApplyMenus();
+    features::ApplyFollowers();
     features::ApplyTooltips();
     features::ApplyRumble();
     features::ApplyMods();
     features::ApplyWeaponIcons();  // after ApplyMods: the .weapon files name the icons
     features::ApplyBodies();       // .skin "body": soldier meshes from mods
-    features::ApplyBodies();
+    features::ApplyTimeOfDay();
+    features::ApplyVoices();
+    features::ApplyOverview();
     features::ApplyLoadout();
     features::ApplyCustomise();
     features::ApplyDiagnostics();
     features::ApplyAudio();
     features::ApplyShadows();
+    features::ApplyScriptHost();
+    features::ApplyCampaigns();
     features::ApplyDevHooks();
 }
 

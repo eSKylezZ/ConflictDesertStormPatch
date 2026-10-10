@@ -19,6 +19,10 @@ void QueueIcon(Icon icon, float x, float y, float size, float alpha = -1.0f);
 void QueueImage(void* texture, float x, float y, float w, float h, float u1 = 1.0f, float v1 = 1.0f, float alpha = -1.0f);
 // Like QueueImage but in plain back-buffer pixels: no menu transition / fade, no split-screen view offset.
 void QueueScreenImage(void* texture, float x, float y, float w, float h, float u1 = 1.0f, float v1 = 1.0f);
+// A texture region (u0, v0)-(u1, v1) on any four corners (top-left, top-right, bottom-left, bottom-right; plain
+// back-buffer pixels), tinted by argb - images of the game's sheets, rotated markers.
+void QueueScreenQuad(void* texture, const float (&corners)[4][2], float u0, float v0, float u1, float v1,
+                     uint32_t argb = 0xFFFFFFFF);
 // A solid rectangle in plain back-buffer pixels (no menu fade, no split-screen offset).
 void QueueScreenRect(float x, float y, float w, float h, uint32_t argb);
 // Solid shapes (colour 0xAARRGGBB; the alpha is multiplied by the menus' fade).

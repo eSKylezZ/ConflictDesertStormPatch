@@ -25,6 +25,13 @@
 // the campaign's first level is copied to the next-level slot like DESERT STORM CAMPAIGN does (FUN_0048ce40), and
 // the Difficulty screen (state 5) opens -> Select Uniform (6) -> the level. splitscreen.cpp takes the player count
 // and each player's device from the session. The session ends when the main menu is shown again.
+// No SELECT UNIFORM screen (uniforms are picked per soldier on the Squad Loadout screen): the Difficulty screen's
+// update (FUN_00413670, vtable slot 0x5D85F8) went to state 6 with `push 6; call 0x47EF20` at 0x4136CB - that call
+// now runs the uniform screen's accept instead (0x49BC8D..0x49BD08: the 3-4 player "mission3.dll" rule, the new
+// campaign FUN_004576c0 / FUN_00457750 on [0x60EDC0], FUN_004475b0(1)) with the uniform fixed to SAS through the
+// game's setter FUN_0040a320(0) (global [0x60ED1C], also the English speech language - Training had set American),
+// and the wrapped update returns 3 = start the level. The uniform also chose the starting skill sets and the rank /
+// medal names (UK vs US): those are the SAS ones now.
 // Mission list: in a session the uniform screen (update, vtable slot 0x5D9610) opens the game's hidden MISSION LIST
 // (state 8, normally behind the CHEATS menu) instead of starting the campaign. Co-op has its own progress (registry
 // value CoopProgress, one bit per mission): only the starting mission is open (Mission 1 with 2 players, Mission 3
@@ -76,7 +83,7 @@ constexpr uint32_t kStateDifficulty = 5;
 constexpr uint32_t kSplitFlag = 0x606410, kSplitPlayers = 0x606414, kSplitLoadedGame = 0x606424;
 constexpr uint32_t kCampaign = 0x60EDC0;            // campaign object: +0x37 first level name
 constexpr uint32_t kNextLevel = 0x5E7028;           // char*: level the next load uses
-constexpr uint32_t kStateUniform = 6, kStateMissionList = 8;
+constexpr uint32_t kStateMissionList = 8;
 constexpr uint32_t kUniformUpdateSlot = 0x5D9610;   // uniform screen vtable +0x10 (FUN_0049baf0)
 constexpr uint32_t kMissionListScreen = 0x617C00;   // state 8's screen object
 constexpr uint32_t kMissionListUpdateSlot = 0x5D8E40;  // mission list vtable +0x10 (FUN_004595d0)
@@ -643,6 +650,8 @@ void* __cdecl ExtraScreen(uint32_t state) {
     if (state == 0x42) return features::VersusScreen();
     if (state == 0x44) return features::VersusSetupScreen();
     if (state == 0x43) return features::ModsMenuScreen();
+    if (state == 0x45) return features::CampaignsScreen();
+    if (state == 0x46) return features::DeveloperScreen();  // developer.cpp (CHEATS > DEVELOPER)
     return features::ControlsScreen(state);
 }
 
@@ -720,8 +729,34 @@ bool CoopMissionList() {
     return g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == kStateMissionList;
 }
 
-// Uniform screen: in a session its "start the level" (3) opens the mission list instead.
+// Difficulty picked: what SELECT UNIFORM's accept did, then the level (or the co-op mission list).
+constexpr uint32_t kDifficultyUpdateSlot = 0x5D85F8, kDifficultyUpdate = 0x413670, kDifficultyNextCall = 0x4136CD;
+constexpr uint32_t kSetUniform = 0x40A320, kNewCampaign1 = 0x4576C0, kNewCampaign2 = 0x457750;
+constexpr uint32_t kCampaignStart = 0x4475B0, kNextLevelSlot = 0x5E7028;
+bool g_difficultyPicked = false;
+
+void __cdecl DifficultyPicked(uint32_t /*state 6*/) {
+    reinterpret_cast<void(__cdecl*)(int)>(kSetUniform)(0);
+    const uint32_t players = *reinterpret_cast<uint32_t*>(0x606414);
+    if (*reinterpret_cast<uint32_t*>(0x606410) && !*reinterpret_cast<uint32_t*>(0x606424) && players >= 3 && players <= 4)
+        strcpy_s(*reinterpret_cast<char**>(kNextLevelSlot), 13, "mission3.dll");   // Connors and Jones join in Mission 3
+    void* campaign = *reinterpret_cast<void**>(kCampaign);
+    reinterpret_cast<void(__thiscall*)(void*)>(kNewCampaign1)(campaign);
+    reinterpret_cast<void(__thiscall*)(void*)>(kNewCampaign2)(campaign);
+    reinterpret_cast<void(__cdecl*)(int)>(kCampaignStart)(1);
+    if (g_session.players) SetState(kStateMissionList);   // co-op: pick the mission first
+    else g_difficultyPicked = true;
+}
+
 using UpdateFn = int(__thiscall*)(void*);
+
+int __fastcall DifficultyUpdate(void* screen, void*) {
+    g_difficultyPicked = false;
+    const int r = reinterpret_cast<UpdateFn>(kDifficultyUpdate)(screen);
+    return g_difficultyPicked ? 3 : r;
+}
+
+// Uniform screen: in a session its "start the level" (3) opens the mission list instead (no longer reached in play).
 UpdateFn g_uniformUpdate = nullptr, g_missionListUpdate = nullptr;
 
 int __fastcall UniformUpdate(void* screen, void*) {
@@ -733,7 +768,7 @@ int __fastcall UniformUpdate(void* screen, void*) {
     return r;
 }
 
-// Mission list: Back goes to the uniform screen in a session (the game's own target is the CHEATS menu, state 7).
+// Mission list: Back goes to the difficulty screen in a session (the game's own target is the CHEATS menu, state 7).
 int __fastcall MissionListUpdate(void* screen, void*) {
     // First frame of the co-op list: highlight the first mission the group can play (list +0x28 = current item
     // index; the highlighted id +0x30 follows from it).
@@ -752,7 +787,7 @@ int __fastcall MissionListUpdate(void* screen, void*) {
             }
     }
     const int r = g_missionListUpdate(screen);
-    if (g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 7) SetState(kStateUniform);
+    if (g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 7) SetState(kStateDifficulty);
     return r;
 }
 
@@ -846,7 +881,9 @@ int __cdecl SaveName(char* out, const char* format, uintptr_t a, uintptr_t b) {
     char name[240];
     const int length = snprintf(name, sizeof name, format, a, b);
     const int players = CoopSavePlayers();
-    if (players) return sprintf(out, "Co-op %dP %s", players, name);
+    const char* cheats = features::CheatsActive() ? "Cheats " : "";  // cheats.cpp: the save switches them back on
+    if (players) return sprintf(out, "Co-op %dP %s%s", players, cheats, name);
+    if (*cheats) return sprintf(out, "%s%s", cheats, name);
     strcpy(out, name);
     return length;
 }
@@ -858,7 +895,10 @@ int __cdecl SaveFilter(const char* path, void* user) {
 
 void __fastcall SpMenuSetup(void* screen, void*) {
     reinterpret_cast<void(__thiscall*)(void*)>(kSpMenuSetup)(screen);
-    if (!g_session.players) return;
+    if (!g_session.players) {
+        features::CampaignsMenuItem(screen);  // CUSTOM CAMPAIGNS (single player only)
+        return;
+    }
     void* list = At<void*>(screen, 8);
     void** items = At<void**>(list, 0x2C);
     if (At<int16_t>(list, 0x26) != 3) return;
@@ -893,6 +933,11 @@ bool InstallMissionList() {
         dslog::Write("[fail] Co-op mission list: unexpected bytes - not applied");
         return false;
     }
+    const uint32_t difficulty = kDifficultyUpdate;
+    if (!patch::Matches(kDifficultyUpdateSlot, &difficulty, 4) ||
+        !patch::HookCall(kDifficultyNextCall, reinterpret_cast<const void*>(&DifficultyPicked), kSetState) ||
+        !patch::WriteValue(kDifficultyUpdateSlot, reinterpret_cast<uint32_t>(&DifficultyUpdate)))
+        dslog::Write("[fail] Co-op: difficulty -> level (no uniform screen) not applied");
     g_uniformUpdate = reinterpret_cast<UpdateFn>(uniform);
     g_missionListUpdate = reinterpret_cast<UpdateFn>(missionList);
     const uint32_t stub = reinterpret_cast<uint32_t>(&MissionDrawStub);

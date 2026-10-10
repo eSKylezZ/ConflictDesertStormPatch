@@ -1,8 +1,98 @@
 # Changelog
 
-## 2.0.0 – in development
+## 3.0.0 – 2026-10-10
 
-Still planned for 2.0: Service Record (career stats + medals), more VERSUS game modes.
+### Added
+
+**Mission briefing**
+
+- A MISSION BRIEFING screen replaces the game's briefing popup after each mission's intro, with tabs: BRIEFING (the
+  map and the mission's story), MISSION (the level's map with the objectives marked and numbered, the squad's
+  position and each objective's description), OVERVIEW and SQUAD (uniform, face, voice and kit per soldier); Tab or
+  L2 / R2 switches tabs, L1 / R1 (Q / E) picks the soldier
+- TIME OF DAY for any mission (the mission's own, dawn, day, dusk, night) and TIME FLOW (the mission's own, or a
+  running day / night cycle at 1 game hour per 10, 5, 2 or 1 real minutes); the lighting, sun / moon, shadows and the
+  enemies' sight follow the hour
+- VOICE per soldier: the uniform's actors (AUTO), SAS (British) or Delta (American) whatever he wears, or a uniform
+  mod's own voice
+- The night-vision objective fly-over can be replayed from the OVERVIEW tab as often as you like
+
+**Cheats and developer tools**
+
+- The game's hidden CHEATS menu (OPTIONS > CHEATS) can be unlocked again – with the keyboard on the main menu or a
+  button code on any PlayStation or Xbox controller – and stays unlocked: trooper level, enemy level, invulnerable,
+  infinite health (new), infinite ammo, enemy AI on / off and the mission list
+- Saves made with cheats on are named "Cheats …" and keep their cheats when loaded
+- Free camera (with cheats unlocked): F6 or L3 + R3 in a mission, flown with the keyboard or a controller
+- DEVELOPER page (CHEATS > DEVELOPER): the original developers' debug views – AI route markers and walk map, AI
+  senses, health bars, engine statistics, wireframe – plus game speed 0.25–4x, complete mission and resurrect all
+
+**Custom missions and campaigns**
+
+- Custom missions written in Lua – made with the ModKit's world editor or by hand – run without any other tools:
+  objectives, rules, timers, patrols, cutscene cameras, radio lines, title sequences with their own music, the
+  mission briefing and save games
+- Brand-new levels made in the world editor: their own ground, objects, patrol routes, trigger regions and AI walk
+  map
+- Custom campaigns: a mod's `campaign.txt` lists its missions, played from SINGLE PLAYER > CUSTOM CAMPAIGNS, with
+  Continue going on to the next mission
+- `DesertStorm.exe +level <mission>.lua` starts a custom mission straight away
+- Edited levels get their AI walk map and visibility data rebuilt automatically, so moved or new objects block the AI
+  and show up correctly
+- Level mods from the editor ship without any of the game's files: the parts they reuse are built from your own
+  installation when the game starts
+- Mission scripts can keep enemy soldiers active while the player can't see them (the game puts unseen enemies to
+  sleep, so a patrol route otherwise waits until the player comes near)
+
+**Followers**
+
+- The Kuwaiti Emir (Mission 2) and the missile expert Franklin (Missions 11A / 11B) can be taken over like a squad
+  member; each carries a pistol and a MediKit
+
+**Mods**
+
+- Uniforms: their own voice (`voice`, `voice from`, `voice line N`, `voice folder` – your own WAV files for any of
+  the 47 lines) and their own normal map (`normal map`), with or without their own body
+- Cutscene and objective voice-over: a mod's `Sound\SAS\`, `Sound\Delta\` or `Sound\` file with the game's name
+  (`CS_M01_S01.psf`, `OBJ_M1_1A.psf` …) replaces that scene's audio
+- Whole sound sets per level: a mod `.sch` named like a level's sound file replaces the matching sounds
+- Tables can now change or delete the game's rows (`<TABLE>.replace.txt`); a `.weapon` based on itself changes that
+  game weapon in place
+- `.strings` files change any text of the game, also per mission
+- Files that exist only in a mod are found everywhere the game checks for a file (e.g. vehicle tracks and wheels)
+
+### Changed
+
+- The campaign goes from DIFFICULTY straight to the mission: no SELECT UNIFORM screen – uniforms (and voices) are
+  picked per soldier on the briefing screen. Everyone starts with the SAS skill sets and UK rank names
+- The night-vision objective fly-over no longer plays by itself after the briefing (see OVERVIEW)
+- Linked missions (5A, 12A, 12B) open the briefing too: map, objectives and overview as usual, the carried kit shown
+  without changes, and a chosen time of day continues from the previous part
+- Co-op: DIFFICULTY opens the co-op mission list, whose Back returns to DIFFICULTY
+- The cheats menu no longer switches on the developer views that came with it (pad codes in key lists and the like)
+- "OK to overwrite this file?" now starts on YES
+- Settings are kept even on PCs where the game can't write to its usual registry place
+
+### Fixed
+
+- Vehicles and loose objects were thrown around at high frame rates (Mission 1: the fuel truck by the start flew off
+  and landed facing backwards)
+- Saving over an existing save could pick a different save than the one selected when the mouse pointer rested over
+  the list
+- Weapons chosen on the briefing screen, carried from a linked mission or from mods were missing after loading a save
+- A uniform chosen on the briefing screen was drawn black (with a white portrait) after loading a save
+- Mods: a body from a mod was drawn without a normal map (flat folds and pockets)
+- An "active lights" message box could interrupt loading a level; the game's information messages now go to the mod
+  report instead
+
+### Known issues
+
+- MODS menu: after applying mod changes twice, starting Basic Training crashed once – restart the game after changing
+  mods if that happens
+- Mission 11B: pressing Space within the first seconds of the level crashed the game twice in testing
+- 4-player co-op, split-screen VERSUS and controller hot-plugging still need full play-throughs with real controllers
+
+## 2.0.0 – 2026-10-02
 
 ### Added
 

@@ -1,4 +1,4 @@
-DesertStormFix 2.0 - enhancement patch for Conflict: Desert Storm (PC)
+DesertStormFix 3.0 - enhancement patch for Conflict: Desert Storm (PC)
 ========================================================================
 
 Works with the Steam and GOG versions.
@@ -56,9 +56,17 @@ Features
   divider lines between the views
 - Split-screen versus for 2-4 players on the multiplayer maps (main menu ->
   VERSUS -> SPLIT SCREEN): Team Deathmatch or Deathmatch
-- Squad loadout before each mission: uniform, face and weapons per soldier
-- Mods folder support: new uniforms, weapons, sounds and models, switched on
-  and off in game (main menu -> MODS)
+- Mission briefing before each mission: the map with the objectives, the
+  objective fly-over on demand, time of day, and uniform, face, voice and
+  weapons per soldier
+- Vehicles and loose objects behave at high frame rates as they do at 30 fps
+- Cheats menu (hidden in the original game) and a developer page with the
+  original developers' debug views; free camera
+- The Kuwaiti Emir and the missile expert Franklin can be taken over like a
+  squad member
+- Custom missions and campaigns made with the ModKit's world editor
+- Mods folder support: new uniforms, weapons, sounds, texts and models,
+  switched on and off in game (main menu -> MODS)
 - Discord status: shows the mission you are playing (for example
   "Mission 4: Desert Watch"), single player or split screen, and the time
   since the mission started
@@ -108,7 +116,7 @@ Co-op (local split screen, 2-4 players)
   Space (keyboard & mouse) to join; players are numbered in the order they
   join. Left/Right changes the button icons a player sees, Circle / B /
   Backspace leaves. With two or more players, Options / Start / Enter
-  continues to Difficulty, Uniform and the co-op mission list.
+  continues to Difficulty and the co-op mission list.
   Co-op has its own progress: the first mission is open (Mission 3 with 3-4
   players - Connors and Jones join the squad there), finishing a mission
   unlocks the next, and finished missions can be replayed. Missions 1-2 are
@@ -171,23 +179,83 @@ Versus (local split screen, 2-4 players)
   Options / Start / Enter starts the match. At the end: Rematch or Leave.
   VERSUS -> LEGACY ONLINE has the game's original network screens.
 
-Squad loadout (start of each mission)
-  After the mission intro a SQUAD LOADOUT screen shows each soldier turning
-  in front of a plain background. Up/Down picks a row, Left/Right changes
-  it, Q/E (L1/R1) the soldier, Enter / Cross / A starts the mission:
-  UNIFORM (SAS or US Delta, mixed teams allowed), SOLDIER (the face and
-  name), MAIN WEAPON, SIDEARM, LAUNCHER and GRENADES (both kinds, or only
-  frag / only smoke).
+Mission briefing (start of each mission)
+  After the mission intro a MISSION BRIEFING screen opens in place of the
+  game's briefing popup, with tabs (Tab or L2/R2 switches; Enter / Cross / A
+  starts the mission from any tab):
+  BRIEFING - the map and the mission's story (Left/Right or Up/Down turn
+  the pages of a long one).
+  MISSION - the level's map with every objective marked and numbered and
+  the squad's position, the objectives (Up/Down shows each one's
+  description and highlights it on the map), and TIME OF DAY / TIME FLOW.
+  OVERVIEW - plays the mission's night-vision fly-over of the objectives
+  with its radio narration (it no longer plays by itself after the
+  briefing); Esc / Enter / Cross / Circle skips it, then the screen is back.
+  SQUAD - each soldier turning in front of a plain background. Up/Down
+  picks a row, Left/Right changes it, Q/E (L1/R1) the soldier:
+  UNIFORM (SAS, US Delta, Russian or Iraqi plus uniforms from mods, mixed
+  teams allowed; a new faction hands out its standard weapons), SOLDIER (the face and
+  name), VOICE, MAIN WEAPON, SIDEARM, LAUNCHER and GRENADES (both kinds, or
+  only frag / only smoke). The campaign no longer asks for SAS or Delta
+  before a mission - every soldier's uniform is picked here.
+  VOICE: AUTO speaks with the uniform's actors (SAS British, Delta
+  American) or a uniform mod's own voice; SAS or DELTA keeps that voice
+  whatever he wears (English version of the game; mission cutscenes and
+  briefings keep the British voices).
+  TIME OF DAY (MISSION tab, the whole squad): the mission's own, dawn,
+  day, dusk or night (the world, sun or moon, shadows and the enemies' sight
+  follow it; enemies see less at night) - and TIME FLOW - the mission's own,
+  or a running day / night cycle at 1 game hour per 10, 5, 2 or 1 real
+  minutes, from the chosen time. Remembered for the next missions.
   Weapons unlock as you find them: every weapon your squad starts a mission
   with or picks up (enemy weapons too) can be chosen later - single player
   and co-op keep separate lists. Weapons from mods are always there. Your
   choices are remembered and set again at the next mission.
   Linked missions keep the squad's kit: Mission 4 continues into 5A, and
-  11B into 12A and 12B, with what the soldiers carried at the end (no
-  loadout screen in between). Loading a saved game keeps the saved kit.
+  11B into 12A and 12B, with what the soldiers carried at the end. Their
+  briefing shows the map, objectives and overview as usual; the SQUAD tab
+  shows the carried kit ("KIT CARRIED OVER FROM ...", no changes), and a
+  chosen time of day / day-night cycle continues from where the previous
+  part ended. Loading a saved game keeps the saved kit (no briefing).
   Co-op: the players take turns, player 1 first - each changes only the
   soldiers they control, with their own controller or the keyboard, and
   Enter / Cross / A passes to the next player.
+  Weapons and uniforms chosen here are kept in saved games. Each save gets a
+  small file of the same name ending in .dsfix - copy it along when you move
+  a save.
+
+Followers
+  In Mission 2 the Kuwaiti Emir and in Missions 11A / 11B the missile expert
+  Franklin can be taken over like a squad member (squad switch keys / buttons).
+  Each carries a pistol and a MediKit; they can't pick things up, use mounted
+  guns or give orders.
+
+Cheats, developer page and free camera
+  The original game's CHEATS menu (OPTIONS -> CHEATS) is unlocked on the main
+  menu: hold Left Shift and type DESERTWATCH, or press Square Square Circle
+  Circle L1 L1 R1 R1 L2 L2 R2 R2 (PlayStation) / X X B B LB LB RB RB LT LT
+  RT RT (Xbox). It stays unlocked. Rows: TROOPER LEVEL, ENEMY LEVEL,
+  INVULNERABLE, INFINITE HEALTH, INFINITE AMMO, ENEMY AI, MISSION LIST and
+  DEVELOPER. Saves made with cheats on are named "Cheats ..." and keep them.
+  DEVELOPER: the original developers' debug views (AI route markers and walk
+  map, AI senses, health bars, engine statistics, wireframe), game speed
+  0.25-4x, complete mission and resurrect all.
+  Free camera (cheats unlocked): F6 or L3 + R3 in a mission. Fly with WASD,
+  Q / E up and down, Shift faster (controller: sticks, L2 / R2, L1 faster);
+  Esc / Start or F6 again returns to your soldier.
+
+Custom missions and campaigns
+  Missions made with the ModKit's world editor (or written by hand in Lua)
+  come as mods and need nothing else installed. A mod with a campaign.txt
+  adds its missions to SINGLE PLAYER -> CUSTOM CAMPAIGNS (shown when one is
+  installed); Continue at the end of a mission goes on to the next.
+  "DesertStorm.exe +level <name>.lua" starts a custom mission straight away
+  (press a key at PLEASE PRESS ANY KEY).
+  Level mods made with the editor don't contain the game's files: the parts
+  they reuse are built from your own game at start-up (in your temporary
+  folder, %TEMP%\DesertStormFix), so the first start after installing one
+  can take a little longer. Edited levels get their AI walk map and
+  visibility data rebuilt when they load.
 
 Mods (new skins and other content, no programming needed)
   Make a folder called Mods in the game folder and put each mod in its own
@@ -208,16 +276,24 @@ Mods (new skins and other content, no programming needed)
     the cliffs in Mission 1) - same size and format as the original.
   - For experts: tables (.txt named like a game table, e.g. Weaps.txt) hold
     only your NEW rows: they are added to the game's rows and to other
-    mods' rows, so several mods can add to the same table.
+    mods' rows, so several mods can add to the same table. To change or
+    delete the game's rows use <TABLE>.replace.txt (e.g. Weaps.replace.txt):
+    a row replaces the game row with the same first column, "-KEY" deletes
+    one. A .weapon whose "based on" is its own id changes that game weapon.
+  - Texts: a .strings file ("KEY = text" lines) changes any text of the
+    game by its key; lines under [M01] only apply in Mission 1's texts,
+    [all] everywhere.
+  - Level sounds: a .sch named like a level's sound file (e.g. MISSION1.SCH)
+    replaces the sounds it contains in that level.
   New uniforms: a .skin file plus the texture - the soldier's own texture
   layout, face included, so he stays the same man in different clothes.
-  Example, a pink SAS uniform for Bradley, picked on the SQUAD LOADOUT
-  screen (UNIFORM row, shown as "SAS (PINK)"):
+  Example, a pink SAS uniform for Bradley, picked on the briefing's SQUAD
+  tab (UNIFORM row, shown as "SAS (PINK)"):
     Mods\PinkSAS\SASPink_01.dds   the texture: DXT1 or DXT5, 512 x 512, same
                                   layout as the soldier's own (Bradley's
                                   SAS one is HERO01_UK_01)
     Mods\PinkSAS\PinkSAS.skin
-      uniform      = SAS          # SAS or Delta: the side it belongs to
+      uniform      = SAS          # SAS, Delta, Russian or Iraqi: its side
       uniform name = SAS (Pink)   # shown on the UNIFORM row
       soldier      = Bradley      # Bradley, Foley, Connors or Jones
       texture      = SASPink_01   # file name without .dds
@@ -231,6 +307,26 @@ Mods (new skins and other content, no programming needed)
   HERO02_RAMIREZ, Jones HERO03_JONES, Foley HERO04_FOLEY - so the skeleton
   fits). The soldier wears that body while he wears the skin. Give the skin
   a texture name of its own: the body goes with the texture.
+  A uniform with its own normal map (the bumps of folds and pockets): add
+  "normal map = MYBUMP" (MYBUMP.tga or .dds in the mod folder, the size
+  and layout of the soldier's own, e.g. HERO01BUMP_UK_01 for Bradley SAS;
+  the ModKit's "ds_texture.py normal" saves one in the game's format).
+  Works with or without a body; other uniforms keep the normal one.
+  A uniform or recruit with a voice of its own (the soldier speaks with it
+  while he wears the skin; VOICE AUTO on the loadout screen):
+      voice        = Delta     # the actors to start from: SAS or Delta
+      voice from   = Foley     # whose lines: Bradley, Foley, Connors, Jones
+                               # (default: the soldier's own)
+      voice line 12 = my.wav   # replace line 12 (PCM WAV, mono or stereo)
+      voice folder = lines     # every ...line01.wav ... in that folder
+  The ModKit's "ds_sound.py wav <game>\mission3.sch Bradley out --accent
+  delta" saves a soldier's 47 lines with those numbers and what each is
+  (the ModKit's guide has the full list; 37 and 47 are never played).
+  Cutscene and objective audio: cutscenes are played by the engine, their
+  sound is one file per scene (Data\Sound\English = SAS voices, American =
+  Delta). A mod's Sound\SAS\CS_M01_S01.psf, Sound\Delta\... or Sound\...
+  (all languages) replaces that scene's sound (whole mix; keep the length;
+  "ds_sound.py stream" / "psf" convert to and from WAV).
   Keep textures compressed (DXT) and no bigger than the game's own: a large
   uncompressed texture fails to load.
   New weapons: a .weapon file - start from a weapon of the game and list
@@ -261,7 +357,7 @@ Mods (new skins and other content, no programming needed)
     damage               per bullet (SAW 15, M16A2 14, Barrett 80)
     magazine size        rounds per magazine
     magazines            magazines a soldier gets when it is chosen on the
-                         Squad Loadout screen, the one in the gun included
+                         briefing's SQUAD tab, the one in the gun included
                          (the HUD shows the spare ones: 7 shows as 6)
     reload time          seconds
     time between shots   seconds (0.10 = 600 rounds a minute)
@@ -301,8 +397,8 @@ Mods (new skins and other content, no programming needed)
   US_WPN_GrenadeFrag, US_WPN_GrenadeSmoke.
   The game allows only one rifle with a grenade launcher: a weapon based on
   US_WPN_M16A2 becomes an assault rifle without one. New weapons can't be
-  based on US_WPN_GrenadeFrag (the plugin's log says so) - smoke grenades
-  are fine.
+  based on US_WPN_GrenadeFrag (Mods\DesertStormFix-report.txt says so) -
+  smoke grenades are fine.
 
 Download
   Latest version: https://www.nexusmods.com/games/conflictdesertstorm/mods/1
@@ -316,9 +412,11 @@ Install
 Uninstall
   Delete dinput8.dll from the game folder.
 
-Updating from 1.0
-  Replace dinput8.dll. Your settings, key profiles and controller layouts
-  are kept.
+Updating from 1.0 or 2.0
+  Replace dinput8.dll. Your settings, key profiles, controller layouts,
+  loadout choices and saved games are kept. The campaign no longer asks for
+  SAS or Delta: every soldier starts with the SAS skills and ranks, and the
+  uniform is picked per soldier on the briefing screen.
 
 Stutter reports
   Press Ctrl+F11 in game to start recording frame times, play for a minute,
@@ -330,6 +428,10 @@ Known issues
   full play-through - please report any problems.
   Windowed and borderless modes are untested on setups with several
   monitors.
+  After switching mods on / off twice in the MODS menu, starting a mission
+  crashed once in testing - restart the game after changing mods if it does.
+  Mission 11B: pressing Space within the first seconds of the level crashed
+  the game twice in testing.
 
 Credits
   Controller button icons: "Input Prompts" by Kenney (www.kenney.nl), CC0.
@@ -337,3 +439,21 @@ Credits
   Button Icons and Controls" by Zacksly (https://zacksly.itch.io), licensed
   under CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Modified:
   cropped and scaled.
+  Mission scripts run on Lua 5.4 (https://www.lua.org), Copyright (C)
+  1994-2024 Lua.org, PUC-Rio, MIT license:
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

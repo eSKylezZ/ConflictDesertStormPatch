@@ -42,7 +42,7 @@ constexpr uint32_t kDebugPrintSites[] = {0x40B38A, 0x40B729, 0x40BE51, 0x40C1D1,
                                          0x40CEAE, 0x40CEB8, 0x4363D1, 0x47581C, 0x4CD2C6, 0x4E3D84,
                                          0x4E3E09, 0x4E3F2A, 0x4F8990, 0x4F8D47, 0x4FAE02, 0x4FEC65};
 #endif
-constexpr uint32_t kErrorBox = 0x4B98D0, kErrorBoxWnd = 0x4B9850, kWarningBoxWnd = 0x4B9890;
+constexpr uint32_t kErrorBox = 0x4B98D0, kErrorBoxWnd = 0x4B9850, kWarningBoxWnd = 0x4B9890, kInfoBox = 0x4B99D0;
 constexpr uint32_t kOpenFile = 0x4BEBD0, kOpenFileIn = 0x4BEBF0, kSearchPaths = 0x63C530;
 
 bool g_noErrorBoxes = false;
@@ -89,9 +89,28 @@ void Box(HWND wnd, const char* caption, UINT type, const char* fmt, va_list args
     // Our loadouts keep a kit's item count with 0-magazine copies of the pistol (loadout.cpp); the game refuses the
     // copies as duplicates (they stay unowned, like an item a script took away) - no box for those.
     const bool ours = features::LoadoutUsesFillers() && strncmp(text, "Duplicate weapon - ", 19) == 0;
-    const bool skip = g_noErrorBoxes || ours;
-    dslog::Write("[game %s] %s%s", caption, text, skip ? "  (box skipped)" : "");
+    // "Instance ... has n active lights. Max active lights is 6 - Extra lights will be removed" (FUN_004fb4d0, the scene
+    // loader's per-object light list): a note the game fixes itself - logged, never a box (it came once per object).
+    const bool lights = strstr(text, "active lights") != nullptr;
+    const bool skip = g_noErrorBoxes || ours || lights || features::DevBackground();
+    static char last[256];
+    static int repeats = 0;
+    if (strncmp(last, text, sizeof last - 1) == 0) {   // the same text again: count, log every 100th
+        if (++repeats % 100 == 0) dslog::Write("[game %s] (same message %d more times)", caption, repeats);
+    } else {
+        if (repeats) dslog::Write("[game %s] (previous message repeated %d times)", caption, repeats);
+        repeats = 0;
+        strncpy_s(last, text, _TRUNCATE);
+        dslog::Write("[game %s] %s%s", caption, text, skip ? "  (box skipped)" : "");
+    }
     if (!skip) MessageBoxA(wnd, text, caption, type);
+}
+// FUN_004b99d0(fmt, ...): the game's information box (MB_ICONINFORMATION, caption [0x60EE48]) - 10 callers.
+void __cdecl InfoBox(const char* fmt, ...) {
+    va_list a;
+    va_start(a, fmt);
+    Box(GetActiveWindow(), reinterpret_cast<const char*>(0x60EE48), MB_ICONINFORMATION, fmt, a);
+    va_end(a);
 }
 void __cdecl ErrorBox(const char* fmt, ...) {
     va_list a;
@@ -312,6 +331,8 @@ void features::ApplyDiagnostics() {
                        patch::WriteJump(kErrorBox, reinterpret_cast<const void*>(&ErrorBox)) &&
                        patch::WriteJump(kErrorBoxWnd, reinterpret_cast<const void*>(&ErrorBoxWnd)) &&
                        patch::WriteJump(kWarningBoxWnd, reinterpret_cast<const void*>(&WarningBoxWnd));
+    if (patch::Matches(kInfoBox, boxEntry, sizeof boxEntry))
+        patch::WriteJump(kInfoBox, reinterpret_cast<const void*>(&InfoBox));
     static const uint8_t openEntry[] = {0x8B, 0x44, 0x24, 0x08, 0x8B, 0x0D, 0x30, 0xC5, 0x63, 0x00};
     const bool files = patch::Matches(kOpenFile, openEntry, sizeof openEntry) &&
                        patch::WriteJump(kOpenFile, reinterpret_cast<const void*>(&GameOpenFile));

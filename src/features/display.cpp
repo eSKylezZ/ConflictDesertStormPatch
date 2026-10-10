@@ -90,12 +90,42 @@ HMONITOR GameMonitor(HWND wnd) {
     return MonitorFromWindow(wnd, MONITOR_DEFAULTTOPRIMARY);
 }
 
+constexpr int kBackgroundPos = -8000;   // dev background tests: windows go here (off every monitor)
+
 HWND WINAPI CreateGameWindow(DWORD exStyle, LPCSTR cls, LPCSTR title, DWORD style, int x, int y, int w, int h,
                              HWND parent, HMENU menu, HINSTANCE inst, LPVOID param) {
     DPI_AWARENESS_CONTEXT old = SetThreadDpi(kPerMonitorV2);
+    if (features::DevBackground()) {   // dev background tests: off-screen, never the active window
+        exStyle |= WS_EX_NOACTIVATE;
+        x = y = kBackgroundPos;
+    }
     HWND wnd = CreateWindowExA(exStyle, cls, title, style, x, y, w, h, parent, menu, inst, param);
+    if (features::DevBackground()) *reinterpret_cast<volatile uint32_t*>(0x60EE2C) = 1;   // active: it never gets WM_ACTIVATE
     if (old) SetThreadDpi(old);  // the launcher dialogs stay as they were (system-scaled)
     return wnd;
+}
+
+// A game started by another program (the editor's Play: "+level x.lua", launcher pressed by the plugin) isn't allowed to
+// take the foreground - the window stayed behind, inactive (the message loop waits, full screen never takes over, the
+// pads aren't acquired). Borrow the foreground thread's input state for the switch; an Alt tap is the fallback.
+void BringToFront(HWND wnd) {
+    if (features::DevBackground() || !features::QuickStartLevel() || GetForegroundWindow() == wnd) return;
+    HWND fg = GetForegroundWindow();
+    const DWORD me = GetCurrentThreadId(), other = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    const bool attached = other && other != me && AttachThreadInput(other, me, TRUE);
+    ShowWindow(wnd, SW_SHOW);
+    BringWindowToTop(wnd);
+    SetForegroundWindow(wnd);
+    if (attached) AttachThreadInput(other, me, FALSE);
+    if (GetForegroundWindow() != wnd) {
+        INPUT in[2]{};
+        in[0].type = in[1].type = INPUT_KEYBOARD;
+        in[0].ki.wVk = in[1].ki.wVk = VK_MENU;
+        in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(2, in, sizeof(INPUT));
+        SetForegroundWindow(wnd);
+    }
+    dslog::Write("Display: +level start - game window %s", GetForegroundWindow() == wnd ? "brought to the front" : "still behind");
 }
 
 BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT flags) {
@@ -108,7 +138,9 @@ BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT
 
     if (g_mode == features::DisplayMode::Fullscreen || w <= 0 || h <= 0) {
         g_mode = features::DisplayMode::Fullscreen;
-        return SetWindowPos(wnd, after, x, y, cx, cy, flags);
+        const BOOL ok = SetWindowPos(wnd, after, x, y, cx, cy, flags);
+        BringToFront(wnd);
+        return ok;
     }
 
     MONITORINFO mi{sizeof mi};
@@ -141,9 +173,15 @@ BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT
     }
     dslog::Write("Display: %s %dx%d, window %ld,%ld %ldx%ld", g_mode == features::DisplayMode::Borderless ? "borderless" : "windowed",
                  w, h, r.left, r.top, r.right - r.left, r.bottom - r.top);
+    if (features::DevBackground()) {   // dev background tests: same size, off-screen, behind everything, not activated
+        OffsetRect(&r, kBackgroundPos - r.left, kBackgroundPos - r.top);
+        return SetWindowPos(wnd, HWND_BOTTOM, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                            SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS | SWP_NOACTIVATE);
+    }
     BOOL ok = SetWindowPos(wnd, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
                            SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS);
     SetForegroundWindow(wnd);
+    BringToFront(wnd);
     return ok;
 }
 

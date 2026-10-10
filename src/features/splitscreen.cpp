@@ -566,7 +566,7 @@ void EndHud() {
 }
 
 void __fastcall Panels(uintptr_t inputManager) {
-    if (features::CustomiseOpen()) return;  // customise screen: no HUD
+    if (features::HudHidden()) return;  // customise screen: no HUD
     const uint32_t player = *reinterpret_cast<uint32_t*>(kCurrentPlayer);
     if (player < kMaxPlayers && BeginHud()) {
         reinterpret_cast<void(__thiscall*)(uintptr_t)>(kPanel)(inputManager + player * kInputBlockSize);
@@ -594,7 +594,7 @@ D3DViewport* ViewOfBlock(uintptr_t block) {
 }
 
 void __fastcall InventoryDraw(uintptr_t block) {
-    if (features::CustomiseOpen()) return;
+    if (features::HudHidden()) return;
     D3DViewport* view = ViewOfBlock(block);
     const bool pass = view && BeginHud(view);
     reinterpret_cast<void(__fastcall*)(uintptr_t)>(kInventoryDraw)(block);
@@ -654,7 +654,7 @@ void __fastcall FlushView(uintptr_t viewController) {
 void ProbePanel(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uintptr_t item);
 #endif
 int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f, uintptr_t item) {
-    if (features::CustomiseOpen()) return 0;
+    if (features::HudHidden()) return 0;
 #ifndef DS_DIST
     ProbePanel(a, b, c, d, item);
 #endif
@@ -689,7 +689,7 @@ int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32
 }
 
 uint32_t __cdecl Reticle(uintptr_t block) {
-    if (features::CustomiseOpen()) return 0;
+    if (features::HudHidden()) return 0;
     const bool pass = BeginHud();
 #ifndef DS_DIST
     {  // play-test: the HUD sheets' scale when the crosshair is drawn, per player, when it changes
@@ -718,14 +718,14 @@ uint32_t __cdecl Reticle(uintptr_t block) {
 }
 
 void __cdecl HudDraw(int player) {
-    if (features::CustomiseOpen()) return;
+    if (features::HudHidden()) return;
     BeginHud();
     reinterpret_cast<void(__cdecl*)(int)>(kHudDraw)(player);
     EndHud();
 }
 
 void __fastcall HudDraw2(void* self, void* /*edx*/, int player, uint32_t x) {
-    if (features::CustomiseOpen()) return;
+    if (features::HudHidden()) return;
     BeginHud();
     reinterpret_cast<void(__thiscall*)(void*, int, uint32_t)>(kHudDraw2)(self, player, x);
     EndHud();

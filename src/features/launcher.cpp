@@ -329,10 +329,19 @@ INT_PTR CALLBACK DetailProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
 // Launcher (dialog 106): only adds gamepad navigation. Hint line goes under the OK/Settings/Cancel row.
 INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     INT_PTR handled;
+    // dev background tests: the launcher opens off-screen without taking the focus and presses Play itself
+    if (msg == WM_WINDOWPOSCHANGING && features::DevBackground()) {
+        auto* pos = reinterpret_cast<WINDOWPOS*>(lp);
+        pos->x = pos->y = -8000;
+        pos->flags = (pos->flags | SWP_NOACTIVATE | SWP_NOZORDER) & ~SWP_NOMOVE;
+    }
     if (launcherpad::OnMessage(dlg, msg, wp, lp, &handled)) return handled;
     INT_PTR result = g_mainGameProc(dlg, msg, wp, lp);
     if (msg == WM_INITDIALOG) MoveToEndOfTabOrder(dlg, {IDOK, kIdSettingsButton, IDCANCEL});
     if (msg == WM_INITDIALOG) launcherpad::Attach(dlg, launcherpad::Kind::Launcher, 6, 226, 205, 14);
+    // "+level <name>" (the editor's Play): press Play straight away
+    if (msg == WM_INITDIALOG && (features::QuickStartLevel() || features::DevBackground()))
+        PostMessageA(dlg, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(dlg, IDOK)));
     return result;
 }
 
@@ -378,7 +387,9 @@ void features::OnFrame() {
     Timed("fontsharp", [] { OnFrameFontSharp(); });
     Timed("weaponicons", [] { OnFrameWeaponIcons(); });
     Timed("bodies", [] { OnFrameBodies(); });
+    Timed("followers", [] { OnFrameFollowers(); });
     Timed("versus", [] { OnFrameVersus(); });
+    Timed("campaigns", [] { OnFrameCampaigns(); });
     Timed("modsmenu", [] { OnFrameModsMenu(); });
     Timed("controls", [] { OnFrameControls(); });
     Timed("diagnostics", [] { OnFrameDiagnostics(); });
@@ -386,6 +397,9 @@ void features::OnFrame() {
     Timed("padio", [] { padio::Update(); });
     Timed("followpad", [] { FollowActivePad(); });
     Timed("customise", [] { OnFrameCustomise(); });
+    Timed("timeofday", [] { OnFrameTimeOfDay(); });
+    Timed("voices", [] { OnFrameVoices(); });
+    Timed("overview", [] { OnFrameOverview(); });
     Timed("dev", [] { OnFrameDev(); });
 #ifndef DS_DIST
     Timed("loadoutdev", [] { OnFrameLoadoutDev(); });
