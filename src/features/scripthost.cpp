@@ -954,6 +954,10 @@ int RunLuaLevel(const char* name) {
         g_scene = Directive(source, "--@scene");
         if (g_scene.empty()) g_scene = g_name.substr(0, g_name.size() - 4) + ".ENV";
         if (!LoadBase(base)) return 0;
+    } else if (_stricmp(Directive(source, "--@standard_anims").c_str(), "off") == 0) {
+        // "--@standard_anims off" (mission2lua's translated DLLs): the level registers its own animations - the
+        // standard set has files some archives lack (Training1-3: "Couldn't open upright_relaxed_with_pistol.prs")
+        dslog::Write("Script: %s registers its own animations (no standard set)", name);
     } else {
         for (const auto& anim : generated::kStandardAnims)
             reinterpret_cast<int(__cdecl*)(const char*, const char*)>(ApiFunction(0x04))(anim.state, anim.file);

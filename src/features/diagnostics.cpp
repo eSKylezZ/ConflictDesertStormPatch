@@ -83,7 +83,8 @@ void __cdecl GameLog(const char* fmt, ...) {
 
 #endif
 
-void Box(HWND wnd, const char* caption, UINT type, const char* fmt, va_list args) {
+// Returns the box's answer, or 0 when it was skipped (logged only).
+int Box(HWND wnd, const char* caption, UINT type, const char* fmt, va_list args) {
     char text[4096];
     if (!SafeFormat(text, sizeof text, fmt, args)) strcpy_s(text, "(unformattable message)");
     Trim(text);
@@ -104,22 +105,27 @@ void Box(HWND wnd, const char* caption, UINT type, const char* fmt, va_list args
         strncpy_s(last, text, _TRUNCATE);
         dslog::Write("[game %s] %s%s", caption, text, skip ? "  (box skipped)" : "");
     }
-    if (!skip) MessageBoxA(wnd, text, caption, type);
+    return skip ? 0 : MessageBoxA(wnd, text, caption, type);
 }
-void BoxText(HWND wnd, const char* caption, UINT type, const char* fmt, ...) {
+int BoxText(HWND wnd, const char* caption, UINT type, const char* fmt, ...) {
     va_list a;
     va_start(a, fmt);
-    Box(wnd, caption, type, fmt, a);
+    const int r = Box(wnd, caption, type, fmt, a);
     va_end(a);
+    return r;
 }
-// The animation loader FUN_00448d20 calls MessageBoxA itself ("Attempt to load anim twice!" + the .prs name, two
-// sites) instead of the game's error box, so Dev\NoErrorBoxes didn't cover it. Same log + skip rules as the rest.
-int WINAPI AnimMessageBox(HWND wnd, const char* text, const char* caption, UINT type) {
-    BoxText(wnd, caption ? caption : "Error", type, "%s", text ? text : "");
-    return IDOK;
-}
-constexpr uint32_t kAnimBoxCalls[] = {0x448DBC, 0x448E5A};   // call [MessageBoxA] (FF 15 0x5D82D0)
+// The game also calls MessageBoxA directly at 27 sites (e.g. the animation loader FUN_00448d20: "Attempt to load anim
+// twice!" / "bad anim" + the .prs name) instead of its error box, so Dev\NoErrorBoxes didn't cover them and test runs
+// put boxes on the user's screen. The import slot is hooked: every direct box gets the same log + skip rules. (Our own
+// MessageBoxA calls go through dsfix.dll's imports, not this slot.)
 constexpr uint32_t kIatMessageBoxA = 0x5D82D0;
+int WINAPI GameMessageBox(HWND wnd, const char* text, const char* caption, UINT type) {
+    // Shown: the player's answer. Skipped (tests): what a player would usually pick.
+    if (const int answer = BoxText(wnd, caption ? caption : "Error", type, "%s", text ? text : "")) return answer;
+    return (type & 0xF) == MB_YESNO || (type & 0xF) == MB_YESNOCANCEL ? IDYES
+         : (type & 0xF) == MB_ABORTRETRYIGNORE                       ? IDIGNORE
+                                                                      : IDOK;
+}
 
 // FUN_004b99d0(fmt, ...): the game's information box (MB_ICONINFORMATION, caption [0x60EE48]) - 10 callers.
 void __cdecl InfoBox(const char* fmt, ...) {
@@ -448,8 +454,7 @@ void features::ApplyDiagnostics() {
                        replace(kWarningBoxWnd, reinterpret_cast<const void*>(&WarningBoxWnd), wndEntry, sizeof wndEntry);
     if (patch::Matches(kInfoBox, boxEntry, sizeof boxEntry))
         replace(kInfoBox, reinterpret_cast<const void*>(&InfoBox), boxEntry, sizeof boxEntry);
-    for (uint32_t site : kAnimBoxCalls)
-        patch::HookIndirectCall(site, reinterpret_cast<const void*>(&AnimMessageBox), kIatMessageBoxA);
+    patch::HookSlot(kIatMessageBoxA, reinterpret_cast<const void*>(&GameMessageBox));
     static const uint8_t openEntry[] = {0x8B, 0x44, 0x24, 0x08, 0x8B, 0x0D, 0x30, 0xC5, 0x63, 0x00};
     const bool files = replace(kOpenFile, reinterpret_cast<const void*>(&GameOpenFile), openEntry, sizeof openEntry);
     framerec::ApplyHooks();

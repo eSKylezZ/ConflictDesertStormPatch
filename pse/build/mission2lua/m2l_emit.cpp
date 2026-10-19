@@ -18,7 +18,7 @@ namespace pse::m2l {
 namespace {
 #include "m2l_runtime.inc"
 
-constexpr const char* kPortRevision = "cpp.1";   // bump when the C++ port changes its output (cache stamps)
+constexpr const char* kPortRevision = "cpp.2";   // bump when the C++ port changes its output (cache stamps)
 
 struct Unsupported : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -848,6 +848,7 @@ bool Translate(const std::vector<uint8_t>& file, const std::string& name, std::s
         std::string out;
         out.reserve(4 << 20);
         out += "--@archive " + level + "\n";
+        out += "--@standard_anims off\n";   // (VERSION 2) the DLL registers its own animations, as on the DLL path
         out += F("-- %s translated by mission2lua %d (ConflictDesertStormModKit) from %s, SHA-256 %s.\n", name.c_str(),
                  kTranslatorVersion, name.c_str(), sha.c_str());
         out += "-- Generated from your own game files: game code. Never commit or distribute this file.\n";

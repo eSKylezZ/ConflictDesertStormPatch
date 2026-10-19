@@ -189,7 +189,7 @@ PSE_TEST("mission2lua: a small DLL - functions, blocks, switch table, thunks, Lu
     PSE_CHECK_EQ(st.thunks, 3u);
     PSE_CHECK(st.unsupported.empty());
     PSE_CHECK_STR(LuaCompiles(lua).c_str(), "");
-    PSE_CHECK(lua.rfind("--@archive tiny\n", 0) == 0);
+    PSE_CHECK(lua.rfind("--@archive tiny\n--@standard_anims off\n", 0) == 0);
     PSE_CHECK(lua.find("-- 4 functions, 18 instructions, 3 thunks.") != std::string::npos);
     PSE_CHECK(lua.find("F[0x10001010] = function()") != std::string::npos);
     PSE_CHECK(lua.find("if FA > FB then goto L10001036 end") != std::string::npos);    // cmp + ja, fast path
@@ -256,10 +256,10 @@ std::wstring RealGame() {
         if (GetFileAttributesW((std::wstring(d) + L"\\Mission1.dll").c_str()) != INVALID_FILE_ATTRIBUTES) return d;
     return {};
 }
-// The shipped Mission1.dll (Steam = GOG) and its translation by mission2lua 2 / port cpp.1, from scripts/m2l_gate.py
+// The shipped Mission1.dll (Steam = GOG) and its translation by mission2lua 2 / port cpp.2, from scripts/m2l_gate.py
 // (byte-identical with ModKit mission2lua.py). Update both when the translator's output changes (gate first).
 constexpr const char* kMission1Dll = "258e6d8a2e7e2a0079120fa8f5f770b759835985adce34bcb60f2934ce915f67";
-constexpr const char* kMission1Lua = "41d6286a1d9900a25764abfb73b786c7ce8a76d63be90c6eb7ff8ffc3d382e50";
+constexpr const char* kMission1Lua = "41fd7455020c17909322979f6f3fb9a5ef9b6f32a66de05aa05c41e81d9cd7c3";
 
 std::wstring ModKit() {
     wchar_t env[MAX_PATH];
