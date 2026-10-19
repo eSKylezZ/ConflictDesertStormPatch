@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/patch.h"
 #include "core/proxy.h"
 #include "core/settings.h"
 #include "features/features.h"
@@ -172,6 +173,7 @@ void Park(int j) {
 }
 
 bool Open(int j, const DIDEVICEINSTANCEA& inst) {
+    if (features::DevNoPads()) return false;
     void* di = *reinterpret_cast<void**>(kGameDirectInput);
     if (!di || Slots()[j]) return false;
     auto& current = *reinterpret_cast<int*>(kCurrentJoystick);
@@ -396,4 +398,56 @@ void features::OnFrameHotplug() {
     }
     if (fresh) Reconcile(found);
     WatchPlayers();
+}
+
+// ---- pad access ----
+// The game opens its joysticks exclusive + foreground (SetCooperativeLevel(hwnd [0x754C20], 5) at 0x5388B3 in the open
+// callback): an online session keeps the game running without focus (lockstep.cpp KeepRunning), and with foreground
+// access its pads stopped there. SetPadsBackground(true) re-opens every open joystick exclusive + background (9; the
+// rumble effects need exclusive), falling back to shared + background (0xA), and makes newly opened ones (hot-plug)
+// background too; false puts the game's own level back.
+namespace {
+constexpr uint32_t kCoopLevelImm = 0x5388B4;   // push 5
+constexpr uint32_t kGameWindowHandle = 0x754C20;
+bool g_padsBackground = false;
+BOOL __stdcall NoPadCallback(const DIDEVICEINSTANCEA*, void*) { return DIENUM_CONTINUE; }
+}  // namespace
+
+void features::SetPadsBackground(bool on) {
+    if (on == g_padsBackground) return;
+    const uint8_t want = on ? 9 : 5, have = on ? 5 : 9;
+    if (patch::Matches(kCoopLevelImm, &have, 1)) patch::Write(kCoopLevelImm, &want, 1);
+    const HWND wnd = *reinterpret_cast<HWND*>(kGameWindowHandle);
+    int changed = 0;
+    for (int j = 0; j < 8; ++j)
+        if (auto* dev = static_cast<IDirectInputDevice8A*>(Slots()[j])) {
+            dev->Unacquire();
+            HRESULT hr = dev->SetCooperativeLevel(wnd, on ? DISCL_EXCLUSIVE | DISCL_BACKGROUND : DISCL_EXCLUSIVE | DISCL_FOREGROUND);
+            if (FAILED(hr) && on) hr = dev->SetCooperativeLevel(wnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+            dev->Acquire();
+            changed += SUCCEEDED(hr);
+        }
+    g_padsBackground = on;
+    dslog::Write("Pads: %s access (%d joystick(s))", on ? "background" : "foreground", changed);
+}
+
+bool features::DevNoPads() {
+#ifdef DS_DIST
+    return false;
+#else
+    static int v = -1;   // Dev\NoPads = 1: this copy opens no joysticks (two copies on one PC, the pad for the other)
+    if (v < 0) {
+        DWORD d = 0, size = sizeof d;
+        RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "NoPads", RRF_RT_REG_DWORD, nullptr, &d, &size);
+        v = d ? 1 : 0;
+    }
+    return v != 0;
+#endif
+}
+
+void features::ApplyPadAccess() {
+    if (!DevNoPads()) return;
+    // FUN_00538bb0's EnumDevices callback push: a pointer hook on its imm32 (NoPadCallback never calls the game's).
+    if (patch::HookSlot(0x538C09, reinterpret_cast<const void*>(&NoPadCallback), nullptr, kOpenCallback))
+        dslog::Write("[dev]  Pads: none opened (Dev\\NoPads)");
 }

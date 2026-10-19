@@ -1,0 +1,13 @@
+Zydis 4.1.0 (Zyan Disassembler Library), amalgamated release - x86 decoder for the mission translator
+(pse/build/mission2lua, docs/sdk/mission-translation.md "C++ port").
+
+Source:   https://github.com/zyantific/zydis/releases/download/v4.1.0/zydis-amalgamated.zip
+          (official release asset of tag v4.1.0, 2024-02-04; Zydis.c + Zydis.h = Zydis + Zycore in one file each)
+          zip SHA-256 6ce26e5bf812aa9384af4a514fe81afa53f3fd00d579ba9d80a710e2218f48ff
+Licences: LICENSE        Zydis (MIT), from https://github.com/zyantific/zydis/archive/refs/tags/v4.1.0.tar.gz
+          LICENSE-zycore Zycore (MIT), zycore-c at 74620eefd233bec20daeb66e78e744ff06e273b7 (Zydis v4.1.0's submodule)
+Files:    Zydis.c  SHA-256 d0c460af81f545971b62a1f5031f3b326e5702d6b34dfa0d99bb5c560e64a5e0
+          Zydis.h  SHA-256 0012d639a791c92ddd127bd59861aff9aa5105ada88f1c307ba58998ed4f2e02
+Unmodified. Built as the static library `zydis` (pse/CMakeLists.txt) with ZYDIS_STATIC_BUILD, ZYCORE_STATIC_BUILD,
+ZYDIS_DISABLE_ENCODER and ZYDIS_DISABLE_FORMATTER: only the decoder is used (the translator formats instructions
+itself, in capstone's style - see pse/build/mission2lua/m2l_decode.cpp).

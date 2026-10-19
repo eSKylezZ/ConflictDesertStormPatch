@@ -50,7 +50,7 @@ float __fastcall TimescaleAndLandThreshold(const uint8_t* timer) {
 
 // ---- exact frame time ----
 constexpr uint32_t kFrameTimer = 0x4BA5B0;      // fastcall(timer): sub esp,8 / push ebx / push esi (5 bytes)
-constexpr uint32_t kFrameTimerCont = 0x4BA5B5;
+
 constexpr uint32_t kTimeMultiplier = 0x5F7E64;  // float, global time multiplier
 constexpr uint8_t kFrameTimerEntry[] = {0x83, 0xEC, 0x08, 0x53, 0x56};
 
@@ -71,6 +71,7 @@ void __fastcall FrameTimer(uint8_t* timer) {
     QueryPerformanceCounter(&now);
     const uint32_t clockBefore = *reinterpret_cast<uint32_t*>(timer + 0xD4);
     g_timerOriginal(timer);
+    if (features::DetActive() || features::LockstepActive()) return;   // determinism test / online: the virtual clock's steps as they are
     if (*reinterpret_cast<uint32_t*>(timer + 0xD4) == clockBefore) return;  // clock didn't move: nothing updated
 
     TimerState* st = nullptr;
@@ -107,19 +108,14 @@ void __fastcall FrameTimer(uint8_t* timer) {
 }
 
 bool ApplyExactFrameTime() {
-    if (!patch::Matches(kFrameTimer, kFrameTimerEntry, sizeof kFrameTimerEntry)) {
+    QueryPerformanceFrequency(&g_qpf);
+    // Entry hook through the broker: g_timerOriginal = its trampoline (the moved prologue) or the next subscriber.
+    if (!patch::HookFunction(kFrameTimer, reinterpret_cast<const void*>(&FrameTimer),
+                             reinterpret_cast<void**>(&g_timerOriginal), kFrameTimerEntry, sizeof kFrameTimerEntry)) {
         dslog::Write("[fail] Exact frame time: unexpected bytes at 0x%08X", kFrameTimer);
         return false;
     }
-    QueryPerformanceFrequency(&g_qpf);
-    auto* tramp = static_cast<uint8_t*>(VirtualAlloc(nullptr, 16, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!tramp) return false;
-    std::memcpy(tramp, kFrameTimerEntry, sizeof kFrameTimerEntry);
-    tramp[5] = 0xE9;
-    const int32_t rel = static_cast<int32_t>(kFrameTimerCont - (reinterpret_cast<uint32_t>(tramp) + 10));
-    std::memcpy(tramp + 6, &rel, 4);
-    g_timerOriginal = reinterpret_cast<TimerFn>(tramp);
-    return patch::WriteJump(kFrameTimer, reinterpret_cast<const void*>(&FrameTimer));
+    return true;
 }
 
 bool ApplyLandingFix() {

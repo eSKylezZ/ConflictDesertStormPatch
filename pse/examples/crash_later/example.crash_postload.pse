@@ -1,0 +1,2 @@
+# Test plugin (pse/tests/test_plugins.cpp): loads, then faults in its PSE_MSG_POST_LOAD listener. Never install it in a game.
+name = example.crash_postload

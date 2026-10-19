@@ -151,12 +151,20 @@ void CsvText(std::string& out, const std::string& s) {
 }
 
 using RenderFn = void(__cdecl*)(int);
+RenderFn g_renderNext = reinterpret_cast<RenderFn>(kRenderLoop);   // the chain's next (game layer, then FUN_0040ef70)
+uint32_t g_renderCount = 0;   // render loop runs (lockstep's dev trace)
 void __cdecl RenderLoop(int a) {
-    if (!g_on) return reinterpret_cast<RenderFn>(kRenderLoop)(a);
+    if (features::LockstepSkipRender()) return;   // online with the display device lost (lockstep.cpp)
+    ++g_renderCount;
+#ifndef DS_DIST
+    features::RenderDiffBefore();
+    struct After { ~After() { features::RenderDiffAfter(); } } after;   // (both paths below)
+#endif
+    if (!g_on) return g_renderNext(a);
     const double t0 = framerec::Now();
     const double presentBefore = g_cur.present + g_cur.vblank;
     g_inRender = true;
-    reinterpret_cast<RenderFn>(kRenderLoop)(a);
+    g_renderNext(a);
     g_inRender = false;
     const double inside = g_cur.present + g_cur.vblank - presentBefore;
     g_cur.presentInRender += inside;
@@ -272,6 +280,11 @@ void framerec::Note(const char* text) {
 void framerec::ApplyHooks() {
     static bool hooked = false;
     if (hooked) return;
-    hooked = patch::HookCall(kRenderCall, reinterpret_cast<const void*>(&RenderLoop), kRenderLoop);
+    // Shared site: the game layer (pse.game.ds1) hooks it too, closer to the game (PSE_DS1_LAYER_PRIORITY_INNER: its
+    // PRE_RENDER / POST_RENDER events count as render time here); this one runs first and calls it through g_renderNext.
+    hooked = patch::SubscribeCall(kRenderCall, reinterpret_cast<const void*>(&RenderLoop), kRenderLoop, 0,
+                                  reinterpret_cast<void**>(&g_renderNext));
     dslog::Write("Frame recorder: render loop hook %s", hooked ? "installed" : "FAILED");
 }
+
+uint32_t features::RenderCount() { return g_renderCount; }

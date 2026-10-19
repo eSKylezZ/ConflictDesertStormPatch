@@ -13,18 +13,25 @@
 // A longer text gets a new buffer from the game's allocator (FUN_004b8450(size, type)); the old one is freed with
 // FUN_004b8590 - the caller frees whatever *buf holds after parsing.
 #include <windows.h>
+#include <intrin.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
+#include "core/pse_saves_format.h"
+#include "core/settings.h"
+#include "loader.h"
 #include "features/features.h"
 
 namespace {
@@ -184,6 +191,7 @@ bool Available(const std::string& item) {
     const Weapon* w = FindWeapon(item);
     if (!w || g_levelFiles.empty()) return true;
     if (features::ModHasFile((std::string(w->model) + ".evo").c_str())) return true;
+    if (features::AssetStoreHasFile((std::string(w->model) + ".EVO").c_str())) return true;   // another level's (store)
     const uint32_t h = NameHash(std::string(w->model) + ".EVO");
     for (uint32_t f : g_levelFiles)
         if (f == h) return true;
@@ -440,17 +448,38 @@ void features::ApplyLoadout() {
 namespace {
 constexpr uint32_t kNewHlo = 0x41B750, kNewHloCont = 0x41B756;
 constexpr uint8_t kNewHloEntry[] = {0x51, 0x55, 0x8B, 0x6C, 0x24, 0x0C};
-constexpr size_t kRecordSize = 0x21000;  // FUN_004c9a90 (every object's base) reads record +0x20F04 / +0x20F2C
+// The scene loaders keep a record on the stack (frames 0x221E4 at 0x41AAF0, 0x22224 at 0x4197B0, record at the
+// bottom) and FUN_004c9a90 (every object's base) reads up to +0x210D8 (RINFO lights, FUN_004fb2c0) - a 0x21000 copy
+// let it read heap garbage past the copy's end (photo mode's soldier copies faulted in the heap now and then).
+constexpr size_t kRecordSize = 0x221D0;
 using NewHloFn = void*(__cdecl*)(uint8_t*);
 NewHloFn g_newHloOriginal = nullptr;
 std::vector<uint8_t> g_weaponRecord;
 bool g_recordIsGun = false;  // the captured record is a real gun's (not the Fist's)
 std::vector<uint8_t> g_medikitRecord;  // a MediKit's (equipment), for followers.cpp
+// Photo mode's soldiers: one record per unit name of the level's own non-squad soldiers (their models, skins, kits
+// and animations are loaded already). Record +0 script id (copied to object +8; the id table is filled by the scene
+// loader, not here), +4 position, +0x10 rotation (degrees), +0xAB unit, kit = item names (each soldier builds his own).
+struct SoldierRecord {
+    std::string unit;
+    std::vector<uint8_t> rec;
+};
+std::vector<SoldierRecord> g_soldierRecords;
+constexpr size_t kMaxSoldierRecords = 32;
+// Where every scene soldier started and what its record hangs under (+0x64: the parent the base ctor attaches the
+// object to - FUN_004c9980 / FUN_004c9a00 - its zone): a copy takes the parent of the soldier that started nearest.
+struct SoldierPlace {
+    float pos[3];
+    void* parent;
+};
+std::vector<SoldierPlace> g_soldierPlaces;
 
 void ForgetWeaponRecord() {
     g_weaponRecord.clear();
     g_recordIsGun = false;
     g_medikitRecord.clear();
+    g_soldierRecords.clear();
+    g_soldierPlaces.clear();
 }
 
 bool SafeCopy(void* dst, const void* src, size_t n) {
@@ -477,12 +506,68 @@ bool IsMedikit(const uint8_t* record, const uint8_t* obj) {
 }
 
 void* __cdecl NewHlo(uint8_t* record) {
+#ifndef DS_DIST
+    {   // dev: who creates vehicles (once)
+        static bool logged = false;
+        if (!logged && *reinterpret_cast<int*>(record + 0xD0) == 2) {
+            logged = true;
+            dslog::Write("[dev] Loadout: NewHLO for a vehicle called from %p", _ReturnAddress());
+        }
+    }
+#endif
+    features::VehicleRecord(record);   // a vehicle swap (vehicles.cpp) rewrites the record first
     void* obj = g_newHloOriginal(record);
+    features::VehicleCreated(record, obj);
+    if (obj && *reinterpret_cast<uint32_t*>(obj) == 0x5D88E0 && *reinterpret_cast<int*>(record) >= 0 &&
+        g_soldierPlaces.size() < 4096) {
+        SoldierPlace p;
+        memcpy(p.pos, record + 4, 12);
+        p.parent = *reinterpret_cast<void**>(record + 0x64);
+        g_soldierPlaces.push_back(p);
+    }
+    if (obj && *reinterpret_cast<uint32_t*>(obj) == 0x5D88E0 && g_soldierRecords.size() < kMaxSoldierRecords &&
+        *reinterpret_cast<int*>(record) >= 0) {   // (not photo mode's own copies: id -1)
+        const auto* unit = *reinterpret_cast<const uint8_t* const*>(static_cast<uint8_t*>(obj) + 0x24);
+        const std::string name = reinterpret_cast<const char*>(record + 0xAB);
+        const bool squad = unit && static_cast<int8_t>(unit[0x1C7]) >= 0;   // a squad role: the player mapping takes them
+        bool known = name.empty() || squad;
+        for (const SoldierRecord& r : g_soldierRecords) known = known || _stricmp(r.unit.c_str(), name.c_str()) == 0;
+        if (!known) {
+            SoldierRecord r{name, std::vector<uint8_t>(kRecordSize)};
+            if (SafeCopy(r.rec.data(), record, kRecordSize)) {
+                dslog::Write("Photo mode: soldier record %s captured (id %d)", name.c_str(), *reinterpret_cast<int*>(record));
+#ifndef DS_DIST
+                if (g_soldierRecords.empty()) {   // dev: record fields that point into heap memory (dangling after the load?)
+                    std::string list;
+                    for (size_t off = 0; off + 4 <= kRecordSize; off += 4) {
+                        const uint32_t v = *reinterpret_cast<const uint32_t*>(r.rec.data() + off);
+                        if (v < 0x10000 || (v >= 0x400000 && v < 0x800000)) continue;
+                        MEMORY_BASIC_INFORMATION mbi{};
+                        if (VirtualQuery(reinterpret_cast<void*>(v), &mbi, sizeof mbi) && mbi.State == MEM_COMMIT &&
+                            mbi.Type == MEM_PRIVATE) {
+                            char b[40];
+                            snprintf(b, sizeof b, " +%X=%08X", static_cast<unsigned>(off), v);
+                            list += b;
+                            if (list.size() > 1500) break;
+                        }
+                    }
+                    dslog::Write("[dev] Photo mode: heap pointers in the %s record:%s", name.c_str(), list.c_str());
+                }
+#endif
+                g_soldierRecords.push_back(std::move(r));
+            }
+        }
+    }
     if (obj && g_medikitRecord.empty() && IsMedikit(record, static_cast<uint8_t*>(obj))) {
         std::vector<uint8_t> copy(kRecordSize);
         if (SafeCopy(copy.data(), record, kRecordSize)) g_medikitRecord.swap(copy);
     }
     if (!obj || *reinterpret_cast<int*>(static_cast<uint8_t*>(obj) + 4) != 6 || g_recordIsGun) return obj;
+    // Not a vehicle's gun (made by the vehicle's set-up FUN_00437cd0 from a record of its own, id -1): VEHWPNS weapons
+    // are named *_VWPN_* (the T-72's cannon *_VWNP_*) and count as machine guns, so the first vehicle's gun became the
+    // template every soldier weapon of the loadout screen was made from.
+    if (strstr(reinterpret_cast<char*>(record + 0xAB), "_VWPN_") || strstr(reinterpret_cast<char*>(record + 0xAB), "_VWNP_"))
+        return obj;
     // Prefer a main weapon's record: weapons cloned from the first one (the Fist, an invisible melee weapon) were not
     // drawn - the soldier fell back to his knife. The Fist's is only kept until a gun comes along.
     const bool gun = features::KitSlotOf(reinterpret_cast<char*>(record + 0xAB)) == 0;
@@ -556,11 +641,10 @@ int features::KitSlotOf(const char* weapon) {
 // ---- weapon unlocks (kept per mode: single player / co-op) ----
 // Every weapon a squad soldier receives - the mission's starting kits during the level load, anything picked up -
 // counts as found: AddItem FUN_004314d0(soldier, item, a, b) (thiscall, entry 83 EC 08 53 55) is wrapped. The lists
-// live in the registry (Enhancements\UnlockedWeaponsSP / ...Coop, "id;id;..."); the customise screen offers them.
+// live in the registry (settings key UnlockedWeaponsSP / ...Coop, "id;id;..."); the customise screen offers them.
 namespace {
 constexpr uint32_t kAddItem = 0x4314D0, kAddItemCont = 0x4314D5;
 constexpr uint8_t kAddItemEntry[] = {0x83, 0xEC, 0x08, 0x53, 0x55};
-constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 using AddItemFn = int(__thiscall*)(void*, void*, int, int);
 AddItemFn g_addItem = nullptr;
 std::vector<std::string> g_unlocked[2];   // [0] single player, [1] co-op
@@ -573,10 +657,9 @@ const char* ModeValue(int mode) { return mode ? "UnlockedWeaponsCoop" : "Unlocke
 std::vector<std::string>& Unlocked(int mode) {
     if (!g_unlocksLoaded[mode]) {
         g_unlocksLoaded[mode] = true;
-        char buf[4096] = {};
-        DWORD size = sizeof buf;
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, ModeValue(mode), RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS)
-            for (char* t = strtok(buf, ";"); t; t = strtok(nullptr, ";"))
+        std::string text;
+        if (settings::ReadString(ModeValue(mode), text))
+            for (char* t = strtok(text.data(), ";"); t; t = strtok(nullptr, ";"))
                 if (*t) g_unlocked[mode].push_back(t);
     }
     return g_unlocked[mode];
@@ -585,11 +668,7 @@ std::vector<std::string>& Unlocked(int mode) {
 void SaveUnlocks(int mode) {
     std::string v;
     for (const std::string& w : g_unlocked[mode]) v += w + ";";
-    HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    RegSetValueExA(key, ModeValue(mode), 0, REG_SZ, reinterpret_cast<const BYTE*>(v.c_str()), static_cast<DWORD>(v.size() + 1));
-    RegCloseKey(key);
+    settings::WriteString(ModeValue(mode), v);
 }
 
 bool IsSquadSoldier(uint8_t* soldier) {
@@ -628,7 +707,8 @@ void Unlock(const char* id) {
 
 int __fastcall AddItemHook(uint8_t* soldier, void* /*edx*/, uint8_t* item, int a, int b) {
     const int r = g_addItem(soldier, item, a, b);
-    if (!g_kitSwapping) Unlock(SquadWeaponId(soldier, item));   // picked up during play
+    // picked up during play (only with the loadout screen on - settings featLoadout, live: nothing to offer them in)
+    if (!g_kitSwapping && settings::Get().featLoadout) Unlock(SquadWeaponId(soldier, item));
     return r;
 }
 }  // namespace
@@ -685,6 +765,27 @@ int features::KitRounds(void* item) {
     return it ? *reinterpret_cast<int*>(it + 0x54) + *reinterpret_cast<int*>(it + 0x80) : 0;
 }
 
+// Magazines for a gun swapped in for oldItem (main weapon / sidearm): the same share of its own allowance as the old
+// one held. The magazine setter (vtable +0x38, FUN_004a10a0) gives min(n, definition +0xCE max magazines) x +0x92
+// magazine size; the missions' kits are mostly full (Mission 3: M16A2 300 = 10 x 30), the old fixed 5 / 3 gave about
+// half. No old item (an empty slot): full.
+int SwapMagazines(uint8_t* oldItem, uint8_t* newItem) {
+    auto allowance = [](uint8_t* it, int& cap, int& size) {
+        auto* def = *reinterpret_cast<uint8_t**>(it + 0x24);
+        cap = def ? def[0xCE] : 0;
+        size = def ? *reinterpret_cast<uint16_t*>(def + 0x92) : 0;
+    };
+    int newCap, newSize;
+    allowance(newItem, newCap, newSize);
+    if (newCap <= 0) return 5;
+    if (!oldItem) return newCap;
+    int oldCap, oldSize;
+    allowance(oldItem, oldCap, oldSize);
+    if (oldCap <= 0 || oldSize <= 0) return newCap;
+    const float share = std::clamp(features::KitRounds(oldItem) / static_cast<float>(oldCap * oldSize), 0.0f, 1.0f);
+    return std::max(1, static_cast<int>(std::ceil(share * newCap - 0.01f)));
+}
+
 bool features::KitSwap(void* soldier, void* oldItem, const std::string& weapon, int slot, int mags) {
     static const int kMags[4] = {5, 3, 1, 2};
     auto* s = static_cast<uint8_t*>(soldier);
@@ -701,7 +802,9 @@ bool features::KitSwap(void* soldier, void* oldItem, const std::string& weapon, 
     const bool heldOld = oldItem && *reinterpret_cast<void**>(s + 0x26B0) == oldItem;
     g_kitSwapping = true;   // (a weapon chosen from a mod's list stays a mod weapon: not unlocked for good)
     const int modMags = features::ModWeaponMagazines(weapon);  // a .weapon file's "magazines"
-    if (item) GiveWeapon(s, item, mags > 0 ? mags : modMags > 0 ? modMags : kMags[slot & 3], slot == 0 || heldOld);
+    int give = mags > 0 ? mags : modMags > 0 ? modMags : kMags[slot & 3];
+    if (item && mags <= 0 && modMags <= 0 && slot <= 1) give = SwapMagazines(static_cast<uint8_t*>(oldItem), item);
+    if (item) GiveWeapon(s, item, give, slot == 0 || heldOld);
     g_kitSwapping = false;
     if (oldItem) {
         using Take = void(__thiscall*)(void*, void*, int, int);
@@ -718,6 +821,82 @@ bool features::KitSwap(void* soldier, void* oldItem, const std::string& weapon, 
     return true;
 }
 
+int NewHloFault(EXCEPTION_POINTERS* e) {
+    const CONTEXT* c = e->ContextRecord;
+    const auto* st = reinterpret_cast<const uint32_t*>(c->Esp);
+    char frames[160] = {};
+    int n = 0;
+    for (int i = 0; i < 64 && n < 6; ++i)   // exe return addresses on the stack
+        if (st[i] >= 0x401000 && st[i] < 0x5D8000)
+            snprintf(frames + strlen(frames), sizeof frames - strlen(frames), " %08X", st[i]), ++n;
+    dslog::Write("[fail] Photo mode: NewHLO exception %08X at %08X (eax %08X ecx %08X esi %08X edi %08X) stack%s",
+                 e->ExceptionRecord->ExceptionCode, c->Eip, c->Eax, c->Ecx, c->Esi, c->Edi, frames);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+void* NewHloGuarded(uint8_t* rec) {
+    __try {
+        return reinterpret_cast<NewHloFn>(kNewHlo)(rec);
+    } __except (NewHloFault(GetExceptionInformation())) {
+        return nullptr;
+    }
+}
+
+// Photo mode: the unit names that can be spawned in this level, and a new soldier of one of them.
+std::vector<std::string> features::PhotoSpawnUnits() {
+    std::vector<std::string> out;
+    for (const SoldierRecord& r : g_soldierRecords) out.push_back(r.unit);
+    return out;
+}
+void* features::PhotoSpawnSoldier(int index, const float pos[3], float yaw) {
+    if (index < 0 || index >= static_cast<int>(g_soldierRecords.size())) return nullptr;
+    std::vector<uint8_t> rec = g_soldierRecords[index].rec;
+    *reinterpret_cast<int*>(rec.data()) = -1;   // no script id: scripts / the id table never see it
+    memcpy(rec.data() + 4, pos, 12);
+    reinterpret_cast<float*>(rec.data() + 0x10)[1] = yaw;
+    // The scene lights the base ctor attaches (+0x20F30 count <= 6, indices +0x20F34, FUN_004d04d0) are the ones around
+    // the original's place - a reserve waiting indoors came out black in the sun. The copy gets none.
+    *reinterpret_cast<uint32_t*>(rec.data() + 0x20F30) = 0;
+    float best = 1e30f;
+    for (const SoldierPlace& p : g_soldierPlaces) {
+        const float dx = p.pos[0] - pos[0], dy = p.pos[1] - pos[1], dz = p.pos[2] - pos[2];
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (d < best) best = d, *reinterpret_cast<void**>(rec.data() + 0x64) = p.parent;
+    }
+    void* obj = NewHloGuarded(rec.data());
+    if (!obj) {
+        dslog::Write("[fail] Photo mode: creating a %s failed", g_soldierRecords[index].unit.c_str());
+        return nullptr;
+    }
+    auto* o = static_cast<uint8_t*>(obj);
+    if (!(o[0xC] & 1)) (*reinterpret_cast<void(__thiscall**)(void*, int)>(*reinterpret_cast<uint8_t**>(o) + 4))(o, 1);
+    // Never saved: the save game's object walk (FUN_004c8e90 from 0x41589E, mask 0x20000) skips instances with flag
+    // 0x20000 - the cutscene actors' flag (also kept out of the squad picker / panels). Despawned ones stay deactivated
+    // in the team lists, and a loaded save rebuilds the level anyway.
+    if (auto* inst = *reinterpret_cast<uint8_t**>(o + 0x2C)) *reinterpret_cast<uint32_t*>(inst + 0xC) |= 0x20000;
+    using LoadPending = void(__thiscall*)(void*, void*, int);   // textures of anything loaded mid-level
+    reinterpret_cast<LoadPending>(0x54A3E0)(*reinterpret_cast<void**>(0x63C930), nullptr, 0);
+#ifndef DS_DIST
+    {   // dev: the copy's look vs. the original soldier's (record id)
+        auto look = [](const char* what, const uint8_t* so) {
+            const uint8_t* in = so ? *reinterpret_cast<uint8_t* const*>(so + 0x2C) : nullptr;
+            if (!in) return;
+            dslog::Write("[dev] Photo mode: %s instance %p +0x1D4 %p +0x2B0 %p flags %08X skin entry %p", what, in,
+                         *reinterpret_cast<void* const*>(in + 0x1D4), *reinterpret_cast<void* const*>(in + 0x2B0),
+                         *reinterpret_cast<const uint32_t*>(in + 0xC), *reinterpret_cast<void* const*>(so + 0x2A68));
+        };
+        look("spawned", o);
+        const int id = *reinterpret_cast<int*>(g_soldierRecords[index].rec.data());
+        const uint8_t* mgr = *reinterpret_cast<uint8_t* const*>(0x63C9A0);
+        if (mgr && id >= 0 && static_cast<uint32_t>(id) <= *reinterpret_cast<const uint32_t*>(mgr + 0x34))
+            look("original", (*reinterpret_cast<uint8_t* const* const*>(mgr + 0x30))[id]);
+        dslog::Write("[dev] Photo mode: record skin texture \"%s\" model \"%s\"",
+                     reinterpret_cast<const char*>(g_soldierRecords[index].rec.data() + 0x68),
+                     reinterpret_cast<const char*>(g_soldierRecords[index].rec.data() + 0x1C));
+    }
+#endif
+    return obj;
+}
+
 // A weapon for a soldier outside the kit system (followers.cpp: Franklin's / the Emir's pistol), in his hands, not
 // counted as an unlock.
 void* features::GiveSpawnedWeapon(void* soldier, const char* weapon, int mags) {
@@ -727,6 +906,50 @@ void* features::GiveSpawnedWeapon(void* soldier, const char* weapon, int mags) {
     GiveWeapon(static_cast<uint8_t*>(soldier), item, mags, true);
     g_kitSwapping = false;
     return item;
+}
+
+// The weapon ids the level's soldiers carry (inventory +0x26B8, 25 items; weapon = item +4 type 6, definition +0x24 ->
+// id +4) - the definitions live as long as the level.
+static int SceneWeaponIds(const char** out, int max) {
+    int n = 0;
+    __try {
+        const uint8_t* mgr = *reinterpret_cast<uint8_t* const*>(0x63C9A0);
+        uint8_t* const* table = mgr ? *reinterpret_cast<uint8_t* const* const*>(mgr + 0x30) : nullptr;
+        const uint32_t maxId = mgr ? *reinterpret_cast<const uint32_t*>(mgr + 0x34) : 0;
+        for (uint32_t i = 0; table && i <= maxId && i < 100000 && n < max; ++i) {
+            const uint8_t* s = table[i];
+            if (!s || *reinterpret_cast<const uint32_t*>(s) != 0x5D88E0) continue;
+            auto* inv = *reinterpret_cast<uint8_t* const* const*>(s + 0x26B8);
+            for (int k = 0; inv && k < 25 && n < max; ++k) {
+                const uint8_t* it = inv[k];
+                if (!it || *reinterpret_cast<const int*>(it + 4) != 6) continue;
+                const uint8_t* def = *reinterpret_cast<uint8_t* const*>(it + 0x24);
+                if (def && *reinterpret_cast<const char* const*>(def + 4)) out[n++] = *reinterpret_cast<const char* const*>(def + 4);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return n;
+}
+
+// Photo mode: what a spawned soldier can be handed - main weapons, pistols and launchers this level can load (the
+// squad's list), the weapons the level's own soldiers carry (enemy rifles: models and shot banks loaded already) and
+// mod weapons. Vehicle guns and story items (no inventory picture) are Kind::Other and never offered.
+std::vector<std::string> features::PhotoWeaponChoices() {
+    std::vector<std::string> out;
+    auto add = [&](const char* w) {
+        if (!w || !*w) return;
+        const int slot = KitSlotOf(w);
+        if (slot < 0 || slot > 2 || !Available(w)) return;
+        if (std::find_if(out.begin(), out.end(), [&](const std::string& o) { return _stricmp(o.c_str(), w) == 0; }) == out.end())
+            out.push_back(w);
+    };
+    for (const Weapon& w : kWeapons) add(w.item);
+    static const char* scene[2048];
+    const int n = SceneWeaponIds(scene, 2048);
+    for (int i = 0; i < n; ++i) add(scene[i]);
+    for (const std::string& w : ModWeapons()) add(w.c_str());
+    return out;
 }
 
 // A MediKit (cloned from the level's first MediKit record) into a soldier's inventory.
@@ -745,22 +968,21 @@ bool features::GiveSpawnedMedikit(void* soldier) {
 // ---- spawned weapons in saves ----
 // A save stores a soldier's inventory as object ids (item +8, FUN_00416830; restored by FUN_00417180 through the id
 // table). Weapons made by SpawnWeapon (loadout screen, carried kits, mod weapons) aren't in that table (id -1), so a
-// save dropped them and the soldier came back without his main weapon. They are kept in "<save>.dsfix" next to the
-// save (one line per weapon: role|weapon id|reserve|magazine|held) and handed out again after the restore.
-//   save  FUN_00415650(this, path, flag) thiscall - writes the file when flag = 0 and path set (call sites below)
-//   load  FUN_00415b60(this, path) - reads it (path null = the save buffer already in memory)
-//   restore FUN_00416310 at 0x40CBAE (level init, when a save is being loaded)
+// save dropped them and the soldier came back without his main weapon. They are kept in the save's PSE co-save
+// ("<name>.pse", chunk 'KITS' of dsfix.loadout - core/pse_saves_format.h) and handed out again after the restore. The
+// squad's gear (dsfix.gear 'GEAR') and the vehicle swaps (dsfix.vehicles 'VEHS') go into the same co-save; until
+// 3.3.0-Alpha all three were lines of a "<name>.sav.dsfix" text sidecar, still read for saves without a .pse
+// (core/pse_saves.cpp).
+// The game layer (pse/games/ds1/ds1_events.cpp, owner pse.game.ds1) hooks the save FUN_00415650 / load FUN_00415b60
+// entries and runs the co-save around them: right after the game wrote the file, every plugin's save callback
+// (KitsSave below captures the squad's spawned weapons then - the moment this file's old save hook captured them),
+// right after the game read one, every plugin's load / revert callback.
+//   restore FUN_00416310 at 0x40CBAE (level init, when a save is being loaded) - hooked here: the weapons go back
 namespace {
-constexpr uint32_t kSaveGame = 0x415650, kLoadGame = 0x415B60, kRestoreSave = 0x416310;
-constexpr uint32_t kSaveSites[] = {0x475404, 0x4772CA, 0x4A6D14};
-constexpr uint32_t kLoadSite = 0x449B73, kRestoreSite = 0x40CBAE;
+constexpr uint32_t kRestoreSave = 0x416310;
+constexpr uint32_t kRestoreSite = 0x40CBAE;
 
-struct SavedWeapon {
-    int role;
-    std::string id;
-    int reserve, magazine;
-    bool held;
-};
+using SavedWeapon = pse_saves::SavedWeapon;
 std::vector<SavedWeapon> g_saveKits;  // of the last save written or read (a save without a path reloads from memory)
 
 template <class F>
@@ -791,8 +1013,13 @@ void CaptureSquadKits(std::vector<SavedWeapon>& out) {
                 auto* def = *reinterpret_cast<uint8_t**>(it + 0x24);
                 const char* id = def ? *reinterpret_cast<const char**>(def + 4) : nullptr;
                 if (!id || !*id) continue;
-                out.push_back({role, id, *reinterpret_cast<int*>(it + 0x54), *reinterpret_cast<int*>(it + 0x80),
-                               *reinterpret_cast<uint8_t**>(soldier + 0x26B0) == it});
+                SavedWeapon w;
+                w.role = role;
+                w.id = id;
+                w.reserve = *reinterpret_cast<int*>(it + 0x54);
+                w.magazine = *reinterpret_cast<int*>(it + 0x80);
+                w.held = *reinterpret_cast<uint8_t**>(soldier + 0x26B0) == it;
+                out.push_back(std::move(w));
             }
         });
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -800,49 +1027,29 @@ void CaptureSquadKits(std::vector<SavedWeapon>& out) {
     }
 }
 
-std::string SidecarPath(const char* save) { return std::string(save) + ".dsfix"; }
+// dsfix.loadout's co-save chunk. The game layer calls the save callbacks only after the game wrote a save file (flag 0,
+// a path, success): the squad's spawned weapons are captured here, right after the write - as the old save hook did.
+const PSESerializationInterface* Ser() { return pse::SerializationInterface(); }
 
-int __fastcall SaveGameHook(void* self, void*, const char* path, int flag) {
-    using Fn = int(__thiscall*)(void*, const char*, int);
-    const int r = reinterpret_cast<Fn>(kSaveGame)(self, path, flag);
-    if (!r || flag) return r;
+void PSE_CALL KitsSave(PSESaveWriter* w, void*) {
     CaptureSquadKits(g_saveKits);
-    if (!path) return r;
-    const std::string side = SidecarPath(path);
-    if (g_saveKits.empty()) {
-        DeleteFileA(side.c_str());
-        return r;
-    }
-    if (FILE* f = fopen(side.c_str(), "w")) {
-        for (const SavedWeapon& w : g_saveKits)
-            fprintf(f, "%d|%s|%d|%d|%d\n", w.role, w.id.c_str(), w.reserve, w.magazine, w.held ? 1 : 0);
-        fclose(f);
-        dslog::Write("Loadout: %zu spawned weapon(s) kept with the save", g_saveKits.size());
-    }
-    return r;
+    dslog::Write("Loadout: %zu spawned weapon(s) kept with the save", g_saveKits.size());
+    if (g_saveKits.empty()) return;
+    const std::vector<uint8_t> b = pse_saves::EncodeKits(g_saveKits);
+    Ser()->WriteChunk(w, pse_saves::kKitsTag, pse_saves::kChunkVersion, b.data(), static_cast<uint32_t>(b.size()));
 }
-
-int __fastcall LoadGameHook(void* self, void*, const char* path) {
-    if (path) {
-        g_saveKits.clear();
-        if (FILE* f = fopen(SidecarPath(path).c_str(), "r")) {
-            char line[256];
-            while (fgets(line, sizeof line, f)) {
-                SavedWeapon w{};
-                char id[128] = {};
-                int held = 0;
-                if (sscanf(line, "%d|%127[^|]|%d|%d|%d", &w.role, id, &w.reserve, &w.magazine, &held) == 5) {
-                    w.id = id;
-                    w.held = held != 0;
-                    g_saveKits.push_back(w);
-                }
-            }
-            fclose(f);
-        }
+void PSE_CALL KitsLoad(PSESaveReader* r, void*) {
+    g_saveKits.clear();
+    uint32_t tag, version, len;
+    while (Ser()->NextChunk(r, &tag, &version, &len)) {
+        if (tag != pse_saves::kKitsTag || version != 1) continue;
+        std::vector<uint8_t> b(len);
+        Ser()->Read(r, b.data(), len);
+        if (!pse_saves::DecodeKits(b.data(), b.size(), &g_saveKits))
+            dslog::Write("[fail] Loadout: the save's spawned-weapon chunk is damaged (%zu read)", g_saveKits.size());
     }
-    using Fn = int(__thiscall*)(void*, const char*);
-    return reinterpret_cast<Fn>(kLoadGame)(self, path);
 }
+void PSE_CALL KitsRevert(void*) { g_saveKits.clear(); }
 
 void GiveSaved(uint8_t* soldier, const SavedWeapon& w) {
     auto* item = static_cast<uint8_t*>(SpawnWeapon(w.id.c_str()));
@@ -874,8 +1081,13 @@ void GiveSaved(uint8_t* soldier, const SavedWeapon& w) {
                  w.reserve, w.held ? ", held" : "");
 }
 
+void HandBackGear() {   // (own function: RestoreSaveHook's __try can't hold objects with destructors)
+    features::GearRestoreSaved();   // on once the level plays
+}
+
 void __fastcall RestoreSaveHook(void* self) {
     reinterpret_cast<void(__fastcall*)(void*)>(kRestoreSave)(self);
+    HandBackGear();
     if (g_saveKits.empty()) return;
     __try {
         ForEachSquadSoldier([](uint8_t* soldier, int role) {
@@ -886,17 +1098,46 @@ void __fastcall RestoreSaveHook(void* self) {
         dslog::Write("[fail] Loadout: handing back the save's spawned weapons faulted");
     }
 }
+
+// A save keeps each soldier's skin as its key (FUN_00416830: skin entry +0 -> soldier record +0xB8); the restore
+// (FUN_00417180) looks it up in the current uniform's table for the soldier's squad slot (FUN_00496500 at 0x417449) and
+// applies the result at 0x417454 - null when the key is no longer in the table (a mod skin switched off since the save:
+// the user's "Special Delivery 1" has Bradley in a mod skin, key 6BBE2AA7). The skin apply FUN_00435be0 with null clears
+// the entry and sets +0x2A64 = unit +0x98, which is -1 for the heroes, so the soldier panel's no-portrait path
+// (FUN_00480620 -> 0x48087A) drew image -1 of the HUD sheet [0x60EE18]: a garbage page index -> null page -> AV at
+// 0x53CC7C. A squad soldier now falls back to his default skin (unit +0x1C8 key), else keeps the one he has.
+constexpr uint32_t kRestoreSkinSite = 0x417454, kApplySkin = 0x435BE0, kFindSkin = 0x496500;
+
+void __fastcall RestoreSkin(uint8_t* soldier, void*, void* entry) {
+    using Apply = void(__thiscall*)(void*, void*);
+    using Find = void*(__cdecl*)(uint32_t, int, int);
+    if (!entry) {
+        auto* unit = *reinterpret_cast<uint8_t**>(soldier + 0x24);
+        const int slot = unit ? *reinterpret_cast<int8_t*>(unit + 0x1C7) : -1;
+        if (slot >= 0 && slot <= 3) {
+            const int uniform = *reinterpret_cast<int*>(0x60ED1C);
+            entry = reinterpret_cast<Find>(kFindSkin)(*reinterpret_cast<uint32_t*>(unit + 0x1C8), uniform, slot);
+            if (!entry) entry = *reinterpret_cast<void**>(soldier + 0x2A68);
+            dslog::Write("Loadout: the save's skin for squad slot %d isn't loaded (mod switched off?) - %s", slot,
+                         entry ? reinterpret_cast<const char*>(entry) + 4 : "none");
+        }
+    }
+    reinterpret_cast<Apply>(kApplySkin)(soldier, entry);
+}
 }  // namespace
 
 void ApplySaveKits() {
     static bool hooked = false;
     if (hooked) return;
     hooked = true;
-    bool ok = patch::HookCall(kLoadSite, reinterpret_cast<const void*>(&LoadGameHook), kLoadGame) &&
-              patch::HookCall(kRestoreSite, reinterpret_cast<const void*>(&RestoreSaveHook), kRestoreSave);
-    for (uint32_t site : kSaveSites)
-        ok = patch::HookCall(site, reinterpret_cast<const void*>(&SaveGameHook), kSaveGame) && ok;
+    // (The save / load themselves: the game layer's hooks + co-save, pse/games/ds1/ds1_events.cpp.)
+    const bool ok = patch::HookCall(kRestoreSite, reinterpret_cast<const void*>(&RestoreSaveHook), kRestoreSave) &&
+                    patch::HookCall(kRestoreSkinSite, reinterpret_cast<const void*>(&RestoreSkin), kApplySkin);
     dslog::Write("Loadout: save kit hooks %s", ok ? "installed" : "FAILED");
+    // Co-save chunks (pse.serialization): this plugin's kits, the gear's and the vehicle swaps'.
+    Ser()->SetCallbacks(pse_host::Find("dsfix.loadout"), &KitsSave, &KitsLoad, &KitsRevert, nullptr);
+    features::GearCosaveInit();
+    features::VehicleCosaveInit();
 }
 
 void ApplyRuntimeSpawn() {

@@ -85,17 +85,15 @@ float __stdcall ScaledFontLineHeight(const void* font) {
     return h;
 }
 
-// FUN_004570d0 -> ScaledFontLineHeight (on) or its original first bytes back (off).
+// FUN_004570d0 -> ScaledFontLineHeight (on: an entry hook that replaces it) or the original back (off).
 void ApplyMenuTextCentring(bool on) {
-    uint8_t jump[5] = {0xE9};
-    const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&ScaledFontLineHeight) - (kFontLineHeight + 5));
-    std::memcpy(jump + 1, &rel, 4);
-    if (patch::Matches(kFontLineHeight, on ? jump : kFontLineHeightOrig, 5)) return;
-    if (!patch::Matches(kFontLineHeight, on ? kFontLineHeightOrig : jump, 5)) {
-        dslog::Write("[fail] HUD menu text centring: unexpected bytes at 0x%08X - not applied", kFontLineHeight);
+    const void* fn = reinterpret_cast<const void*>(&ScaledFontLineHeight);
+    if (!on) {
+        patch::UnhookFunction(kFontLineHeight, fn);
         return;
     }
-    patch::Write(kFontLineHeight, on ? jump : kFontLineHeightOrig, 5);
+    if (!patch::HookFunction(kFontLineHeight, fn, nullptr, kFontLineHeightOrig, sizeof kFontLineHeightOrig))
+        dslog::Write("[fail] HUD menu text centring: unexpected bytes at 0x%08X - not applied", kFontLineHeight);
 }
 
 // Front-end prompt line (FUN_0047a4a0, every menu incl. the pause menu): select prompt left-aligned, back prompt
@@ -147,13 +145,14 @@ void ApplyBarPad(bool on) {
     const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&BarPadStub) - (kBarPadSite + 5));
     std::memcpy(code + 1, &rel, 4);
     code[5] = 0xEB, code[6] = 0x19;  // jmp 0x486DE6
-    if (patch::Matches(kBarPadSite, on ? code : kBarPadOrig, 7)) return;
-    if (!patch::Matches(kBarPadSite, on ? kBarPadOrig : code, on ? sizeof kBarPadOrig : 7)) {
-        dslog::Write("[fail] HUD tutorial bar padding: unexpected bytes at 0x%08X", kBarPadSite);
-        return;
+    // One byte group (the call, the short jump and the nops): applied / reverted by the broker.
+    const BytePatch group[] = {{DS_PATCH_NAME("tutorial bar padding"), kBarPadSite, kBarPadOrig, code, sizeof code, false}};
+    if (on) {
+        if (!patch::ApplyGroup("HUD tutorial bar padding", group))
+            dslog::Write("[fail] HUD tutorial bar padding: unexpected bytes at 0x%08X", kBarPadSite);
+    } else {
+        patch::RevertGroup("HUD tutorial bar padding", group);
     }
-    if (on) patch::Write(kBarPadSite, code, sizeof code);
-    else patch::Write(kBarPadSite, kBarPadOrig, sizeof kBarPadOrig);
 }
 
 // Network screen text fields (MULTIPLAYER -> HOST SESSION: SESSION NAME 0x45E9F7, the second field 0x45EA6C): the list
@@ -191,16 +190,11 @@ const FaddSite kFieldPads[] = {{0x45E9F7, 0x5D90AC, reinterpret_cast<const void*
 
 void ApplyFieldPads(bool on) {
     for (const FaddSite& f : kFieldPads) {
-        uint8_t orig[6] = {0xD8, 0x05}, call[6] = {0xE8, 0, 0, 0, 0, 0x90};
+        uint8_t orig[6] = {0xD8, 0x05};  // fadd dword [constant] -> call stub; nop (a call@ code group)
         std::memcpy(orig + 2, &f.constant, 4);
-        const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(f.stub) - (f.site + 5));
-        std::memcpy(call + 1, &rel, 4);
-        if (patch::Matches(f.site, on ? call : orig, 6)) continue;
-        if (!patch::Matches(f.site, on ? orig : call, 6)) {
+        if (!on) patch::RevertCode(f.site);
+        else if (!patch::WriteCall(f.site, f.stub, sizeof orig, orig))
             dslog::Write("[fail] HUD text field width: unexpected bytes at 0x%08X", f.site);
-            continue;
-        }
-        patch::Write(f.site, on ? call : orig, 6);
     }
 }
 
@@ -312,16 +306,9 @@ void ApplyLayoutOffsets(bool on) {
     for (size_t i = 0; i < kOffsetSiteCount; ++i) {
         const OffsetSite& s = kOffsetSites[i];
         const size_t len = s.end - s.site;
-        if (on) {
-            uint8_t code[32];
-            std::memset(code, 0x90, len);
-            code[0] = 0xE9;
-            const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(g_offsetStubs + 64 * i) - (s.site + 5));
-            std::memcpy(code + 1, &rel, 4);
-            patch::Write(s.site, code, len);
-        } else {
-            patch::Write(s.site, g_offsetOrig[i], len);
-        }
+        // jmp stub over the span (the rest nop): a jmp@ code group, taken back by the broker when off.
+        if (on) patch::WriteJump(s.site, g_offsetStubs + 64 * i, len, g_offsetOrig[i]);
+        else patch::RevertCode(s.site);
     }
     if (on) dslog::Write("HUD layout offsets: %u sites scale with the HUD", static_cast<unsigned>(kOffsetSiteCount));
 }

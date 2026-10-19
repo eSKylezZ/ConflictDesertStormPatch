@@ -9,7 +9,7 @@
 // lookup (entry jump) answers kIconBase + n for those. The sheet's record / UV arrays are copied into larger ones (game
 // allocator, like the font glyphs in overlay.cpp) where our images are the base weapon's picture record (page, draw
 // offset) sized to the icon file, with UVs over the whole icon; the page texture bind inside the image draw (0x53CC9B,
-// fontsharp.cpp's hook) swaps in the icon's texture. The game draws it like its own: tint, fades, HUD scale, split views.
+// first subscriber of that pse.hooks chain, features.h kGlyphBind*) swaps in the icon's texture. The game draws it like its own: tint, fades, HUD scale, split views.
 #include <windows.h>
 
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include "features/overlay.h"
 
 namespace {
-constexpr uint32_t kIconLookup = 0x4966C0, kIconLookupCont = 0x4966C6;
+constexpr uint32_t kIconLookup = 0x4966C0;
 constexpr uint8_t kIconLookupEntry[] = {0x8B, 0x44, 0x24, 0x04, 0x56, 0x57};  // mov eax, [esp+4]; push esi; push edi
 constexpr uint32_t kHudSheet = 0x60EE18;   // GWInt.img
 constexpr uint32_t kAllocArray = 0x4B8450;  // cdecl (size, tag): the sheet loader's allocator
@@ -40,7 +40,7 @@ struct Icon {
 std::vector<Icon> g_icons;
 
 using LookupFn = uint32_t(__cdecl*)(const char*);
-LookupFn g_lookup = nullptr;  // the game's lookup (trampoline)
+LookupFn g_lookup = nullptr;  // the game's lookup (entry hook: broker trampoline / next subscriber)
 
 uint8_t* g_sheet = nullptr;    // the sheet our images were added to
 uint8_t* g_records = nullptr;  // our record array, to notice the sheet being reloaded
@@ -51,16 +51,6 @@ uint32_t __cdecl IconLookup(const char* name) {
         if (n >= 0 && n < static_cast<int>(g_icons.size())) return kIconBase + n;
     }
     return g_lookup(name);
-}
-
-void* Trampoline(uint32_t entry, size_t len, uint32_t cont) {
-    auto* t = static_cast<uint8_t*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!t) return nullptr;
-    memcpy(t, reinterpret_cast<const void*>(entry), len);
-    t[len] = 0xE9;
-    const int32_t rel = static_cast<int32_t>(cont - (reinterpret_cast<uint32_t>(t) + len + 5));
-    memcpy(t + len + 1, &rel, 4);
-    return t;
 }
 
 // Adds our images to the HUD sheet (again if the game reloaded it).
@@ -128,11 +118,22 @@ int features::AddWeaponIcon(const std::string& path, const std::string& baseIcon
     return static_cast<int>(g_icons.size()) - 1;
 }
 
-void* features::WeaponIconTexture(const void* sheet, int image) {
+namespace {
+void* IconTexture(const void* sheet, int image) {
     if (!g_sheet || sheet != g_sheet || image < static_cast<int>(kIconBase)) return nullptr;
     const size_t n = static_cast<size_t>(image) - kIconBase;
     return n < g_icons.size() ? g_icons[n].texture : nullptr;
 }
+
+// First subscriber of the image draw's texture bind 0x53CC9B (features.h kGlyphBindWeaponIcons): one of our images
+// binds the icon's texture instead of the page's; the later subscribers leave it alone (it is none of their pages).
+using SetTextureFn = void(__thiscall*)(void*, DWORD, void*);
+SetTextureFn g_bindNext = nullptr;
+void __fastcall IconBind(void* renderer, void* /*edx*/, DWORD stage, void* tex) {
+    if (void* icon = IconTexture(overlay::DrawingSheet(), overlay::DrawingImage())) tex = icon;
+    g_bindNext(renderer, stage, tex);
+}
+}  // namespace
 
 // Hot reload: the icons are named again by the .weapon files; our images are added to the sheet again.
 void features::ResetWeaponIcons() {
@@ -148,14 +149,24 @@ void features::OnFrameWeaponIcons() {
 
 void features::ApplyWeaponIcons() {
     if (g_lookup) return;  // installed even without icons: a mod switched on later can bring some
+    if (!features::ModsFolderEnabled()) {   // FeatMods off: no .weapon files, nothing to picture
+        static bool logged = false;
+        if (!logged) dslog::Write("[off]  Weapon icons: off (FeatMods)"), logged = true;
+        return;
+    }
     if (!patch::Matches(kIconLookup, kIconLookupEntry, sizeof kIconLookupEntry) || !overlay::Install()) {
         dslog::Write("[fail] Weapon icons: picture lookup / image draw not recognised - mod weapons keep their base picture");
         return;
     }
-    g_lookup = reinterpret_cast<LookupFn>(Trampoline(kIconLookup, sizeof kIconLookupEntry, kIconLookupCont));
-    if (!g_lookup || !patch::WriteJump(kIconLookup, reinterpret_cast<const void*>(&IconLookup))) {
+    if (!patch::HookFunction(kIconLookup, reinterpret_cast<const void*>(&IconLookup), reinterpret_cast<void**>(&g_lookup),
+                             kIconLookupEntry, sizeof kIconLookupEntry)) {
         g_lookup = nullptr;
         return;
     }
-    if (!g_icons.empty()) dslog::Write("Weapon icons: %u mod weapon picture(s)", static_cast<unsigned>(g_icons.size()));
+    if (!patch::SubscribeCall(features::kGlyphBindSite, reinterpret_cast<const void*>(&IconBind),
+                              features::kGlyphBindTarget, features::kGlyphBindWeaponIcons,
+                              reinterpret_cast<void**>(&g_bindNext)))
+        dslog::Write("[fail] Weapon icons: image texture bind 0x%08X not hooked - mod weapons show the page",
+                     features::kGlyphBindSite);
+    dslog::Write("[ok]   Weapon icons: %u mod weapon picture(s)", static_cast<unsigned>(g_icons.size()));
 }

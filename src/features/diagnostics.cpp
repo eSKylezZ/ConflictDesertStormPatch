@@ -33,6 +33,7 @@
 #include "features/features.h"
 #include "features/framerec.h"
 #include "features/overlay.h"
+#include "generated/patch_tables.h"
 
 namespace {
 // ---- game messages ----
@@ -105,6 +106,21 @@ void Box(HWND wnd, const char* caption, UINT type, const char* fmt, va_list args
     }
     if (!skip) MessageBoxA(wnd, text, caption, type);
 }
+void BoxText(HWND wnd, const char* caption, UINT type, const char* fmt, ...) {
+    va_list a;
+    va_start(a, fmt);
+    Box(wnd, caption, type, fmt, a);
+    va_end(a);
+}
+// The animation loader FUN_00448d20 calls MessageBoxA itself ("Attempt to load anim twice!" + the .prs name, two
+// sites) instead of the game's error box, so Dev\NoErrorBoxes didn't cover it. Same log + skip rules as the rest.
+int WINAPI AnimMessageBox(HWND wnd, const char* text, const char* caption, UINT type) {
+    BoxText(wnd, caption ? caption : "Error", type, "%s", text ? text : "");
+    return IDOK;
+}
+constexpr uint32_t kAnimBoxCalls[] = {0x448DBC, 0x448E5A};   // call [MessageBoxA] (FF 15 0x5D82D0)
+constexpr uint32_t kIatMessageBoxA = 0x5D82D0;
+
 // FUN_004b99d0(fmt, ...): the game's information box (MB_ICONINFORMATION, caption [0x60EE48]) - 10 callers.
 void __cdecl InfoBox(const char* fmt, ...) {
     va_list a;
@@ -282,6 +298,20 @@ void Draw(int screenH, bool full) {
     const int W = r ? Read<int>(uintptr_t(r) + 0x40688) : 0, H = r ? Read<int>(uintptr_t(r) + 0x4068C) : 0;
     const bool frontEnd = _strnicmp(level, "FrontEnd", 8) == 0 || !level[0];
     line(RGB(200, 200, 200), "%s  %dx%d  %s", level[0] ? level : "-", W, H, frontEnd ? "menus" : "");
+
+    // memory: address space (2 GB, or 4 GB with the patcher's flag), textures, the game's Global Heap
+    const features::MemoryStats m = features::GetMemoryStats();
+    const auto mb = [](uint64_t b) { return static_cast<unsigned>((b + (1 << 19)) >> 20); };
+    const double usedPart = m.addressTotal ? double(m.addressUsed) / double(m.addressTotal) : 0;
+    const COLORREF memColour = usedPart > 0.9 ? RGB(255, 70, 60) : usedPart > 0.75 ? RGB(255, 200, 60) : RGB(200, 200, 200);
+    line(memColour, "Memory   %u / %u MB%s  free block %u  private %u MB", mb(m.addressUsed), mb(m.addressTotal),
+         m.laa ? "" : " (no 4 GB patch)", mb(m.largestFree), mb(m.privateBytes));
+    line(RGB(200, 200, 200), "Textures %u  %u MB (managed %u, video %u, sys %u)  D3D free %u MB", m.textures,
+         mb(m.textureBytesDefault + m.textureBytesManaged + m.textureBytesSystem), mb(m.textureBytesManaged),
+         mb(m.textureBytesDefault), mb(m.textureBytesSystem), mb(m.d3dFree));
+    line(m.heapFails ? RGB(255, 70, 60) : RGB(200, 200, 200), "Heap     %u / %u KB  peak %u KB%s%s", m.heapUsed / 1024,
+         m.heapSize / 1024, m.heapPeak / 1024, m.heapOurs ? "  (enlarged for mods)" : "",
+         m.heapFails ? "  FULL - see the mod report" : "");
     if (!frontEnd) {
         const int players = std::max(1, features::SplitScreenPlayers());
         for (int p = 0; p < players && p < 4; ++p) {
@@ -314,6 +344,81 @@ void Draw(int screenH, bool full) {
     DeleteObject(bmp);
     DeleteDC(dc);
 }
+#ifndef DS_DIST
+// ---- crash logger (dev builds) ----
+// The game's own top-level handler turns an access violation into ExitProcess(0xC0000005) - the crash dump Windows
+// writes then shows only the exit. A first-chance handler logs the fault itself (instruction and stack as
+// module+offset, address, registers) and writes DesertStormFix-crash.dmp (full memory) for the first one.
+void CrashWhere(uint32_t a, char* out, size_t n) {
+    HMODULE m = nullptr;
+    char path[MAX_PATH] = "?";
+    if (a && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(a)), &m) && m) {
+        GetModuleFileNameA(m, path, MAX_PATH);
+        const char* base = strrchr(path, '\\');
+        snprintf(out, n, "%s+%X", base ? base + 1 : path, a - static_cast<uint32_t>(reinterpret_cast<uintptr_t>(m)));
+    } else {
+        snprintf(out, n, "%08X", a);
+    }
+}
+
+bool CrashInCode(uint32_t a) {
+    MEMORY_BASIC_INFORMATION mi;
+    if (a < 0x10000 || !VirtualQuery(reinterpret_cast<void*>(static_cast<uintptr_t>(a)), &mi, sizeof mi)) return false;
+    return mi.State == MEM_COMMIT && mi.Type == MEM_IMAGE &&
+           (mi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE));
+}
+
+LONG CALLBACK CrashLogger(EXCEPTION_POINTERS* e) {
+    static volatile LONG logged = 0;
+    const DWORD code = e->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+        code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_PRIV_INSTRUCTION && code != 0xC0000374 /* heap corruption */)
+        return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedIncrement(&logged) > 8) return EXCEPTION_CONTINUE_SEARCH;
+    const CONTEXT* c = e->ContextRecord;
+    char w[96];
+    CrashWhere(c->Eip, w, sizeof w);
+    const ULONG_PTR* info = e->ExceptionRecord->ExceptionInformation;
+    if (code == EXCEPTION_ACCESS_VIOLATION)
+        dslog::Write("[crash] access violation %s address %08lX at %s (thread %lu)", info[0] == 1 ? "writing" : info[0] == 8 ? "executing" : "reading",
+                     static_cast<unsigned long>(info[1]), w, GetCurrentThreadId());
+    else
+        dslog::Write("[crash] exception 0x%08lX at %s (thread %lu)", code, w, GetCurrentThreadId());
+    dslog::Write("  eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX", c->Eax, c->Ebx, c->Ecx,
+                 c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+    const uint32_t* sp = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(c->Esp));
+    for (int i = 0, found = 0; i < 4096 && found < 24; ++i) {
+        uint32_t v;
+        __try { v = sp[i]; } __except (EXCEPTION_EXECUTE_HANDLER) { break; }
+        if (!CrashInCode(v)) continue;
+        CrashWhere(v, w, sizeof w);
+        dslog::Write("  stack +%03X %s", i * 4, w);
+        ++found;
+    }
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        using DumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, int, void*, void*, void*);
+        auto dump = reinterpret_cast<DumpFn>(GetProcAddress(LoadLibraryA("dbghelp.dll"), "MiniDumpWriteDump"));
+        char path[MAX_PATH];
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        if (char* slash = strrchr(path, '\\')) strcpy(slash + 1, "DesertStormFix-crash.dmp");
+        HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (dump && f != INVALID_HANDLE_VALUE) {
+            struct {
+                DWORD thread;
+                EXCEPTION_POINTERS* pointers;
+                BOOL client;
+            } x{GetCurrentThreadId(), e, FALSE};
+            dump(GetCurrentProcess(), GetCurrentProcessId(), f, 0x2 | 0x1000, &x, nullptr, nullptr);
+            CloseHandle(f);
+            dslog::Write("  dump written to %s", path);
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;  // the game / our own __try blocks handle it as before
+}
+#endif
 }  // namespace
 
 void features::ApplyDiagnostics() {
@@ -322,20 +427,31 @@ void features::ApplyDiagnostics() {
     static bool hooked = false;
     if (hooked) return;
     hooked = true;
+#ifndef DS_DIST
+    AddVectoredExceptionHandler(0, CrashLogger);  // last in line: watchpoint handlers see their single steps first
+#endif
+    // the scene loader's missing-parent message names the object (patch_defs SCENE_MESSAGES)
+    if (!patch::ApplyGroup("Scene loader: missing-parent message", gen::kSceneMessages))
+        dslog::Write("[fail] Scene loader: missing-parent message left as it was");
     // Error / warning boxes in every build: the same boxes, plus the log and the loadout exception above.
     static const uint8_t boxEntry[] = {0x8B, 0x4C, 0x24, 0x04, 0x8D, 0x44, 0x24, 0x08};
     static const uint8_t wndEntry[] = {0x8B, 0x4C, 0x24, 0x08, 0x8D, 0x44, 0x24, 0x0C};
+    // Entry hooks replacing the game's functions (they never run the originals).
+    const auto replace = [](uint32_t entry, const void* fn, const uint8_t* prologue, size_t len) {
+        return patch::HookFunction(entry, fn, nullptr, prologue, len);
+    };
     const bool boxes = patch::Matches(kErrorBox, boxEntry, sizeof boxEntry) &&
                        patch::Matches(kErrorBoxWnd, wndEntry, sizeof wndEntry) &&
                        patch::Matches(kWarningBoxWnd, wndEntry, sizeof wndEntry) &&
-                       patch::WriteJump(kErrorBox, reinterpret_cast<const void*>(&ErrorBox)) &&
-                       patch::WriteJump(kErrorBoxWnd, reinterpret_cast<const void*>(&ErrorBoxWnd)) &&
-                       patch::WriteJump(kWarningBoxWnd, reinterpret_cast<const void*>(&WarningBoxWnd));
+                       replace(kErrorBox, reinterpret_cast<const void*>(&ErrorBox), boxEntry, sizeof boxEntry) &&
+                       replace(kErrorBoxWnd, reinterpret_cast<const void*>(&ErrorBoxWnd), wndEntry, sizeof wndEntry) &&
+                       replace(kWarningBoxWnd, reinterpret_cast<const void*>(&WarningBoxWnd), wndEntry, sizeof wndEntry);
     if (patch::Matches(kInfoBox, boxEntry, sizeof boxEntry))
-        patch::WriteJump(kInfoBox, reinterpret_cast<const void*>(&InfoBox));
+        replace(kInfoBox, reinterpret_cast<const void*>(&InfoBox), boxEntry, sizeof boxEntry);
+    for (uint32_t site : kAnimBoxCalls)
+        patch::HookIndirectCall(site, reinterpret_cast<const void*>(&AnimMessageBox), kIatMessageBoxA);
     static const uint8_t openEntry[] = {0x8B, 0x44, 0x24, 0x08, 0x8B, 0x0D, 0x30, 0xC5, 0x63, 0x00};
-    const bool files = patch::Matches(kOpenFile, openEntry, sizeof openEntry) &&
-                       patch::WriteJump(kOpenFile, reinterpret_cast<const void*>(&GameOpenFile));
+    const bool files = replace(kOpenFile, reinterpret_cast<const void*>(&GameOpenFile), openEntry, sizeof openEntry);
     framerec::ApplyHooks();
 #ifdef DS_DIST
     (void)boxes, (void)files;

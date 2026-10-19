@@ -8,6 +8,8 @@
 //   list item = FUN_004e6f80(list block+0x3fc, list+0x30); item +4 type (6 = weapon), +0x24 definition:
 //   +0x80 name hash, +0x280 available fire modes (1 single, 2 burst, 4 automatic, 0x100 grenade launcher;
 //   FUN_004a4fb0 only switches to modes in that mask). "Change Fire Mode" is the game's own text (FIREMODE).
+// Optional (settings featTooltips), live: off = the game's text as it is. The weapon-name fix (0x454558) is a
+// split-screen fix and stays.
 #include <windows.h>
 
 #include <cstdio>
@@ -15,6 +17,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -32,6 +35,13 @@ int Bits(uint32_t v) {
 
 void __stdcall SetInventoryName(void* bar, const char* text, const uint8_t* block) {
     using Set = void(__thiscall*)(void*, const char*);
+    static int logged = -1;
+    const bool on = settings::Get().featTooltips;
+    if (logged != static_cast<int>(on)) {
+        logged = on;
+        dslog::Write(on ? "[ok]   Inventory tooltips" : "[off]  Inventory tooltips: the game's item names only");
+    }
+    if (!on) return reinterpret_cast<Set>(kInfoBarSet)(bar, text);
     const char* hint = nullptr;
     char own[64] = "";
     const uint8_t* list = block ? *reinterpret_cast<const uint8_t* const*>(block + 0x3FC) : nullptr;
@@ -94,5 +104,9 @@ void features::ApplyTooltips() {
     done = patch::HookCall(kInventoryNameSite, reinterpret_cast<const void*>(&InventoryNameStub), kInfoBarSet);
     static const uint8_t onlyMode[] = {0x75, 0x43}, nameAndMode[] = {0x90, 0x90};  // 0x454558: jne (players != 1)
     if (patch::Matches(0x454558, onlyMode, 2)) patch::Write(0x454558, nameAndMode, 2);
-    dslog::Write(done ? "[ok]   Inventory tooltips" : "[fail] Inventory tooltips: unexpected code at 0x%08X", kInventoryNameSite);
+    if (done)
+        dslog::Write(settings::Get().featTooltips ? "[ok]   Inventory tooltips (hook installed)"
+                                                  : "[off]  Inventory tooltips (hook installed, passes the game's text through)");
+    else
+        dslog::Write("[fail] Inventory tooltips: unexpected code at 0x%08X", kInventoryNameSite);
 }

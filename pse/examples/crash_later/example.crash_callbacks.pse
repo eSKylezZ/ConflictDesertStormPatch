@@ -1,0 +1,2 @@
+# Test plugin (pse/tests/test_plugins.cpp): loads, then faults where PSE_CRASH_AT says (setting / save / load / revert / message / nested / unload). Never install it in a game.
+name = example.crash_callbacks

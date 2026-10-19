@@ -9,7 +9,8 @@
 // +0x50 set title). What we add:
 //   main menu   list capacity 4 -> 5 (0x4150BD) and five item objects (0x4150CF); its set-up (vtable +0x0c) is
 //               wrapped: CO-OP (id 0x401) is built on the fifth item and the item pool is rotated so it is listed
-//               second (the list shows items in pool order); the selection handler (0x4152F8) sends it to our state
+//               second (the list shows items in pool order); the selection handler (0x4152F8) sends it to the CO-OP
+//               screen (state 0x48, online.cpp: SPLIT SCREEN -> 0x3E / ONLINE), where the join screen's Back returns
 //   state 0x3E  FUN_00480930 returns our screen for it: a main-menu-class object with its own vtable (create / set up
 //               / update ours, back prompt + back handling from the MULTIPLAYER screen)
 // Joining: every frame on the screen, the game's own DirectInput joysticks (0x754BC8[], count 0x754BE8 - the devices
@@ -50,13 +51,14 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
 
 namespace {
-constexpr uint32_t kStateMainMenu = 1, kStateCoop = 0x3E;
+constexpr uint32_t kStateMainMenu = 1, kStateCoop = 0x3E, kStateCoopMenu = 0x48;
 constexpr uint32_t kSetState = 0x47EF20;           // cdecl (state)
-constexpr uint32_t kScreenForState = 0x480930, kScreenForStateCont = 0x480935;
+constexpr uint32_t kScreenForState = 0x480930;
 constexpr uint32_t kMainMenuScreen = 0x617A00;     // state 1's screen object
 constexpr uint32_t kMainMenuCtor = 0x415020, kMainMenuVtable = 0x5D86B8, kMainMenuSetup = 0x415120;
 constexpr uint32_t kMpVtable = 0x5D90C0;           // MULTIPLAYER screen (back handling / "Esc: Back" prompt)
@@ -142,23 +144,17 @@ struct Session {
 } g_session;
 bool g_preselected = false;  // co-op mission list: first open mission highlighted
 
-// --- co-op progress (registry, next to the Enhancements settings) ---------------------------------------------------
-
-constexpr char kProgressKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
+// --- co-op progress (settings key: CoopProgress, bit per mission) --------------------------------------------------
 
 uint32_t LoadProgress() {
-    DWORD v = 0, size = sizeof v;
-    RegGetValueA(HKEY_LOCAL_MACHINE, kProgressKey, "CoopProgress", RRF_RT_REG_DWORD, nullptr, &v, &size);
+    uint32_t v = 0;
+    settings::ReadDword(false, "CoopProgress", v);
     return v;
 }
 
 void MarkFinished(int mission) {
     const uint32_t v = LoadProgress() | (1u << mission);
-    HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kProgressKey, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
-        RegSetValueExA(key, "CoopProgress", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof v);
-        RegCloseKey(key);
-    }
+    settings::WriteDword(false, "CoopProgress", v);
     dslog::Write("Co-op: mission %d finished (progress 0x%03X)", mission + 1, v);
 }
 
@@ -363,6 +359,28 @@ void EndSession() {
     g_session = Session{};
     *reinterpret_cast<uint32_t*>(kSplitFlag) = 0;
 }
+}  // namespace
+
+// Online co-op (online.cpp / lockstep.cpp): the same co-op session on every PC - n players, split screen, no local
+// devices (lockstep feeds each player's input). The host then goes on like the join screen's Begin: the single-player
+// menu as CO-OPERATIVE CAMPAIGN (campaign -> difficulty -> co-op mission list); the joiners wait for the host's level.
+void features::BeginOnlineSession(int players, bool host) {
+    g_session = Session{};
+    g_session.players = players;
+    *reinterpret_cast<uint32_t*>(kSplitFlag) = 1;
+    *reinterpret_cast<uint32_t*>(kSplitPlayers) = static_cast<uint32_t>(players);
+    *reinterpret_cast<uint32_t*>(kSplitLoadedGame) = 0;
+    g_versus = false;
+    dslog::Write("Co-op: online session with %d players (%s)", players, host ? "host" : "joiner");
+    if (!host) return;
+    strcpy(*reinterpret_cast<char**>(kNextLevel), *reinterpret_cast<char**>(kCampaign) + 0x37);
+    SetState(2);
+}
+void features::EndOnlineSession() {
+    if (g_session.players) EndSession();
+}
+
+namespace {
 
 void Handle(int device, uint32_t actions, PadType type, const std::string& name) {
     const uint32_t pressed = actions & ~g_prevActions[device];
@@ -371,10 +389,10 @@ void Handle(int device, uint32_t actions, PadType type, const std::string& name)
     Slot* s = SlotOf(device);
     if (!s) {
         if (pressed & kJoin) Join(device, type, name);
-        else if (pressed & (kLeave | kBack)) g_versus ? features::VersusJoinBack() : SetState(kStateMainMenu);  // back
+        else if (pressed & (kLeave | kBack)) g_versus ? features::VersusJoinBack() : SetState(features::CoopMenuState());  // back
         return;
     }
-    if (pressed & kBack) return g_versus ? features::VersusJoinBack() : SetState(kStateMainMenu);
+    if (pressed & kBack) return g_versus ? features::VersusJoinBack() : SetState(features::CoopMenuState());
     if (pressed & kLeave) return Leave(device);
     if (g_versus && (pressed & kCycle) && features::VersusTeams()) {  // versus: R1 / R2 (RB / RT, Tab) - next field
         s->field ^= 1;
@@ -468,25 +486,36 @@ void SetState(uint32_t state) { reinterpret_cast<void(__cdecl*)(uint32_t)>(kSetS
 
 // Main menu set-up: the original (SINGLE PLAYER, MULTIPLAYER, OPTIONS, QUIT on pool items 0-3), then CO-OP and MODS on
 // items 4-5, MULTIPLAYER renamed VERSUS, and the pool reordered to SINGLE PLAYER, CO-OP, VERSUS, MODS, OPTIONS, QUIT.
+// Optional features (start-up settings): FeatVersus off keeps the game's MULTIPLAYER (text, state 3), FeatMods off
+// leaves MODS out (its item object stays unused at the end of the pool).
 // The item objects are interchangeable, so the next set-up (every time the menu is entered) simply fills the
 // reordered pool again.
+bool g_versusItem = false;  // item 0x3FE opens VERSUS (state 0x42) instead of the game's MULTIPLAYER (state 3)
+void* g_mainMenuSetupNext = reinterpret_cast<void*>(kMainMenuSetup);  // pointer hook chain (patch::HookSlot)
+
 void __fastcall MainMenuSetup(void* screen, void*) {
-    reinterpret_cast<void(__thiscall*)(void*)>(kMainMenuSetup)(screen);
+    reinterpret_cast<void(__thiscall*)(void*)>(g_mainMenuSetupNext)(screen);
     void* list = At<void*>(screen, 8);
     void** items = At<void**>(list, 0x2C);
     void* coop = items[4];
     void* mods = items[5];
+    const bool modsItem = features::ModsFolderEnabled();
+    g_versusItem = features::VersusEnabled();
     SetItem(coop, kCoopItemId, kHashCoop);
-    SetItem(mods, kModsItemId, features::ModsMenuItemText());  // MODS (modsmenu.cpp)
     AddToList(list, coop);
-    AddToList(list, mods);
-    SetItem(items[1], 0x3FE, features::VersusItemText());  // MULTIPLAYER -> VERSUS (versus.cpp)
-    // Pool order = list order: SINGLE PLAYER, CO-OP, VERSUS, MODS, OPTIONS, QUIT.
-    void* const order[6] = {items[0], coop, items[1], mods, items[2], items[3]};
+    if (g_versusItem) SetItem(items[1], 0x3FE, features::VersusItemText());  // MULTIPLAYER -> VERSUS (versus.cpp)
+    if (modsItem) {
+        SetItem(mods, kModsItemId, features::ModsMenuItemText());  // MODS (modsmenu.cpp)
+        AddToList(list, mods);
+    }
+    // Pool order = list order: SINGLE PLAYER, CO-OP, VERSUS, MODS, OPTIONS, QUIT (without MODS: it goes last, unlisted).
+    void* const order[6] = {items[0], coop, items[1], modsItem ? mods : items[2], modsItem ? items[2] : items[3],
+                            modsItem ? items[3] : mods};
     for (int i = 0; i < 6; ++i) items[i] = order[i];
     // The list area was sized for four rows (list +0x38 row pitch, +0x40 area height, +0x42 visible rows).
-    At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) + 2 * At<int16_t>(list, 0x38));
-    At<int16_t>(list, 0x42) = 6;
+    const int rows = modsItem ? 6 : 5;
+    At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) + (rows - 4) * At<int16_t>(list, 0x38));
+    At<int16_t>(list, 0x42) = static_cast<int16_t>(rows);
     // The panel rectangle (screen +0x10..+0x1c) is laid out around the list by vtable +0x50, which the original
     // set-up already called - lay it out again with the same arguments.
     using Layout = void(__thiscall*)(void*, int, int, int, int);
@@ -498,8 +527,11 @@ __declspec(naked) void MenuSelectStub() {
     __asm {
         cmp si, kCoopItemId
         je coop
-        cmp si, 0x3FE               // MULTIPLAYER -> VERSUS (state 0x42, versus.cpp)
-        je versus
+        cmp si, 0x3FE               // MULTIPLAYER -> VERSUS (state 0x42, versus.cpp) - unless FeatVersus is off
+        jne notVersus
+        cmp byte ptr g_versusItem, 0
+        jne versus
+    notVersus:
         cmp si, kModsItemId         // MODS (state 0x43, modsmenu.cpp)
         je mods
         cmp si, 0x3FC
@@ -521,7 +553,7 @@ __declspec(naked) void MenuSelectStub() {
         push kMenuSelectDone
         ret
     coop:
-        push kStateCoop
+        push kStateCoopMenu         // CO-OP screen (online.cpp): SPLIT SCREEN / ONLINE
         mov eax, kSetState
         call eax
         add esp, 4
@@ -652,11 +684,17 @@ void* __cdecl ExtraScreen(uint32_t state) {
     if (state == 0x43) return features::ModsMenuScreen();
     if (state == 0x45) return features::CampaignsScreen();
     if (state == 0x46) return features::DeveloperScreen();  // developer.cpp (CHEATS > DEVELOPER)
+    if (state == 0x47) return features::FixMenuScreen();    // fixmenu.cpp (OPTIONS > DESERTSTORMFIX)
+    if (state == 0x4C) return features::VideoMenuScreen();  // videomenu.cpp (OPTIONS > VIDEO)
+    if (state == 0x4D || state == 0x4E) return features::PluginsMenuScreen(state);  // pluginsmenu.cpp (> PLUGINS)
+    if (void* s = features::OnlineScreen(state)) return s;  // online.cpp (CO-OP > SPLIT SCREEN / ONLINE)
     return features::ControlsScreen(state);
 }
 
-// Front-end state -> screen: ours for kStateCoop, the CONTROLS screens' for 0x3F.., else the original (its first
-// instructions, then the rest).
+// Front-end state -> screen: ours for kStateCoop, the CONTROLS screens' for 0x3F.., else the original (entry hook:
+// the broker's trampoline runs its first instructions, then the rest).
+void* g_screenForStateNext = nullptr;
+
 __declspec(naked) void ScreenForStateStub() {
     __asm {
         mov eax, [esp + 4]
@@ -674,11 +712,8 @@ __declspec(naked) void ScreenForStateStub() {
         jz none
         ret
     none:
-        mov eax, [esp + 4]
     original:
-        dec eax
-        push kScreenForStateCont
-        ret
+        jmp dword ptr [g_screenForStateNext]
     }
 }
 
@@ -713,12 +748,12 @@ bool Install() {
     }
     const uint8_t capacity5[] = {0x6A, 0x06};  // 6 items: + CO-OP, MODS
     const uint8_t count5[] = {0xBF, 0x06, 0x00, 0x00, 0x00};
-    const uint8_t nops[] = {0x90, 0x90};
     return patch::Write(kMenuCapacity, capacity5, sizeof capacity5) && patch::Write(kMenuItemCount, count5, sizeof count5) &&
-           patch::WriteValue(kMainMenuSetupSlot, reinterpret_cast<uint32_t>(&MainMenuSetup)) &&
-           patch::WriteJump(kMenuSelect, reinterpret_cast<const void*>(&MenuSelectStub)) &&
-           patch::Write(kMenuSelect + 5, nops, 2) &&
-           patch::WriteJump(kScreenForState, reinterpret_cast<const void*>(&ScreenForStateStub));
+           patch::HookSlot(kMainMenuSetupSlot, reinterpret_cast<const void*>(&MainMenuSetup), &g_mainMenuSetupNext,
+                           kMainMenuSetup) &&
+           patch::WriteJump(kMenuSelect, reinterpret_cast<const void*>(&MenuSelectStub), sizeof select, select) &&
+           patch::HookFunction(kScreenForState, reinterpret_cast<const void*>(&ScreenForStateStub),
+                               &g_screenForStateNext, lookup, sizeof lookup);
 }
 }  // namespace
 
@@ -735,7 +770,17 @@ constexpr uint32_t kSetUniform = 0x40A320, kNewCampaign1 = 0x4576C0, kNewCampaig
 constexpr uint32_t kCampaignStart = 0x4475B0, kNextLevelSlot = 0x5E7028;
 bool g_difficultyPicked = false;
 
-void __cdecl DifficultyPicked(uint32_t /*state 6*/) {
+constexpr uint32_t kStateUniform = 6;
+
+// FeatUniformSelect (decided here, so a change in the menu counts at once): the game's own flow - SELECT UNIFORM
+// (state 6), whose accept does all this itself (UniformUpdate below sends a co-op session on to the mission list).
+bool UniformSelect() { return settings::Get().featUniformSelect; }
+
+void __cdecl DifficultyPicked(uint32_t state) {
+    if (UniformSelect()) {
+        SetState(state);
+        return;
+    }
     reinterpret_cast<void(__cdecl*)(int)>(kSetUniform)(0);
     const uint32_t players = *reinterpret_cast<uint32_t*>(0x606414);
     if (*reinterpret_cast<uint32_t*>(0x606410) && !*reinterpret_cast<uint32_t*>(0x606424) && players >= 3 && players <= 4)
@@ -750,13 +795,15 @@ void __cdecl DifficultyPicked(uint32_t /*state 6*/) {
 
 using UpdateFn = int(__thiscall*)(void*);
 
+void* g_difficultyUpdateNext = reinterpret_cast<void*>(kDifficultyUpdate);  // pointer hook chain
+
 int __fastcall DifficultyUpdate(void* screen, void*) {
     g_difficultyPicked = false;
-    const int r = reinterpret_cast<UpdateFn>(kDifficultyUpdate)(screen);
+    const int r = reinterpret_cast<UpdateFn>(g_difficultyUpdateNext)(screen);
     return g_difficultyPicked ? 3 : r;
 }
 
-// Uniform screen: in a session its "start the level" (3) opens the mission list instead (no longer reached in play).
+// Uniform screen: in a session its "start the level" (3) opens the mission list instead (reached with FeatUniformSelect).
 UpdateFn g_uniformUpdate = nullptr, g_missionListUpdate = nullptr;
 
 int __fastcall UniformUpdate(void* screen, void*) {
@@ -768,7 +815,8 @@ int __fastcall UniformUpdate(void* screen, void*) {
     return r;
 }
 
-// Mission list: Back goes to the difficulty screen in a session (the game's own target is the CHEATS menu, state 7).
+// Mission list: Back goes to the screen before it in a session - SELECT UNIFORM when it is shown, else DIFFICULTY (the
+// game's own target is the CHEATS menu, state 7).
 int __fastcall MissionListUpdate(void* screen, void*) {
     // First frame of the co-op list: highlight the first mission the group can play (list +0x28 = current item
     // index; the highlighted id +0x30 follows from it).
@@ -787,7 +835,8 @@ int __fastcall MissionListUpdate(void* screen, void*) {
             }
     }
     const int r = g_missionListUpdate(screen);
-    if (g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 7) SetState(kStateDifficulty);
+    if (g_session.players && *reinterpret_cast<uint32_t*>(kFrontEndState) == 7)
+        SetState(UniformSelect() ? kStateUniform : kStateDifficulty);
     return r;
 }
 
@@ -819,13 +868,14 @@ void __cdecl BeforeMissionDraw(int id) {
     At<uint32_t>(list, 0x58) = grey ? 0xFF9A9A9A : g_listColours[1];
 }
 
+void* g_missionDrawNext = reinterpret_cast<void*>(kMissionDrawCb);  // pointer hook chain on the push's imm32
+
 __declspec(naked) void MissionDrawStub() {
     __asm {
         push dword ptr [esp + 4]
         call BeforeMissionDraw
         add esp, 4
-        mov eax, kMissionDrawCb
-        jmp eax
+        jmp dword ptr [g_missionDrawNext]
     }
 }
 
@@ -893,8 +943,10 @@ int __cdecl SaveFilter(const char* path, void* user) {
     return reinterpret_cast<int(__cdecl*)(const char*, void*)>(kSaveListCallback)(path, user);
 }
 
+void* g_spMenuSetupNext = reinterpret_cast<void*>(kSpMenuSetup);  // pointer hook chain
+
 void __fastcall SpMenuSetup(void* screen, void*) {
-    reinterpret_cast<void(__thiscall*)(void*)>(kSpMenuSetup)(screen);
+    reinterpret_cast<void(__thiscall*)(void*)>(g_spMenuSetupNext)(screen);
     if (!g_session.players) {
         features::CampaignsMenuItem(screen);  // CUSTOM CAMPAIGNS (single player only)
         return;
@@ -919,10 +971,12 @@ bool InstallSaves() {
         dslog::Write("[fail] Co-op saves: unexpected bytes - not applied");
         return false;
     }
-    const uint32_t filter = reinterpret_cast<uint32_t>(&SaveFilter);
+    // The two pushes of the list callback: pointer hooks (SaveFilter calls the game's callback itself - it serves both).
+    const void* filter = reinterpret_cast<const void*>(&SaveFilter);
     return patch::HookCall(kSaveNamePrintf, reinterpret_cast<const void*>(&SaveName), kSprintf) &&
-           patch::Write(kLoadListPush + 1, &filter, 4) && patch::Write(kSaveListPush + 1, &filter, 4) &&
-           patch::WriteValue(kSpMenuSetupSlot, reinterpret_cast<uint32_t>(&SpMenuSetup));
+           patch::HookSlot(kLoadListPush + 1, filter, nullptr, kSaveListCallback) &&
+           patch::HookSlot(kSaveListPush + 1, filter, nullptr, kSaveListCallback) &&
+           patch::HookSlot(kSpMenuSetupSlot, reinterpret_cast<const void*>(&SpMenuSetup), &g_spMenuSetupNext, kSpMenuSetup);
 }
 
 bool InstallMissionList() {
@@ -936,14 +990,17 @@ bool InstallMissionList() {
     const uint32_t difficulty = kDifficultyUpdate;
     if (!patch::Matches(kDifficultyUpdateSlot, &difficulty, 4) ||
         !patch::HookCall(kDifficultyNextCall, reinterpret_cast<const void*>(&DifficultyPicked), kSetState) ||
-        !patch::WriteValue(kDifficultyUpdateSlot, reinterpret_cast<uint32_t>(&DifficultyUpdate)))
+        !patch::HookSlot(kDifficultyUpdateSlot, reinterpret_cast<const void*>(&DifficultyUpdate), &g_difficultyUpdateNext,
+                         kDifficultyUpdate))
         dslog::Write("[fail] Co-op: difficulty -> level (no uniform screen) not applied");
-    g_uniformUpdate = reinterpret_cast<UpdateFn>(uniform);
+    g_uniformUpdate = reinterpret_cast<UpdateFn>(uniform);  // set by HookSlot too (the chain's next)
     g_missionListUpdate = reinterpret_cast<UpdateFn>(missionList);
-    const uint32_t stub = reinterpret_cast<uint32_t>(&MissionDrawStub);
-    return patch::WriteValue(kUniformUpdateSlot, reinterpret_cast<uint32_t>(&UniformUpdate)) &&
-           patch::WriteValue(kMissionListUpdateSlot, reinterpret_cast<uint32_t>(&MissionListUpdate)) &&
-           patch::Write(kMissionDrawCbPush + 1, &stub, 4) &&
+    return patch::HookSlot(kUniformUpdateSlot, reinterpret_cast<const void*>(&UniformUpdate),
+                           reinterpret_cast<void**>(&g_uniformUpdate), uniform) &&
+           patch::HookSlot(kMissionListUpdateSlot, reinterpret_cast<const void*>(&MissionListUpdate),
+                           reinterpret_cast<void**>(&g_missionListUpdate), missionList) &&
+           patch::HookSlot(kMissionDrawCbPush + 1, reinterpret_cast<const void*>(&MissionDrawStub), &g_missionDrawNext,
+                           kMissionDrawCb) &&
            patch::HookCall(kMissionIndexCall, reinterpret_cast<const void*>(&MissionIndex), kItemIndex);
 }
 }  // namespace
@@ -1011,6 +1068,8 @@ void features::ApplyCoop() {
     if (g_installed) return;
     g_installed = Install() && InstallMissionList() && InstallSaves();
     if (g_installed) dslog::Write("[ok]   Co-op menu: CO-OP entry + join screen (state 0x%X)", kStateCoop);
+    dslog::Write(UniformSelect() ? "[ok]   Uniform select: DIFFICULTY -> SELECT UNIFORM (live setting)"
+                                 : "[off]  Uniform select: DIFFICULTY starts the level as SAS (live setting)");
 }
 
 void features::OnFrameCoop() {

@@ -10,7 +10,13 @@
 // Screen (vtable 0x5D83D8): the original rows TROOPER LEVEL 0-9 ([0x606364], 0x403110), ENEMY LEVEL = 0 ([0x606360],
 // 0x4030F0) and MISSION LIST (state 8), plus INVULNERABLE (player damage [0x5E640C], setter 0x403050 marks the squad's
 // soldiers), INFINITE HEALTH (ours: the squad's health is topped up), INFINITE AMMO ([0x60635C], 0x403090) and
-// ENEMY AI ([0x5E6414], 0x4030B0 at level start + debug toggle 0x443E40 in a mission). The extra rows are the
+// ENEMY AI ([0x5E6414], 0x4030B0 at level start + debug toggle 0x443E40 in a mission), COMMANDEER ANY VEHICLE
+// (ours, for the session, not in saves): the "vehicle to get into" search FUN_00433ad0 takes only vehicles with
+// +0x284 bit 0x200000 (set by the vehicle set-up 0x437FD1 - in Mission 1 just the tripod MGs); every vehicle has bit
+// 0x100000. The test at 0x433B98 is hooked: with the row on, also ground vehicles (CHLOVehicle vtable 0x5D8A58,
+// type [[unit+0x80]+0x44]+0x24 = 0 wheeled / 1 tracked / 3 / 11 tripod - never 5 jet, 6 missile, 8 animal, 9/10
+// helicopter: "Cannot have crew for flying vehicle") that have seats (+0x2608, count [unit+0x80]+0x40). Plus
+// patch_defs COMMANDEER: no other-team check in the seat finder, every vehicle's physics body / sound bank. The extra rows are the
 // screen's own choice items (0x68 bytes, ctor 0x4E5010) added in create; MISSION LIST is moved to the end after
 // every set-up (and back before the next one - the set-up fills the pool by position).
 //
@@ -22,7 +28,9 @@
 
 #include "../core/log.h"
 #include "../core/patch.h"
+#include "../core/settings.h"
 #include "overlay.h"
+#include "../generated/patch_tables.h"
 
 #include <windows.h>
 
@@ -58,19 +66,66 @@ constexpr uint32_t kSaveInfHealth = 0x100;
 constexpr uint32_t kFrontEndState = 0x617C18, kDispatchMode = 0x60EC8C, kLevelName = 0x606880;
 constexpr uint32_t kJoysticks = 0x754BC8, kPadStates = 0x7541B8, kPadStride = 0x150;
 constexpr uint32_t kObjectManager = 0x63C9A0, kSquadTeam = 0x5F9B94;
-constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 
 // Our rows: id, text (own hashes answered by CheatsText), choice index read / written.
-enum Row { kInvulnerable, kInfHealth, kInfAmmo, kEnemyAiRow, kRows };
+enum Row { kInvulnerable, kInfHealth, kInfAmmo, kEnemyAiRow, kCommandeerRow, kRows };
 constexpr uint16_t kFirstId = 0x810;
 constexpr uint32_t kTextBase = 0xC00C0001;
-const char* const kRowText[kRows + 1] = {"INVULNERABLE", "INFINITE HEALTH", "INFINITE AMMO", "ENEMY AI", "DEVELOPER"};
+const char* const kRowText[kRows + 1] = {"INVULNERABLE", "INFINITE HEALTH", "INFINITE AMMO", "ENEMY AI",
+                                         "COMMANDEER ANY VEHICLE", "DEVELOPER"};
 constexpr uint16_t kDeveloperId = kFirstId + kRows;   // DEVELOPER (developer.cpp, state 0x46)
 constexpr uint32_t kStateDeveloper = 0x46, kPlainDraw = 0x402E60, kPlainCtor = 0x4E4F90;
 
+bool g_enabled = false;      // FeatCheats at start-up: off = the game's own hidden CHEATS screen, nothing of ours
 uint32_t g_unlocked = 0;     // the game's unlock code and Options set-up read this (patched operands)
 bool g_registryUnlocked = false;
 bool g_infHealth = false;
+bool g_commandeer = false;
+constexpr uint32_t kEnterTest = 0x433B98, kEnterCont = 0x433BA8, kEnterSkip = 0x433CB5, kVehicleVtable = 0x5D8A58;
+// test dword ptr [esi+0x284], 0x200000; je 0x433CB5
+const uint8_t kEnterTestBytes[] = {0xF7, 0x86, 0x84, 0x02, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00,
+                                   0x0F, 0x84, 0x0D, 0x01, 0x00, 0x00};
+uint32_t g_enterCont = kEnterCont, g_enterSkip = kEnterSkip;
+
+int __cdecl Commandeerable(const uint8_t* v) {
+    __try {
+        if (*reinterpret_cast<const uint32_t*>(v) != kVehicleVtable) return 0;
+        if (!(*reinterpret_cast<const uint32_t*>(v + 0x284) & 0x100000)) return 0;
+        if (!*reinterpret_cast<void* const*>(v + 0x2608)) return 0;   // no seats
+        const uint8_t* unit = *reinterpret_cast<const uint8_t* const*>(v + 0x24);
+        const uint8_t* def = unit ? *reinterpret_cast<const uint8_t* const*>(unit + 0x80) : nullptr;
+        if (!def || !def[0x40]) return 0;
+        const uint8_t* kind = *reinterpret_cast<const uint8_t* const*>(def + 0x44);
+        const int type = kind ? *reinterpret_cast<const int*>(kind + 0x24) : -1;
+        return type == 0 || type == 1 || type == 3 || type == 11;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+__declspec(naked) void EnterTestStub() {
+    __asm {
+        test dword ptr [esi + 0x284], 0x200000
+        jnz take_it
+        cmp byte ptr [g_commandeer], 0
+        je skip
+        push eax
+        push ecx
+        push edx
+        push esi
+        call Commandeerable
+        add esp, 4
+        test eax, eax
+        pop edx
+        pop ecx
+        pop eax
+        jz skip
+    take_it:
+        jmp dword ptr [g_enterCont]
+    skip:
+        jmp dword ptr [g_enterSkip]
+    }
+}
 DWORD g_noticeUntil = 0;
 void* g_extra[kRows] = {};   // our choice items (pool positions 3.. after create)
 void* g_mission = nullptr;   // MISSION LIST item (pool position 2 as the set-up expects it)
@@ -98,6 +153,7 @@ int RowValue(int row) {
         case kInfHealth: return g_infHealth;
         case kInfAmmo: return Global<int>(kInfAmmoFlag) != 0;
         case kEnemyAiRow: return Global<int>(kEnemyAi) != 0;
+        case kCommandeerRow: return g_commandeer;
     }
     return 0;
 }
@@ -117,6 +173,11 @@ void SetRow(int row, bool on) {
             if (InMission() && Global<void*>(kAiManager) && AiRunning() != on)
                 reinterpret_cast<void(__cdecl*)()>(kToggleAiNow)();
             break;
+        case kCommandeerRow:
+            if (on ? patch::ApplyGroup("Cheats: commandeer enemy vehicles", gen::kCommandeer)
+                   : patch::RevertGroup("Cheats: commandeer enemy vehicles", gen::kCommandeer))
+                g_commandeer = on;
+            break;
     }
     dslog::Write("Cheats: %s %s", kRowText[row], on ? "on" : "off");
 }
@@ -124,12 +185,7 @@ void SetRow(int row, bool on) {
 void SaveUnlocked() {
     if (g_registryUnlocked) return;
     g_registryUnlocked = true;
-    HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
-        const DWORD v = 1;
-        RegSetValueExA(key, "CheatsUnlocked", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof v);
-        RegCloseKey(key);
-    }
+    settings::WriteDword(false, "CheatsUnlocked", 1);
 }
 
 // --- screen -----------------------------------------------------------------------------------------------------------
@@ -288,8 +344,37 @@ void DrawNotice() {
     overlay::DrawLabel(font, text, (w - tw) / 2, static_cast<int>(top + h * 0.0575f), 0xFF80FF80);
 }
 
+#ifndef DS_DIST
+// Dev: with COMMANDEER on, list each level's vehicles once (seats, type, enterable by the filter).
+void LogVehicles() {
+    static char logged[32] = {};
+    const char* level = reinterpret_cast<const char*>(kLevelName);
+    if (!g_commandeer || !InMission() || strncmp(level, logged, sizeof logged - 1) == 0) return;
+    strncpy_s(logged, level, sizeof logged - 1);
+    void* mgr = Global<void*>(kObjectManager);
+    void** table = mgr ? At<void**>(mgr, 0x30) : nullptr;
+    if (!table) return;
+    for (int id = 0; id < 700; ++id) {
+        __try {
+            const uint8_t* v = static_cast<const uint8_t*>(table[id]);
+            if (!v || *reinterpret_cast<const uint32_t*>(v) != kVehicleVtable) continue;
+            const uint8_t* unit = *reinterpret_cast<const uint8_t* const*>(v + 0x24);
+            const uint8_t* def = *reinterpret_cast<const uint8_t* const*>(unit + 0x80);
+            const int type = *reinterpret_cast<const int*>(*reinterpret_cast<const uint8_t* const*>(def + 0x44) + 0x24);
+            dslog::Write("[dev] Cheats: vehicle %d %s type %d seats %d enterable %d (game's own %d)", id,
+                         reinterpret_cast<const char*>(unit + 8), type, def[0x40], Commandeerable(v),
+                         (*reinterpret_cast<const uint32_t*>(v + 0x284) & 0x200000) != 0);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+}
+#endif
+
 void __cdecl Frame() {
     reinterpret_cast<void(__cdecl*)()>(kFrameThunk)();  // input poll + the game's own unlock check
+#ifndef DS_DIST
+    LogVehicles();
+#endif
     if (!g_unlocked && Global<int>(kGameFlag)) g_unlocked = 1;   // start-up option X
     CheckPads();
     static uint32_t seen = g_unlocked;
@@ -299,7 +384,15 @@ void __cdecl Frame() {
     }
     seen = g_unlocked;
     Upkeep();
+    features::OnFramePhoto();
     features::OnFrameFreeCam();   // after the input poll: its pad look adds to this frame's mouse state
+}
+
+// FeatCheats off: the same frame hook for photo mode and its free camera only.
+void __cdecl FrameLite() {
+    reinterpret_cast<void(__cdecl*)()>(kFrameThunk)();
+    features::OnFramePhoto();
+    features::OnFrameFreeCam();
 }
 
 // --- saves ------------------------------------------------------------------------------------------------------------
@@ -310,8 +403,19 @@ int __fastcall WriteHeader(void* self, void*, uint8_t* header) {
     return r;
 }
 
-void __cdecl NoteLoadedHeader(const uint8_t* header) {
-    const uint32_t flags = *reinterpret_cast<const uint32_t*>(header + 0x50);
+// A "<next mission> Start" save (made on the MISSION SUCCESSFUL screen, FUN_004590b0) holds the campaign in state 2
+// (campaign +4, read back by FUN_00458ab0 from header +0x94 + 4 right after this call - state 2 = no world restore). Its
+// state was taken after the mission ended and stopped the AI manager ([[0x60EDA0]+0xC] = 0), so header flag 4 (enemy
+// AI) is always clear and the game set the ENEMY AI setting off on load - which counted as a cheat: cheats unlocked,
+// CheatsActive (the "Cheats " name prefix) and the free camera armed - in 3.0 that flew in the game's own camera mode 3
+// at Mission 5A's start and crashed when the loading bar finished. Such a save now loads with enemy AI on.
+void __cdecl NoteLoadedHeader(const uint8_t* header, uint8_t* saver) {
+    uint32_t flags = *reinterpret_cast<const uint32_t*>(header + 0x50);
+    if (*reinterpret_cast<const int*>(header + 0x98) == 2 && !(flags & 4)) {   // a Start save (the saver's copy is what FUN_00415ed0 applies)
+        flags |= 4;
+        At<uint32_t>(saver, 0x50) |= 4;
+        dslog::Write("Cheats: \"Start\" save - enemy AI flag set (the ended mission had stopped the AI)");
+    }
     const int trooper = *reinterpret_cast<const uint16_t*>(header + 0x54);
     g_infHealth = (flags & kSaveInfHealth) != 0;
     const bool cheats = !(flags & 1) || (flags & 2) || !(flags & 4) || (flags & 8) || trooper || g_infHealth;
@@ -326,9 +430,10 @@ void __cdecl NoteLoadedHeader(const uint8_t* header) {
 __declspec(naked) void ApplyHeaderStub() {
     __asm {
         push ecx
+        push ecx
         push esi
         call NoteLoadedHeader
-        add esp, 4
+        add esp, 8
         pop ecx
         mov eax, kHeaderApply
         jmp eax
@@ -338,13 +443,35 @@ __declspec(naked) void ApplyHeaderStub() {
 }  // namespace
 
 bool features::CheatsActive() {
+    if (!g_enabled) return false;   // the "Cheats " save name prefix is ours
     return Trooper() > 0 || Global<int>(kEnemyZero) != 0 || Global<int>(kPlayerDamage) == 0 ||
            Global<int>(kInfAmmoFlag) != 0 || Global<int>(kEnemyAi) == 0 || g_infHealth;
 }
 
-bool features::CheatsUnlocked() { return g_unlocked != 0; }
+bool features::CheatsUnlocked() { return g_enabled && g_unlocked != 0; }
+
+// Online co-op (hostsync.cpp): the host's cheats for everyone. 1 invulnerable, 2 infinite ammo, 4 enemy AI off, 8 enemy
+// level 0, 0x10 infinite health (ours), trooper level << 8. Game values, so also without our CHEATS rows.
+uint32_t features::CheatFlags() {
+    return (Global<int>(kPlayerDamage) == 0 ? 1u : 0u) | (Global<int>(kInfAmmoFlag) != 0 ? 2u : 0u) |
+           (Global<int>(kEnemyAi) == 0 ? 4u : 0u) | (Global<int>(kEnemyZero) != 0 ? 8u : 0u) | (g_infHealth ? 0x10u : 0u) |
+           static_cast<uint32_t>(Trooper() & 0xFF) << 8;
+}
+
+void features::SetCheatFlags(uint32_t flags) {
+    if (flags == CheatFlags()) return;
+    reinterpret_cast<void(__cdecl*)(int)>(kSetPlayerDamage)(flags & 1 ? 0 : 1);
+    reinterpret_cast<void(__cdecl*)(int)>(kSetInfAmmo)(flags & 2 ? 1 : 0);
+    reinterpret_cast<void(__cdecl*)(int)>(kSetEnemyAi)(flags & 4 ? 0 : 1);
+    reinterpret_cast<void(__cdecl*)(int)>(kSetEnemyZero)(flags & 8 ? 1 : 0);
+    reinterpret_cast<void(__cdecl*)(int)>(kSetTrooper)(static_cast<int>(flags >> 8 & 0xFF));
+    g_infHealth = (flags & 0x10) != 0;
+    dslog::Write("Cheats: set to the host's (%X)", flags);
+}
+bool features::CheatsEnabled() { return g_enabled; }
 
 const char* features::CheatsText(uint32_t hash) {
+    if (!g_enabled) return nullptr;
     return hash >= kTextBase && hash <= kTextBase + kRows ? kRowText[hash - kTextBase] : nullptr;
 }
 
@@ -352,8 +479,14 @@ void features::ApplyCheats() {
     static bool done = false;
     if (done) return;
     done = true;
-    DWORD v = 0, size = sizeof v;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, "CheatsUnlocked", RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS && v)
+    if (!settings::Get().featCheats) {
+        dslog::Write("[off]  Cheats: extended CHEATS menu, free camera, DEVELOPER page off - the game's own cheats");
+        if (!patch::HookCall(kFrameCall, reinterpret_cast<const void*>(&FrameLite), kFrameThunk))
+            dslog::Write("[fail] Photo mode: frame hook at 0x%08X not recognised", kFrameCall);
+        return;
+    }
+    uint32_t v = 0;
+    if (settings::ReadDword(false, "CheatsUnlocked", v) && v)
         g_unlocked = 1, g_registryUnlocked = true;
 
     for (uint32_t site : kFlagOperands) {
@@ -380,5 +513,17 @@ void features::ApplyCheats() {
     const bool write = patch::HookCall(kHeaderWriteCall, reinterpret_cast<const void*>(&WriteHeader), kHeaderWrite);
     const bool load = patch::HookCall(kHeaderApplyCall, reinterpret_cast<const void*>(&ApplyHeaderStub), kHeaderApply);
     overlay::AddLateDraw(&DrawNotice);
-    dslog::Write("Cheats: menu installed (unlocked %d, frame %d, save %d/%d)", g_unlocked, frame, write, load);
+    if (!patch::Matches(kEnterTest, kEnterTestBytes, sizeof kEnterTestBytes) ||
+        !patch::WriteJump(kEnterTest, reinterpret_cast<const void*>(&EnterTestStub)))
+        dslog::Write("[fail] Cheats: COMMANDEER ANY VEHICLE not available (unexpected game code)");
+#ifndef DS_DIST
+    {   // dev: Dev\Commandeer = 1 turns the row on from the start (scripted tests)
+        DWORD dv = 0, ds = sizeof dv;
+        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "Commandeer", RRF_RT_REG_DWORD, nullptr, &dv,
+                         &ds) == ERROR_SUCCESS && dv)
+            SetRow(kCommandeerRow, true);
+    }
+#endif
+    g_enabled = true;
+    dslog::Write("[ok]   Cheats: menu installed (unlocked %d, frame %d, save %d/%d)", g_unlocked, frame, write, load);
 }

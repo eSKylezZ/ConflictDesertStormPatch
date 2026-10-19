@@ -60,12 +60,9 @@ __declspec(naked) void ChangeStub() {
     }
 }
 
+// call fn; nop over a 6-byte instruction the stub replays: a call@ code group.
 bool CallAt(uint32_t site, const void* fn, const uint8_t (&original)[6]) {
-    uint8_t call[6] = {0xE8, 0, 0, 0, 0, 0x90};
-    const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(fn) - (site + 5));
-    memcpy(call + 1, &rel, 4);
-    if (patch::Matches(site, call, sizeof call)) return true;
-    return patch::Matches(site, original, sizeof original) && patch::Write(site, call, sizeof call);
+    return patch::WriteCall(site, fn, sizeof original, original);
 }
 }  // namespace
 

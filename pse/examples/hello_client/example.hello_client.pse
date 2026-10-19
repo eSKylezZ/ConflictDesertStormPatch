@@ -1,0 +1,3 @@
+# Needs example.hello 1.0 or newer: without it this plugin is not loaded (and the reason is logged).
+name     = example.hello_client
+requires = example.hello >= 1.0

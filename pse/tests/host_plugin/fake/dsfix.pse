@@ -1,0 +1,5 @@
+# pse_tests stand-in for DesertStormFix (test_layout.cpp start-up test): the DS1 game layer allows only "dsfix" as a
+# host plugin. Built into pse_test_plugins/, never deployed into a game.
+name     = dsfix
+host     = true
+requires = pse.game.ds1 >= 1.0

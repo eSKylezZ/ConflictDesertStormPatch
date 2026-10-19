@@ -23,7 +23,7 @@ Context ContextOf(int action);
 Layout Make(Preset preset);  // the preset applied to default.key's pad entries
 Preset PresetOf(int player);
 const Layout& Get(int player);  // the player's current layout
-// Stores the player's layout (registry, Enhancements\PadLayout<n>) and writes it into the game's bindings.
+// Stores the player's layout (settings key PadLayout<n>, settings::Key()) and writes it into the game's bindings.
 void Set(int player, Preset preset, const Layout& layout);
 
 int ButtonOf(const Layout& l, int action);  // first pad button of the action, -1 = none

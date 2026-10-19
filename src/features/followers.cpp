@@ -15,14 +15,18 @@
 // Beretta of his dead bodyguard - the cutscene's CS_BODYGUARD_DEAD, object 188, carries one): handed out once he is
 // in the squad list in plain play, again if a loaded save lost it (spawned weapons aren't in saves for non-squad
 // roles). Pistol skill: no HSKILLS.TXT row = level 0, the worst (Bradley has PISTOL 2).
+// Optional (settings featFollowers), live: off = the class-5 checks answer as the game's, no pistol / MediKit
+// (one already handed out stays until the level ends).
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <set>
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -51,6 +55,18 @@ int ClassOf(const uint8_t* soldier) {
     return unit ? *reinterpret_cast<const int*>(unit + 0x8C) : -1;
 }
 
+bool On() {
+    static int logged = -1;
+    const features::HostSettings* host = features::HostSync();   // online: the host's setting on every PC
+    const bool on = host ? host->followers : settings::Get().featFollowers;
+    if (logged != static_cast<int>(on)) {
+        logged = on;
+        dslog::Write(on ? "[ok]   Followers: the Emir / Franklin can be controlled, pistol + MediKit"
+                        : "[off]  Followers: the game's rules (followers stay AI-driven)");
+    }
+    return on;
+}
+
 const Follower* FollowerOf(const uint8_t* soldier) {
     if (!soldier || soldier[0x10] != *reinterpret_cast<const uint8_t*>(kSquadTeam)) return nullptr;
     const int cls = ClassOf(soldier);
@@ -63,7 +79,7 @@ const Follower* FollowerOf(const uint8_t* soldier) {
 int __fastcall Controllable(uint8_t* soldier) {
     using Query = int(__thiscall*)(void*, int);
     if ((*reinterpret_cast<Query**>(soldier))[0x4C / 4](soldier, 5)) return 1;
-    return FollowerOf(soldier) ? 1 : 0;
+    return On() && FollowerOf(soldier) ? 1 : 0;
 }
 
 __declspec(naked) void ControlStub() {
@@ -76,6 +92,7 @@ __declspec(naked) void ControlStub() {
 }
 
 int __fastcall BlockControllable(uint8_t* block) {
+    if (!On()) return reinterpret_cast<int(__fastcall*)(uint8_t*)>(kBlockIsSoldier)(block);   // the game's own check
     auto* soldier = *reinterpret_cast<uint8_t**>(block + 0x310);
     return soldier ? Controllable(soldier) : 0;
 }
@@ -88,8 +105,11 @@ bool CallPatch(uint32_t site, const uint8_t* orig, size_t len, size_t lead, cons
     code[lead] = 0xE8;
     const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(fn) - (site + lead + 5));
     memcpy(code + lead + 1, &rel, 4);
-    if (patch::Matches(site, code, len)) return true;
-    return patch::Matches(site, orig, len) && patch::Write(site, code, len);
+    // One byte group per site (the broker checks the original bytes, or that it is already in place).
+    char group[40];
+    snprintf(group, sizeof group, "Followers: call at 0x%08X", site);
+    const BytePatch p{DS_PATCH_NAME("follower control call"), site, orig, code, static_cast<uint32_t>(len), false};
+    return patch::ApplyGroup(group, &p, 1);
 }
 
 template <class F>
@@ -126,8 +146,9 @@ void features::ApplyFollowers() {
     const bool extras = g_hooked &&
                         patch::HookCall(kInventorySite, reinterpret_cast<const void*>(&BlockControllable), kBlockIsSoldier) &&
                         CallPatch(kWeaponHudSite, kWeaponHudOrig, sizeof kWeaponHudOrig, 2, reinterpret_cast<const void*>(&ControlStub));
-    dslog::Write(g_hooked ? "[ok]   Followers: the Emir / Franklin can be controlled (inventory, weapon display %s), pistol + MediKit"
+    dslog::Write(g_hooked ? "Followers: hooks installed (inventory, weapon display %s)"
                           : "[fail] Followers: control mode check not recognised (%s)", extras ? "ok" : "FAILED");
+    if (g_hooked) On();   // [ok] / [off] (logged again when the setting changes)
 }
 
 void features::OnFrameFollowers() {
@@ -137,7 +158,7 @@ void features::OnFrameFollowers() {
         return;
     }
     const auto* world = *reinterpret_cast<const uint8_t* const*>(kWorld);
-    if (*reinterpret_cast<uint32_t*>(kFrontEndState) != 0xE || !world || (world[0x1B8C] & 1) || CustomiseOpen()) return;
+    if (*reinterpret_cast<uint32_t*>(kFrontEndState) != 0xE || !world || (world[0x1B8C] & 1) || CustomiseOpen() || !On()) return;
     ForEachSquadMember([](uint8_t* soldier) {
         const Follower* f = FollowerOf(soldier);
         if (!f || *reinterpret_cast<float*>(soldier + 0x54) <= 0.0f || Carries(soldier, f->pistol)) return;

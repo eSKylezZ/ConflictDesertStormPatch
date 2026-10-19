@@ -11,6 +11,9 @@
 // 0x485980, +0x90 RunUntil 0x4859F0 (cdecl, float argument; GetTOD returns on the x87 stack).
 // Those four entries are replaced: while our setting rules a level, the scripts' calls move a "script clock" of their
 // own (so a script that waits for its hour still sees it) and the real atmosphere keeps our time.
+// Optional (settings featTimeOfDay; the rows live on the loadout screen, so it also needs featLoadout), live: off =
+// the slots pass every call straight to the game's (as when not ruling), the script clock is handed back, no 6 / 18 h
+// nudge, no rows on the screen.
 #include <windows.h>
 
 #include <cmath>
@@ -19,6 +22,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -28,7 +32,6 @@ constexpr uint32_t kApiSetTod = 0x5ED2B0, kApiGetTod = 0x5ED2B4, kApiSetSpeed = 
 constexpr uint32_t kOrigSetTod = 0x485950, kOrigGetTod = 0x485970, kOrigSetSpeed = 0x485980, kOrigRunUntil = 0x4859F0;
 constexpr uint32_t kLevelName = 0x606880, kDispatchMode = 0x60EC8C, kFrontEndState = 0x617C18;
 constexpr uint32_t kTimer = 0x6406B8, kDtGetter = 0x4BA480;  // the atmosphere update's dt (seconds, game time)
-constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 
 // TIME OF DAY: 0 = the mission's own, then fixed start hours.
 const float kStartHours[features::kTimeOfDayCount] = {-1.0f, 6.5f, 12.0f, 17.6f, 23.0f};
@@ -64,24 +67,14 @@ T& At(uint8_t* p, uint32_t off) { return *reinterpret_cast<T*>(p + off); }
 void Load() {
     if (g_loaded) return;
     g_loaded = true;
-    DWORD v = 0, size = sizeof v;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, "TimeOfDay", RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS &&
-        v < features::kTimeOfDayCount)
-        g_time = static_cast<int>(v);
-    size = sizeof v;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, "TimeFlow", RRF_RT_REG_DWORD, nullptr, &v, &size) == ERROR_SUCCESS &&
-        v < features::kTimeFlowCount)
-        g_flow = static_cast<int>(v);
+    uint32_t v = 0;
+    if (settings::ReadDword(false, "TimeOfDay", v) && v < features::kTimeOfDayCount) g_time = static_cast<int>(v);
+    if (settings::ReadDword(false, "TimeFlow", v) && v < features::kTimeFlowCount) g_flow = static_cast<int>(v);
 }
 
 void Save() {
-    HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    const DWORD t = g_time, f = g_flow;
-    RegSetValueExA(key, "TimeOfDay", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&t), sizeof t);
-    RegSetValueExA(key, "TimeFlow", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&f), sizeof f);
-    RegCloseKey(key);
+    settings::WriteDword(false, "TimeOfDay", static_cast<uint32_t>(g_time));
+    settings::WriteDword(false, "TimeFlow", static_cast<uint32_t>(g_flow));
 }
 
 bool Cutscene() {
@@ -91,49 +84,76 @@ bool Cutscene() {
 
 bool MissionLevel() { return _strnicmp(reinterpret_cast<const char*>(kLevelName), "Mission", 7) == 0; }
 
+// The feature is on (it needs the loadout screen too: its rows are the only way to choose a time).
+bool On() {
+    const settings::Values& v = settings::Get();
+    const features::HostSettings* host = features::HostSync();   // online: the host's choice on every PC
+    const bool on = host ? host->timeOfDayOn : v.featTimeOfDay && v.featLoadout;
+    static int logged = -1;
+    if (logged != static_cast<int>(on)) {
+        logged = on;
+        dslog::Write(on ? "[ok]   Time of day: chosen time / flow rule the missions"
+                        : v.featTimeOfDay ? "[off]  Time of day: the missions' own (needs the loadout screen, which is off)"
+                                          : "[off]  Time of day: the missions' own");
+    }
+    return on;
+}
+
+// The scripts' clock back into the atmosphere (the mission's own time again).
+void HandBack() {
+    uint8_t* a = Atmosphere();
+    if (g_ruling && a) {
+        At<float>(a, kHour) = g_scriptHour;
+        At<float>(a, kSpeed) = g_scriptSpeed;
+        At<int>(a, kRunFlag) = g_scriptRun;
+        At<float>(a, kRunUntil) = g_scriptUntil;
+    }
+    g_ruling = false;
+}
+
 // Takes over the atmosphere with the current choices (keepHour: a running cycle from the mission's hour stays where it is).
 void Rule() {
     uint8_t* a = Atmosphere();
     if (!a) return;
+    if (!On()) return HandBack();
     if (!g_ruling) {   // the script clock starts where the mission had it
         g_scriptHour = At<float>(a, kHour);
         g_scriptSpeed = At<float>(a, kSpeed);
         g_scriptRun = At<int>(a, kRunFlag) != 0;
         g_scriptUntil = At<float>(a, kRunUntil);
     }
-    if (g_time == 0 && g_flow == 0) {   // the mission's own time again: hand the script clock back
-        if (g_ruling) {
-            At<float>(a, kHour) = g_scriptHour;
-            At<float>(a, kSpeed) = g_scriptSpeed;
-            At<int>(a, kRunFlag) = g_scriptRun;
-            At<float>(a, kRunUntil) = g_scriptUntil;
-        }
-        g_ruling = false;
-        return;
-    }
+    const features::HostSettings* host = features::HostSync();   // online: the host's choices on every PC
+    const int time = host ? host->timeOfDay : g_time, flow = host ? host->timeFlow : g_flow;
+    if (time == 0 && flow == 0) return HandBack();   // the mission's own time again: hand the script clock back
     g_ruling = true;
-    At<float>(a, kHour) = g_time ? kStartHours[g_time] : g_scriptHour;
+    At<float>(a, kHour) = time ? kStartHours[time] : g_scriptHour;
     if (g_continued && g_prevHour >= 0) At<float>(a, kHour) = g_prevHour;
-    At<float>(a, kSpeed) = kFlowSpeeds[g_flow];
+    At<float>(a, kSpeed) = kFlowSpeeds[flow];
     At<int>(a, kRunFlag) = 0;
-    dslog::Write("Time of day: %s, %s (hour %.2f)", kTimeLabels[g_time], kFlowLabels[g_flow], At<float>(a, kHour));
+    dslog::Write("Time of day: %s, %s (hour %.2f)", kTimeLabels[time], kFlowLabels[flow], At<float>(a, kHour));
 }
 
 // ---- script API replacements (cdecl, float argument) ----
+// Pointer hooks on the API table slots (patch::HookSlot); these are the chains' next.
+void* g_setTodNext = reinterpret_cast<void*>(kOrigSetTod);
+void* g_getTodNext = reinterpret_cast<void*>(kOrigGetTod);
+void* g_setSpeedNext = reinterpret_cast<void*>(kOrigSetSpeed);
+void* g_runUntilNext = reinterpret_cast<void*>(kOrigRunUntil);
+
 void __cdecl ScriptSetTod(float hour) {
-    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(kOrigSetTod)(hour);
+    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(g_setTodNext)(hour);
     g_scriptHour = hour;
 }
 float __cdecl ScriptGetTod() {
-    if (!g_ruling) return reinterpret_cast<float(__cdecl*)()>(kOrigGetTod)();
+    if (!g_ruling) return reinterpret_cast<float(__cdecl*)()>(g_getTodNext)();
     return g_scriptHour;
 }
 void __cdecl ScriptSetSpeed(float speed) {
-    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(kOrigSetSpeed)(speed);
+    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(g_setSpeedNext)(speed);
     g_scriptSpeed = speed;
 }
 void __cdecl ScriptRunUntil(float hour) {
-    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(kOrigRunUntil)(hour);
+    if (!g_ruling) return reinterpret_cast<void(__cdecl*)(float)>(g_runUntilNext)(hour);
     g_scriptRun = true;
     g_scriptUntil = hour;
 }
@@ -152,13 +172,9 @@ void TickScriptClock() {
     }
 }
 
-void Replace(uint32_t slot, uint32_t original, const void* fn) {
-    if (*reinterpret_cast<uint32_t*>(slot) != original) {
+void Replace(uint32_t slot, uint32_t original, const void* fn, void** next) {
+    if (!patch::HookSlot(slot, fn, next, original))
         dslog::Write("[fail] Time of day: script API slot 0x%08X not recognised", slot);
-        return;
-    }
-    const uint32_t v = reinterpret_cast<uint32_t>(fn);
-    patch::Write(slot, &v, 4);
 }
 }  // namespace
 
@@ -188,10 +204,10 @@ void features::RuleTimeOfDay() {
 }
 
 void features::ApplyTimeOfDay() {
-    Replace(kApiSetTod, kOrigSetTod, reinterpret_cast<const void*>(&ScriptSetTod));
-    Replace(kApiGetTod, kOrigGetTod, reinterpret_cast<const void*>(&ScriptGetTod));
-    Replace(kApiSetSpeed, kOrigSetSpeed, reinterpret_cast<const void*>(&ScriptSetSpeed));
-    Replace(kApiRunUntil, kOrigRunUntil, reinterpret_cast<const void*>(&ScriptRunUntil));
+    Replace(kApiSetTod, kOrigSetTod, reinterpret_cast<const void*>(&ScriptSetTod), &g_setTodNext);
+    Replace(kApiGetTod, kOrigGetTod, reinterpret_cast<const void*>(&ScriptGetTod), &g_getTodNext);
+    Replace(kApiSetSpeed, kOrigSetSpeed, reinterpret_cast<const void*>(&ScriptSetSpeed), &g_setSpeedNext);
+    Replace(kApiRunUntil, kOrigRunUntil, reinterpret_cast<const void*>(&ScriptRunUntil), &g_runUntilNext);
 }
 
 // A mission is ruled from its first moment of plain play (the loadout screen opens then too; loaded saves and linked
@@ -211,6 +227,13 @@ void features::OnFrameTimeOfDay() {
         g_applied = false;
     }
     if (*reinterpret_cast<int8_t*>(kDispatchMode) != 0) return;
+    {   // switched in the pause menu's options: hand the clock back / rule from now on
+        static int was = -1;
+        const bool on = On();
+        if (was >= 0 && was != static_cast<int>(on) && g_applied && MissionLevel()) Rule();
+        was = on;
+        if (!on) return;
+    }
     if (g_ruling) TickScriptClock();
     if (g_ruling && MissionLevel() && *reinterpret_cast<uint32_t*>(kFrontEndState) == 0xE)
         if (uint8_t* a = Atmosphere()) g_lastHour = At<float>(a, kHour), g_lastRuled = true;

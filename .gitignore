@@ -12,6 +12,7 @@ tools/
 # AI assistant context and settings
 CLAUDE.md
 .claude/
+/docs
 
 # Game binaries and data (Steam / GOG / Xbox) – never commit
 *.exe
@@ -50,6 +51,7 @@ Data/
 build/
 build-dist/
 build-release/
+build-*/
 *.pdb
 *.ilk
 *.obj
@@ -75,6 +77,7 @@ desktop.ini
 xbox/
 xbox_eu/
 ps2/
+ps2_jp/
 gc/
 demos/
 pcretail/
@@ -85,3 +88,10 @@ media/
 
 # Assets exported from the game archives (tools/datx.py) – never commit
 extracted/
+
+# PSE first-run build output (asset store, translated missions): made from the player's own game files - never commit
+PSE/Cache/
+pse-cache/
+store.pack
+store.idx
+*.man

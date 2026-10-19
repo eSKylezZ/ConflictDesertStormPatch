@@ -21,10 +21,11 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
-constexpr uint32_t kApplySkin = 0x435BE0, kApplySkinCont = 0x435BE7;
+constexpr uint32_t kApplySkin = 0x435BE0;
 constexpr uint8_t kApplySkinEntry[] = {0x56, 0x8B, 0xF1, 0x8B, 0x4C, 0x24, 0x08};  // push esi; mov esi,ecx; mov ecx,[esp+8]
 constexpr uint32_t kEnvironment = 0x63C948, kLoadModel = 0x4DD5C0, kControlFp = 0x569956, kLoadPrecision = 0x63C8C8;
 constexpr uint32_t kTextureManager = 0x63C930, kTextureBatch = 0x54A3E0, kLoadPending = 0x60EC8C;
@@ -177,20 +178,21 @@ void features::ApplyBodies() {
     static bool done = false;
     if (done) return;
     done = true;
-    if (!patch::Matches(kApplySkin, kApplySkinEntry, sizeof kApplySkinEntry)) {
+    // Needed by mod bodies (.skin "body") and by the loadout screen (skins changed mid-level: textures, saves with mixed
+    // sides); with both off the skin apply stays the game's.
+    if (!features::ModsFolderEnabled() && !settings::Get().featLoadout) {
+        dslog::Write("[off]  Bodies: skin apply hook off (FeatMods and FeatLoadout off)");
+        return;
+    }
+    // Entry hook through the broker: g_apply = its trampoline (the moved 7-byte prologue) or the next subscriber.
+    if (!patch::HookFunction(kApplySkin, reinterpret_cast<const void*>(&ApplySkinHook), reinterpret_cast<void**>(&g_apply),
+                             kApplySkinEntry, sizeof kApplySkinEntry)) {
         dslog::Write("[fail] Bodies: skin apply at 0x%08X not recognised - mod bodies off", kApplySkin);
         return;
     }
-    auto* tramp = static_cast<uint8_t*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!tramp) return;
-    memcpy(tramp, kApplySkinEntry, sizeof kApplySkinEntry);
-    tramp[sizeof kApplySkinEntry] = 0xE9;
-    const int32_t rel = static_cast<int32_t>(kApplySkinCont - (reinterpret_cast<uint32_t>(tramp) + sizeof kApplySkinEntry + 5));
-    memcpy(tramp + sizeof kApplySkinEntry + 1, &rel, 4);
-    g_apply = reinterpret_cast<ApplyFn>(tramp);
-    patch::WriteJump(kApplySkin, reinterpret_cast<const void*>(&ApplySkinHook));
     if (!patch::HookCall(kSaveSkinLookupSite, reinterpret_cast<const void*>(&SaveSkinLookup), kSkinLookup))
         dslog::Write("[fail] Bodies: save skin lookup at 0x%08X not recognised", kSaveSkinLookupSite);
+    dslog::Write("[ok]   Bodies: skin apply hook (mod bodies, mid-level skins)");
 }
 
 // A level load frees the soldiers and their instances: forget the swaps. After it, load what skins applied during it

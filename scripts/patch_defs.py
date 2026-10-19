@@ -66,6 +66,94 @@ AUDIO = [
     ("Audio: own gunshots stay positional while aiming", 0x004A1D71, "740A", "EB0A", False),
 ]
 
+# Scene loader (FUN_004f8d00) "Unable to find parent - Object %s / Parent %s": the object's name came from
+# FUN_004d12a0 (its internal id as "0x%X"); the record's own name ([esp+0x4e4], read by FUN_004bf6f0) instead.
+# Same idea as a third-party modded exe ("DesertStorm_mem.exe").
+SCENE_MESSAGES = [
+    ("Scene loader: object name in the missing-parent message", 0x004F9485, "8BCB50E8137EFDFF50",
+     "508D8CE4E804000051", False),
+]
+
+# CHEATS > COMMANDEER ANY VEHICLE (with the enterable filter in cheats.cpp, hook at 0x433B98):
+# - seat finder FUN_0043cfd0 refuses a vehicle with a soldier of another team in any seat (jne at 0x43D039);
+# - vehicle set-up FUN_00437cd0 / FUN_00438db0 / FUN_00439350: only vehicles whose render instance has flag 0x200000
+#   load their sound bank (0x438598) and build their physics body (FUN_00438a80(dyn, 1) at 0x438DE5 / 0x439385) -
+#   Mission 4's T-62 and open Ural have none; these three take effect at the next level load.
+# (Same changes as a third-party modded exe, "DesertStorm_oct_ai_voc.exe".)
+COMMANDEER = [
+    ("Cheats: board vehicles with enemy crew", 0x0043D039, "0F85E1000000", "909090909090", False),
+    ("Cheats: every vehicle's sound bank", 0x00438598, "741C", "9090", False),
+    ("Cheats: every vehicle's physics body (1)", 0x00438DE5, "741B", "9090", False),
+    ("Cheats: every vehicle's physics body (2)", 0x00439385, "741B", "9090", False),
+]
+
+# Speech FUN_004366d0(sample, quiet sample, AI only, …): lines asked for "AI only" (arg 3 = 1: I'm hit, enemy killed,
+# destroyed vehicle, grenade throw in single player) are skipped for the player-driven soldier (vtable +0x4C(1) at
+# 0x43672E, test at 0x436731) - "test eax, eax" -> "xor eax, eax": the soldier you control says them too.
+# Spotted callouts FUN_00407ff0(soldier, target) (from the target tracking FUN_00408680, which runs for the player's
+# soldier too) start with the same test (0x407FFB): your soldier calls out infantry / vehicles / tanks / guns /
+# helicopters, with the game's cooldowns (60 s per target, 20 s per kind).
+# Incoming grenade: an enemy throwing at a player-driven soldier makes every squadmate within range of him shout it
+# (team loop 0x404FBD in the throw code), skipping the target himself (0x404FBF je) - now he shouts it too.
+# Man down: FUN_00423f70 (from TakeDamage 0x4243CF, a soldier going down) has the first team member within 20 m say it,
+# skipping player-driven soldiers (0x423FFD jne) - now the soldier you control can be that one.
+# (Watch your fire needs nothing: a squadmate says it when the player's soldier fires close past him.)
+PLAYER_VOICE = [
+    ("Voices: the soldier you control talks", 0x00436731, "85C0", "31C0", False),
+    ("Voices: the soldier you control calls out enemies", 0x00407FFB, "85C0", "31C0", False),
+    ("Voices: the soldier you control shouts incoming grenade", 0x00404FBF, "0F8499000000", "909090909090", False),
+    ("Voices: the soldier you control says man down", 0x00423FFD, "7573", "9090", False),
+]
+
+# Pivotal's debug key map: FUN_00447150 (73 callers, registration from 0x4108F9 at start-up) registers a binding only
+# with start-up flag M - always registered now; the per-frame dispatcher's flag check (0x4473B5) is hooked in C++.
+DEBUG_KEYS = [
+    ("Developer: debug key bindings registered", 0x0044715C, "7501", "EB01", False),
+]
+
+# Engine limits for big battles (limits.cpp has the hooks; research/large_battles.md). Pools sized at start-up / level
+# init; Global Heap pools get their room in memory.cpp (features::LimitsHeapExtra).
+# - Karma world (FUN_004fdf70): MdtWorldCreate(bodies 200, constraints 500 - joints AND contacts share them; callers
+#   never check the null an exhausted pool returns -> crash) -> 2048 / 8192. McdInit models 400 -> 4096, McdSpace
+#   AxisSort(axes, objects 400, pairs 400 - "Resizing not implemented" = abort) -> 4096 / 16384.
+# - particles (FUN_004f0910, budget in bytes, 200 per particle, Global Heap) 50000 -> 400000 = 2000 particles.
+# - event queue (FUN_004db610, 0x48 B each, Global Heap; timers, queue_call, delayed events; full = dropped) 200 -> 2048.
+# - render command arena (FUN_0051f770, Global Heap, per level; full = draws skipped) 64 KB -> 1 MB.
+# - script-id table (object manager +0x30): not built when the highest id is over 1000 (`cmp ebx, 0x3E8` at
+#   0x4CA4F9; then every by-id lookup walks all objects and the plugin's table reads fail) -> 65534.
+# - waypoint table [0x63C9B0] (600 x 0x20 B + count at +0x4B00, indexed by id without a check) -> 8192 entries: the
+#   allocation (0x4102BD) and the 12 users of the count field (all in the waypoint code) move the count to +0x40000.
+# - save buffer (saver ctor 0x415480, filled without an end check): 0x2AF53 base + 4 MB; limits.cpp writes only the
+#   used part (never less than the original size, so ordinary saves stay byte-identical).
+# - AI think scheduler [0x60EDA0] (FUN_00401590): the adaptive soldier budget was clamped to 2 per frame (200 awake
+#   soldiers = each one every 1.7 s at 60 fps) -> 32 (it still only rises while a full cycle takes over 500 ms).
+# - router A* searches per frame (+0x30, set at 0x509AC8) 3 -> 12.
+# - positional sound voices in software mode (no hardware 3D buffers - every modern PC; 0x55F228) 6 -> 32.
+# - decal store ring (footprints, bullet holes, blood; manager [0x63C96C] +0x40, push at 0x521BDC) 128 -> 512 KB.
+WAYPOINT_COUNT_SITES = [0x401CAC, 0x401DDF, 0x40DA3F, 0x413B4D, 0x4D13D2, 0x4D14C0, 0x4D14F7, 0x4D1517, 0x4D1534,
+                        0x4D1546, 0x4D1557, 0x4D155E]
+LIMITS = [
+    ("Limits: Karma constraints 500 -> 8192", 0x004FDFCE, "F4010000", "00200000", False),
+    ("Limits: Karma bodies 200 -> 2048", 0x004FDFD6, "C8000000", "00080000", False),
+    ("Limits: collision models 400 -> 4096", 0x004FE098, "90010000", "00100000", False),
+    ("Limits: collision pairs 400 -> 16384", 0x004FE0B9, "90010000", "00400000", False),
+    ("Limits: collision space objects 400 -> 4096", 0x004FE0BE, "90010000", "00100000", False),
+    ("Limits: particle budget 50000 -> 400000 bytes", 0x004104E6, "50C30000", "801A0600", False),
+    ("Limits: event queue 200 -> 2048", 0x00410528, "C8000000", "00080000", False),
+    ("Limits: render command arena 64 KB -> 1 MB", 0x004CB2D6, "00000100", "00001000", False),
+    ("Limits: script-id table up to id 65534", 0x004CA4FB, "E8030000", "FEFF0000", False),
+    ("Limits: waypoint table 600 -> 8192 (allocation)", 0x004102BD, "044B0000", "04000400", False),
+] + [
+    (f"Limits: waypoint count field 0x{va:X}", va + 2, "004B0000", "00000400", False) for va in WAYPOINT_COUNT_SITES
+] + [
+    ("Limits: save buffer + 4 MB", 0x004154A7, "53AF0200", "53AF4200", False),
+    ("Limits: AI think budget clamp 2 -> 32 (compare)", 0x004016BC, "02", "20", False),
+    ("Limits: AI think budget clamp 2 -> 32 (store)", 0x004016C2, "02000000", "20000000", False),
+    ("Limits: A* searches per frame 3 -> 12", 0x00509ACB, "03000000", "0C000000", False),
+    ("Limits: positional sound voices 6 -> 32", 0x0055F22B, "06000000", "20000000", False),
+    ("Limits: decal store 128 KB -> 512 KB", 0x00521BDD, "00000200", "00000800", False),
+]
+
 # Layout clamps (part of HUD): layout code computes c * max(800, W)/800 * sheetScale; with the resolution factor
 # in the sheet scale that double-scaled, so max(800, W) is forced to 800 (jle -> jmp, jg -> nop nop).
 # VA  original  patched

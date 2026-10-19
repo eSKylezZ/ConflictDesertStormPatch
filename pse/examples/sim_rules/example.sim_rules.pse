@@ -1,0 +1,2 @@
+# Example simulation plugin (docs/sdk/online-compat.md): online peers must have the same file.
+name = example.sim_rules

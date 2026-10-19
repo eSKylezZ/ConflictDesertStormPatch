@@ -1,0 +1,2 @@
+# example.hello - the smallest real PSE plugin (docs/sdk/guides/first-plugin.md).
+name = example.hello

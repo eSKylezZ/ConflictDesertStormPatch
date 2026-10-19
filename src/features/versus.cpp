@@ -16,6 +16,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
 
@@ -63,6 +64,7 @@ enum { kIdxMode, kIdxMap, kIdxTime, kIdxScore, kIdxRespawn, kIdxFriendly, kIdxTe
 uint8_t g_screen[0x20];
 void* g_vtable[kVtableEntries];
 bool g_built = false;
+bool g_enabled = false;  // FeatVersus at start-up (ApplyVersus)
 
 template <class T>
 T& At(void* base, uint32_t offset) {
@@ -285,8 +287,8 @@ const char* features::VersusText(uint32_t hash) {
         case kText25Kills: return "25 KILLS";
         case 0x2FAE9B7A:  // scores screen prompt "Esc: Main Menu"
             return VersusScoresPrompt();
-        case kHashMultiplayer:  // the network screens' title
-            return *reinterpret_cast<uint32_t*>(kFrontEndState) == kStateNetwork ? "LEGACY ONLINE" : nullptr;
+        case kHashMultiplayer:  // the network screens' title (VERSUS off: the game's MULTIPLAYER)
+            return g_enabled && *reinterpret_cast<uint32_t*>(kFrontEndState) == kStateNetwork ? "LEGACY ONLINE" : nullptr;
         default: return nullptr;
     }
 }
@@ -294,7 +296,18 @@ const char* features::VersusText(uint32_t hash) {
 // The network screen's Back (push 1 at 0x4675F5, FUN_004675a0) returns to VERSUS instead of the main menu.
 static void HookPumps();
 
+// FeatVersus off: nothing installed - the main menu keeps the game's MULTIPLAYER (coop.cpp asks VersusEnabled) and
+// the network screens their own title and Back.
 void features::ApplyVersus() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    g_enabled = settings::Get().featVersus;
+    if (!g_enabled) {
+        dslog::Write("[off]  Versus: VERSUS menu off - the game's MULTIPLAYER");
+        return;
+    }
+    dslog::Write("[ok]   Versus: VERSUS menu (LEGACY ONLINE / SPLIT SCREEN)");
     HookPumps();
     constexpr uint32_t kBackState = 0x4675F6;
     const uint8_t original = kStateMainMenu, ours = 0x42;
@@ -745,16 +758,10 @@ static void HookScores() {
     bool ok = patch::HookCall(kPanelBoxCall, reinterpret_cast<const void*>(&PanelBox), kBox) &&
               patch::HookCall(kOutlineBoxCall, reinterpret_cast<const void*>(&OutlineBox), kBox) &&
               patch::HookCall(kColumnsCall, reinterpret_cast<const void*>(&ScoreColumns), kScoreColumns);
-    if (ok && patch::Matches(kListDrawSite, kListDrawCode, sizeof kListDrawCode)) {
-        uint8_t code[sizeof kListDrawCode];
-        std::memset(code, 0x90, sizeof code);
-        code[0] = 0xE8;
-        const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&ScoreList) - (kListDrawSite + 5));
-        std::memcpy(code + 1, &rel, 4);
-        patch::Write(kListDrawSite, code, sizeof code);
-    } else if (!(ok && patch::Matches(kListDrawSite, "\xE8", 1))) {
+    // `call ScoreList` over the 11-byte virtual draw call, the rest nop: a call@ code group (already there = fine).
+    if (!ok || !patch::WriteCall(kListDrawSite, reinterpret_cast<const void*>(&ScoreList), sizeof kListDrawCode,
+                                 kListDrawCode))
         dslog::Write("[fail] Versus: scores screen draw not recognised - the game's scores stay");
-    }
 }
 
 // The scores screen's prompt ("Esc: Main Menu", hash 0x2FAE9B7A) names our two actions in a versus match.
@@ -835,25 +842,22 @@ static void HookPumps() {
     for (uint32_t site : kSkinCalls)
         if (!patch::HookCall(site, reinterpret_cast<const void*>(&SkinHook), kSoldierSkin))
             dslog::Write("[fail] Versus: soldier skin call at 0x%08X not recognised", site);
-    if (patch::Matches(kIsRemoteSoldier, kIsRemoteEntry, sizeof kIsRemoteEntry))
-        patch::WriteJump(kIsRemoteSoldier, reinterpret_cast<const void*>(&IsRemoteSoldier));
-    else
+    // Entry hooks replacing the game's functions (they never run the originals).
+    if (!patch::HookFunction(kIsRemoteSoldier, reinterpret_cast<const void*>(&IsRemoteSoldier), nullptr, kIsRemoteEntry,
+                             sizeof kIsRemoteEntry))
         dslog::Write("[fail] Versus: remote soldier check at 0x%08X not recognised", kIsRemoteSoldier);
     if (!patch::HookCall(kServerCloseCall, reinterpret_cast<const void*>(&ServerClose), kServerClose))
         dslog::Write("[fail] Versus: server close call at 0x%08X not recognised", kServerCloseCall);
     if (!patch::HookCall(kRespawnCall, reinterpret_cast<const void*>(&RespawnHook), kRespawn))
         dslog::Write("[fail] Versus: respawn call at 0x%08X not recognised", kRespawnCall);
-    if (patch::Matches(kTimeLimit, kTimeLimitEntry, sizeof kTimeLimitEntry))
-        patch::WriteJump(kTimeLimit, reinterpret_cast<const void*>(&TimeLimitMs));
-    else
+    if (!patch::HookFunction(kTimeLimit, reinterpret_cast<const void*>(&TimeLimitMs), nullptr, kTimeLimitEntry,
+                             sizeof kTimeLimitEntry))
         dslog::Write("[fail] Versus: time limit getter at 0x%08X not recognised", kTimeLimit);
-    if (patch::Matches(kHostSend, kHostSendEntry, sizeof kHostSendEntry))
-        patch::WriteJump(kHostSend, reinterpret_cast<const void*>(&HostSend));
-    else
+    if (!patch::HookFunction(kHostSend, reinterpret_cast<const void*>(&HostSend), nullptr, kHostSendEntry,
+                             sizeof kHostSendEntry))
         dslog::Write("[fail] Versus: host send at 0x%08X not recognised", kHostSend);
-    if (patch::Matches(kClientSend, kHostSendEntry, sizeof kHostSendEntry))  // same first instruction
-        patch::WriteJump(kClientSend, reinterpret_cast<const void*>(&ClientSend));
-    else
+    if (!patch::HookFunction(kClientSend, reinterpret_cast<const void*>(&ClientSend), nullptr, kHostSendEntry,
+                             sizeof kHostSendEntry))  // same first instruction
         dslog::Write("[fail] Versus: client send at 0x%08X not recognised", kClientSend);
 }
 
@@ -902,8 +906,11 @@ void features::VersusAssignPlayers() {
     reinterpret_cast<LoadPending>(kTextureBatch)(G<void*>(kTextureManager), nullptr, 0);
 }
 
+bool features::VersusEnabled() { return g_enabled; }
+
 void features::OnFrameVersus() {
     static bool tried = false;
+    if (!g_enabled) return;
     if (!tried && *reinterpret_cast<void**>(kMainMenuScreen)) {
         tried = true;
         Build();

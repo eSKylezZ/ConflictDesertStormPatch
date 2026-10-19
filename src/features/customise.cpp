@@ -8,8 +8,8 @@
 // device mask +0x38 = 0 (joystick +0x3C8 = -1 crashed on the first arrow key - some path indexes pads with it).
 // Screen: opaque backdrop with a window in the middle where the soldier stands; squad list left, options right, drawn
 // at the end of the frame (overlay late draw: our shapes, then text with the game's font).
-// Controls: Up/Down option row, Left/Right change it, Q/E or L1/R1 (L2/R2) previous/next soldier, Enter / Cross-A
-// start the mission.
+// Controls: Up/Down option row, Left/Right change it, Q/E or L1/R1 previous/next soldier, Tab or L2/R2 the tabs
+// (BRIEFING, MISSION, CHARACTER, LOADOUT, OVERVIEW), Enter / Cross-A start the mission.
 // Uniform / face: skin table 0x619848[uniform*4 + role] (0 SAS, 1 US Delta, 2 Russian, 3 Iraqi - the last two are the
 // old network multiplayer's factions, CSkins_RU/IR_*.txt: 7 men per role, textures + portraits in chardata.dat), entries
 // 0x5C bytes: +4 texture, +0x27 portrait, +0x50/+0x54 name records (char[] first); applied with FUN_00435be0(soldier,
@@ -17,6 +17,12 @@
 // Factions and weapons: the kit rows list the soldier's faction's weapons first (features::WeaponFactions); changing the
 // UNIFORM to another faction hands out that faction's standard kit for the role (the multiplayer kits, MPSkinItems.txt)
 // and changing back to the faction the soldier started the screen in gives back his kit from then.
+// Gear (gear.cpp): HEADGEAR / BACKPACK / FACE rows pick the model on the hat, back and face connectors; a faction
+// change first puts on that faction's standard gear (hat, pack, pouches - CONNOBJS.TXT). Remembered with the kit.
+// Optional (settings featLoadout), decided when a level starts (so a change in the pause menu counts from the next
+// level): off = nothing of this file runs - the game's briefing popup stays and sends its own message 0x3B, no
+// screen, no carried kits; a Lua mission gets its game.kit kits without the screen (as game.loadout(false)).
+// The VOICE row needs featVoices, the TIME OF DAY / TIME FLOW rows featTimeOfDay.
 #include <windows.h>
 
 #include <algorithm>
@@ -31,6 +37,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/overlay.h"
 
@@ -80,12 +87,20 @@ int g_textPage = 0, g_textPages = 1;  // page of the text shown (BRIEFING tab, M
 bool g_briefingClosed = false, g_briefingMessageSent = false;   // the game's briefing popup closed by us (per level)
 bool g_linkedLevel = false;   // this level continues g_linkedFrom
 bool g_scriptLevel = false;   // a Lua mission (scripthost.cpp)
+bool g_loadoutOn = true;      // settings featLoadout, taken when the level started
 std::string g_linkedFrom;     // "Mission4"
-enum Tab { kTabBriefing, kTabMission, kTabSquad, kTabOverview, kTabCount };
-const char* const kTabNames[kTabCount] = {"BRIEFING", "MISSION", "SQUAD", "OVERVIEW"};
+// CHARACTER (uniform, face, voice, gear) and LOADOUT (weapons) are the soldier tabs: the same screen, their own rows.
+// VEHICLE (vehicles.cpp): missions where the squad has a vehicle - the vehicle in the window, its choice on the right.
+enum Tab { kTabBriefing, kTabMission, kTabSquad, kTabLoadout, kTabVehicle, kTabOverview, kTabCount };
+const char* const kTabNames[kTabCount] = {"BRIEFING", "MISSION", "CHARACTER", "LOADOUT", "VEHICLE", "OVERVIEW"};
 int g_tab = kTabBriefing;
+int g_vsel = 0;   // VEHICLE tab: which of the squad's vehicle kinds
 bool MapTab() { return g_tab == kTabBriefing || g_tab == kTabMission || g_tab == kTabOverview; }
-bool TabAvailable(int t) { return t != kTabOverview || features::OverviewAvailable(); }
+bool TabAvailable(int t) {
+    if (t == kTabOverview) return features::OverviewAvailable();
+    if (t == kTabVehicle) return features::VehicleSlots() > 0;
+    return true;
+}
 
 // Co-op: players take turns (player 1 first); each edits only the soldiers they control (soldier +0x2B00 = owning
 // player, set by the game's squad-to-player mapping FUN_00436f70) with their own device. Single player: one turn.
@@ -134,8 +149,11 @@ void FindSquad() {
 constexpr uint32_t kSetViewSite = 0x4D672D, kSetView = 0x54FDF0;
 constexpr uint32_t kFogColour = 0xFF283038;
 constexpr float kFogStart = 300.0f, kFogEnd = 480.0f;  // cm from the eye; the soldier stands 2.8 m away
-constexpr float kOrbitDistance = 280.0f, kTargetHeight = 95.0f, kEyeHeight = 125.0f, kOrbitSpeed = 0.45f;  // rad/s
-LONGLONG g_orbitStart = 0;
+constexpr float kOrbitSpeed = 0.45f;  // rad/s (auto spin)
+float g_realDt = 0.0f;                // real seconds of the last frame (the world runs at 0.0001 while the screen is up)
+
+void CameraView(float* eye, float* ang);   // the screen's camera (below, after the rows it follows)
+void ResetCamera();
 
 void __fastcall SetView(void* view, void* /*edx*/, float* pos, float* rot) {
     using Fn = void(__thiscall*)(void*, float*, float*);
@@ -151,23 +169,8 @@ void __fastcall SetView(void* view, void* /*edx*/, float* pos, float* rot) {
         reinterpret_cast<Fn>(kSetView)(view, pos, rot);
         return;
     }
-    const float* at = reinterpret_cast<const float*>(g_squad[g_sel].soldier + 0x30);
-    LARGE_INTEGER now, freq;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&freq);
-    if (!g_orbitStart) {
-        g_orbitStart = now.QuadPart;
-#ifndef DS_DIST
-        dslog::Write("[dev] Customise camera: game eye %.0f %.0f %.0f rot %.3f %.3f %.3f, soldier %.0f %.0f %.0f", pos[0],
-                     pos[1], pos[2], rot[0], rot[1], rot[2], at[0], at[1], at[2]);
-#endif
-    }
-    const float t = static_cast<float>(now.QuadPart - g_orbitStart) / static_cast<float>(freq.QuadPart);
-    const float a = t * kOrbitSpeed;
-    float eye[3] = {at[0] + std::sin(a) * kOrbitDistance, at[1] + kEyeHeight, at[2] + std::cos(a) * kOrbitDistance};
-    const float dx = at[0] - eye[0], dy = at[1] + kTargetHeight - eye[1], dz = at[2] - eye[2];
-    constexpr float kDeg = 57.2957795f;  // the angles are in degrees (pitch > 0 looks down)
-    float ang[3] = {-std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * kDeg, std::atan2(dx, dz) * kDeg, 0.0f};
+    float eye[3], ang[3];
+    CameraView(eye, ang);
     reinterpret_cast<Fn>(kSetView)(view, eye, ang);
     features::SceneFogBegin();
 }
@@ -366,6 +369,28 @@ DWORD g_settleUntil = 0;
 
 void Settle() { g_settleUntil = GetTickCount() + 3000; }
 
+// Look ahead (setting featLoadoutLookAhead): a player who moved the view in the moment before the screen opened left
+// their soldier looking at the ground / sky - soldier +0x328 = look pitch in degrees (+0x334 follows it at the clamp,
+// -50 = up), the upper body and head follow it. Levelled for every player's soldier while the screen is up, with
+// the block's AIM_PITCH values (+0x5C, +0x64) and its mouse look state (+0x44C pitch accumulator, which 0x44B466 keeps
+// copying into +0x5C even with the devices off; +0x450 last dy, +0x454 / +0x458 flags), so nothing turns it back.
+// RESET VIEW (C / L3) does the same, setting or not, and runs the settle again so a half-blended stance finishes too.
+int BlockCount();
+bool g_resetView = false;   // a RESET VIEW settle is running: level the look whatever the setting
+void LookAhead() {
+    if (!settings::Get().featLoadoutLookAhead && !g_resetView) return;
+    for (int i = 0; i < BlockCount(); ++i) {
+        auto* block = reinterpret_cast<uint8_t*>(kBlocks + i * kBlockSize);
+        *reinterpret_cast<float*>(block + 0x5C) = 0.0f;
+        *reinterpret_cast<float*>(block + 0x64) = 0.0f;
+        for (uint32_t off = 0x44C; off <= 0x458; off += 4) *reinterpret_cast<uint32_t*>(block + off) = 0;
+        auto* soldier = *reinterpret_cast<uint8_t**>(block + 0x310);
+        if (!soldier) continue;
+        *reinterpret_cast<float*>(soldier + 0x328) = 0.0f;
+        *reinterpret_cast<float*>(soldier + 0x334) = 0.0f;
+    }
+}
+
 void HoldMain(uint8_t* soldier);
 
 // The soldier's faction: the side of the skin table his skin is in, -1 if none.
@@ -401,29 +426,14 @@ void ChangeKit(uint8_t* soldier, Slot slot, int dir) {
                  choices[next].empty() ? "(none)" : choices[next].c_str());
 }
 
-// ---- remembered choices (registry Enhancements\Loadout<SP|Coop><role> = "uniform;face;main;sidearm;launcher") ----
-constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
-
-// The exe has no manifest, so HKLM writes normally land in the VirtualStore. Where virtualization is off (or the key
-// is locked down) HKLM refuses with ERROR_ACCESS_DENIED - the values then go to the same path under HKCU. Reads take
-// HKCU first: a value is only there while HKLM can't be written (a successful HKLM write removes the HKCU copy).
-bool OpenChoiceKey(HKEY* key, bool* fallback) {
-    LSTATUS r = RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key, nullptr);
-    *fallback = r == ERROR_ACCESS_DENIED;
-    if (*fallback) r = RegCreateKeyExA(HKEY_CURRENT_USER, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, key, nullptr);
-    return r == ERROR_SUCCESS;
-}
-void SetChoiceString(HKEY key, bool fallback, const std::string& name, const std::string& value) {
-    RegSetValueExA(key, name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
-                   static_cast<DWORD>(value.size() + 1));
-    if (!fallback) RegDeleteKeyValueA(HKEY_CURRENT_USER, kRegKey, name.c_str());  // no stale HKCU copy
-}
+// ---- remembered choices (settings key, settings::Key(): Loadout<SP|Coop><role> =
+// "uniform;face;main;sidearm;launcher;grenades;headgear;backpack;face gear;7 pouch spots") ----
+void SetChoiceString(const std::string& name, const std::string& value) { settings::WriteString(name.c_str(), value); }
 bool GetChoiceString(const std::string& name, char* buf, DWORD size) {
-    DWORD n = size;
-    if (RegGetValueA(HKEY_CURRENT_USER, kRegKey, name.c_str(), RRF_RT_REG_SZ, nullptr, buf, &n) == ERROR_SUCCESS)
-        return true;
-    n = size;
-    return RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, name.c_str(), RRF_RT_REG_SZ, nullptr, buf, &n) == ERROR_SUCCESS;
+    std::string v;
+    if (!size || !settings::ReadString(name.c_str(), v)) return false;
+    snprintf(buf, size, "%s", v.c_str());
+    return true;
 }
 
 std::string ChoiceValue(int role) {
@@ -485,6 +495,39 @@ std::vector<std::string> GrenadeChoices() {
     return out;
 }
 
+// Left / Right on a gear row: the next model for that connector (none first); one that won't load is skipped.
+void ChangeGear(uint8_t* soldier, int slot, int dir) {
+    const std::vector<std::string> choices = features::GearChoices(slot);
+    const int n = static_cast<int>(choices.size());
+    if (n < 2) return;
+    const std::string cur = features::GearOn(soldier, slot);
+    int idx = -1;
+    for (int i = 0; i < n; ++i)
+        if (_stricmp(choices[i].c_str(), cur.c_str()) == 0) idx = i;
+    int next = idx;
+    for (int k = 0;; ++k) {
+        next = next < 0 ? (dir > 0 ? 0 : n - 1) : (next + dir + n) % n;
+        if (next == idx || k >= n) return;
+        if (features::SetGear(soldier, slot, choices[next])) break;
+    }
+    dslog::Write("Customise: gear %d %s -> %s", slot, cur.empty() ? "(none)" : cur.c_str(),
+                 choices[next].empty() ? "(none)" : choices[next].c_str());
+}
+
+// Left / Right on POUCHES: the next pouch set (a mix of his own counts as before the first).
+void ChangePouches(uint8_t* soldier, int dir) {
+    const int n = features::PouchSetCount();
+    if (n < 2) return;
+    const int cur = features::PouchSetOn(soldier);
+    int next = cur;
+    for (int k = 0;; ++k) {
+        next = next < 0 ? (dir > 0 ? 0 : n - 1) : (next + dir + n) % n;
+        if (next == cur || k >= n) return;
+        if (features::SetPouchSet(soldier, next)) break;
+    }
+    dslog::Write("Customise: pouches %s -> %s", features::PouchSetLabel(cur).c_str(), features::PouchSetLabel(next).c_str());
+}
+
 void ChangeGrenades(uint8_t* soldier, int dir) {
     const std::vector<std::string> choices = GrenadeChoices();
     if (choices.empty()) return;
@@ -499,7 +542,14 @@ void ChangeGrenades(uint8_t* soldier, int dir) {
     dslog::Write("Customise: grenades %s -> %s", cur.c_str(), choices[next].c_str());
 }
 
-// A soldier's kit as "uniform;face;main;sidearm;launcher;grenades" (- = none).
+// Gear rows' value in a kit string: model name, "-" = none, "" = unknown model (left alone when applied).
+std::string GearField(uint8_t* soldier, int slot) {
+    const std::string g = features::GearOn(soldier, slot);
+    return g.empty() ? "-" : g == "?" ? "" : g;
+}
+
+// A soldier's kit as "uniform;face;main;sidearm;launcher;grenades;headgear;backpack;face gear;belt;belt left;belt right;
+// hip left;hip right;chest left;chest right" (- = none).
 std::string CurrentChoice(const Member& m) {
     int uniform = 0, index = 0;
     if (!CurrentSkin(m.soldier, m.role, uniform, index)) uniform = index = -1;
@@ -509,7 +559,25 @@ std::string CurrentChoice(const Member& m) {
         v += ";";
         v += items.empty() ? "-" : *reinterpret_cast<const char**>(items[0].second + 4);
     }
-    return v + ";" + GrenadeSet(m.soldier);
+    v += ";" + GrenadeSet(m.soldier);
+    for (int g = 0; g < features::kGearSlotCount; ++g) v += ";" + GearField(m.soldier, g);
+    return v;
+}
+
+// The kit string's gear fields (6.., gear.cpp's slots in order), where the model can be loaded in this level. Older
+// strings have fewer.
+void ApplyGearFields(uint8_t* soldier, const std::vector<std::string>& part) {
+    for (int g = 0; g < features::kGearSlotCount && 6 + g < static_cast<int>(part.size()); ++g) {
+        const std::string& want = part[6 + g];
+        if (want.empty() || _stricmp(want.c_str(), GearField(soldier, g).c_str()) == 0) continue;
+        if (want == "-") {
+            features::SetGear(soldier, g, "");
+            continue;
+        }
+        const std::vector<std::string> choices = features::GearChoices(g);
+        if (std::find_if(choices.begin(), choices.end(), [&](const std::string& c) { return _stricmp(c.c_str(), want.c_str()) == 0; }) != choices.end())
+            features::SetGear(soldier, g, want);
+    }
 }
 
 // Applies a kit string where it still fits (weapons found in this mode and loadable in this level).
@@ -525,7 +593,11 @@ void ApplyChoice(const Member& m, const std::string& value) {
     const int uniform = atoi(part[0].c_str()), index = atoi(part[1].c_str());
     if (uniform >= 0 && uniform < kSides && index >= 0 && index < SkinCount(uniform, m.role) && Selectable(uniform, m.role, index))
         if (uint8_t* entry = SkinEntry(uniform, m.role, index))
-            if (entry != *reinterpret_cast<uint8_t**>(m.soldier + 0x2A68)) ApplySkin(m.soldier, entry);
+            if (entry != *reinterpret_cast<uint8_t**>(m.soldier + 0x2A68)) {
+                const int side = SideOf(m.soldier);
+                ApplySkin(m.soldier, entry);
+                if (side != uniform) features::FactionGear(m.soldier, m.role, uniform);   // pouches etc. of the new faction
+            }
     const Slot slots[3] = {Slot::Main, Slot::Sidearm, Slot::Launcher};
     for (int k = 0; k < 3; ++k) {
         const std::string& want = part[2 + k];
@@ -549,6 +621,7 @@ void ApplyChoice(const Member& m, const std::string& value) {
         if (part[5] == "-" || std::find_if(g.begin(), g.end(), [&](const std::string& c) { return _stricmp(c.c_str(), part[5].c_str()) == 0; }) != g.end())
             SetGrenades(m.soldier, part[5]);
     }
+    ApplyGearFields(m.soldier, part);
 }
 
 std::vector<std::string> SplitChoice(const std::string& value) {
@@ -594,6 +667,7 @@ void FactionKit(int side, int role, std::string& main, std::string& sidearm) {
 // faction's standard issue (main weapon + sidearm, where this level can hand them out).
 void FollowFaction(Member& m, int from, int to) {
     if (from == to || to < 0) return;
+    features::FactionGear(m.soldier, m.role, to);   // the new faction's hat, pack and pouches
     std::vector<std::string> cur = SplitChoice(CurrentChoice(m));
     if (to == m.openSide && !m.openKit.empty()) {
         std::vector<std::string> kit = SplitChoice(m.openKit);
@@ -613,12 +687,7 @@ void FollowFaction(Member& m, int from, int to) {
 }
 
 void SaveChoices() {
-    HKEY key;
-    bool fallback;
-    if (!OpenChoiceKey(&key, &fallback)) return;
-    for (int i = 0; i < g_squadCount; ++i)
-        SetChoiceString(key, fallback, ChoiceValue(g_squad[i].role), CurrentChoice(g_squad[i]));
-    RegCloseKey(key);
+    for (int i = 0; i < g_squadCount; ++i) SetChoiceString(ChoiceValue(g_squad[i].role), CurrentChoice(g_squad[i]));
 }
 
 void ApplyChoices() {
@@ -658,7 +727,11 @@ void ApplyScriptKit(uint8_t* soldier, const ScriptKit& k) {
             for (int u = 0; u < kSides; ++u)
                 for (int i = 0, n = SkinCount(u, role); i < n; ++i)
                     if (uint8_t* e = SkinEntry(u, role, i); e && _stricmp(reinterpret_cast<const char*>(e + 4), k.uniform.c_str()) == 0) {
-                        if (e != *reinterpret_cast<uint8_t**>(soldier + 0x2A68)) ApplySkin(soldier, e);
+                        if (e != *reinterpret_cast<uint8_t**>(soldier + 0x2A68)) {
+                            const int side = SideOf(soldier);
+                            ApplySkin(soldier, e);
+                            if (side != u) features::FactionGear(soldier, role, u);
+                        }
                         return;
                     }
             dslog::Write("[fail] Customise: mission uniform %s not in the skin tables", k.uniform.c_str());
@@ -729,13 +802,9 @@ std::string CarryValue(const char* what) {
 }
 
 void SnapshotCarry(const std::string& level) {
-    HKEY key;
-    bool fallback;
-    if (!OpenChoiceKey(&key, &fallback)) return;
     for (int i = 0; i < g_squadCount; ++i)
-        SetChoiceString(key, fallback, CarryValue(std::to_string(g_squad[i].role).c_str()), CurrentChoice(g_squad[i]));
-    SetChoiceString(key, fallback, CarryValue("From"), level);
-    RegCloseKey(key);
+        SetChoiceString(CarryValue(std::to_string(g_squad[i].role).c_str()), CurrentChoice(g_squad[i]));
+    SetChoiceString(CarryValue("From"), level);
 }
 
 std::string CarryFrom() {
@@ -786,6 +855,17 @@ void LateDraw();
 bool g_primed = false;  // input: ignore whatever is held when the screen opens
 
 void Open(bool linked = false) {
+#ifndef DS_DIST
+    {   // dev A/B: Dev\CustomiseOff = 1 never opens the screen (vehicle swaps still happen at load)
+        DWORD v = 0, size = sizeof v;
+        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "CustomiseOff", RRF_RT_REG_DWORD, nullptr, &v,
+                         &size) == ERROR_SUCCESS && v) {
+            g_phase = Phase::Done;
+            dslog::Write("[dev] Customise: screen off (Dev\\CustomiseOff)");
+            return;
+        }
+    }
+#endif
     FindSquad();
     if (!g_squadCount) {
         g_phase = Phase::Done;
@@ -795,6 +875,13 @@ void Open(bool linked = false) {
     g_phase = Phase::Open;
     g_sel = g_row = g_mrow = 0;
     g_tab = kTabBriefing;
+    g_vsel = 0;
+    if (features::VehicleReloadOpened() && features::VehicleSlots()) g_tab = kTabVehicle;   // back after a vehicle change
+    {   // soldiers seated in a vehicle stand beside it while the screen is up (a seated one isn't drawn)
+        uint8_t* soldiers[4];
+        for (int i = 0; i < g_squadCount; ++i) soldiers[i] = g_squad[i].soldier;
+        features::StageSquadOutside(soldiers, g_squadCount);
+    }
     g_textPage = 0;
     g_turn = 0;
     if (Players()) {   // player 1 may control none of the soldiers listed first
@@ -816,6 +903,7 @@ void Open(bool linked = false) {
         g_squad[i].openKit = CurrentChoice(g_squad[i]);
     }
     Settle();
+    LookAhead();
     g_primed = false;
     auto* mult = reinterpret_cast<float*>(kTimeMultiplier);
     g_savedMultiplier = *mult;
@@ -827,13 +915,16 @@ void Open(bool linked = false) {
     }
     features::RuleTimeOfDay();   // the mission's start-up set-up (after the overview) may have set its own hour
     overlay::SetLateDraw(&LateDraw);
-    g_orbitStart = 0;
+    ResetCamera();
     SingleView(true);
     features::SetSceneFog(true, kFogColour, kFogStart, kFogEnd);
     dslog::Write("Customise: opened in %s, %d soldiers", g_level, g_squadCount);
 }
 
-void Close() {
+// forLevelLoad: a level load was requested while the screen is up (console / script level change) - put the game's
+// state back before the load runs (closing after it restored the old level's split views into the new one, which then
+// crashed creating objects at 0x4CCF82) and don't restart the mission for a changed vehicle.
+void Close(bool forLevelLoad = false) {
     if (!g_linkedLevel && !features::ScriptLevelActive()) SaveChoices();   // (carried / mission kits aren't choices)
     SingleView(false);
     *reinterpret_cast<float*>(kTimeMultiplier) = g_savedMultiplier;
@@ -841,13 +932,17 @@ void Close() {
         *reinterpret_cast<int*>(kBlocks + i * kBlockSize + kBlockDevices) = g_savedDevices[i];
     overlay::SetLateDraw(nullptr);
     features::SetSceneFog(false, 0, 0, 0);
+    features::VehicleShowEnd();
+    features::ReturnSquadInside();
     g_phase = Phase::Done;
-    dslog::Write("Customise: closed");
+    dslog::Write(forLevelLoad ? "Customise: closed (level load)" : "Customise: closed");
+    if (!g_linkedLevel && !forLevelLoad) features::VehiclesCommit();   // a changed vehicle restarts the mission with it
 }
 
 // ---- input ----
 enum : uint32_t { kUp = 1, kDown = 2, kLeft = 4, kRight = 8, kAccept = 16, kPrev = 32, kNext = 64, kTabPrev = 128, kTabNext = 256,
-                  kPlay = 512 };
+                  kPlay = 512, kSpin = 1024, kResetView = 2048 };
+float g_turnInput = 0, g_zoomInput = 0;   // held camera input this frame: turn -1..1 (right +), zoom -1..1 (in +)
 uint32_t g_prevPad[8] = {}, g_prevKeys = 0;
 
 uint32_t ReadInput() {
@@ -869,10 +964,13 @@ uint32_t ReadInput() {
         if (edge & (1u << 4)) in |= kTabPrev;   // L2
         if (edge & (1u << 5)) in |= kTabNext;   // R2
         if (edge & (1u << 3)) in |= kPlay;      // Square / X: play the overview
+        if (edge & (1u << 10)) in |= kSpin;     // R3: camera spin on / off
+        if (edge & (1u << 9)) in |= kResetView; // L3: soldiers look ahead again
     }
     static const int map[][2] = {{VK_UP, kUp},       {VK_DOWN, kDown}, {VK_LEFT, kLeft},  {VK_RIGHT, kRight},
                                  {VK_RETURN, kAccept}, {'Q', kPrev},    {'E', kNext},      {VK_PRIOR, kPrev},
-                                 {VK_NEXT, kNext},     {VK_SPACE, kPlay}};
+                                 {VK_NEXT, kNext},     {VK_SPACE, kPlay},   {'R', kSpin},
+                                 {'C', kResetView}};
     uint32_t keys = 0;
     if (onlyPad < 0) {
         for (auto& k : map)
@@ -882,12 +980,37 @@ uint32_t ReadInput() {
     if (g_primed) in |= keys & ~g_prevKeys;
     g_prevKeys = keys;
     g_primed = true;
+    // Held camera input: A / D turn, W / S zoom, the mouse wheel zooms; the right stick (game axes at 0x754270 +
+    // j * 0x150, 3 floats per axis, value first: axis 2 right Y, 3 right X) turns and zooms.
+    g_turnInput = g_zoomInput = 0;
+    if (onlyPad < 0) {
+        g_turnInput += (features::KeyHeld('D') ? 1.0f : 0.0f) - (features::KeyHeld('A') ? 1.0f : 0.0f);
+        g_zoomInput += (features::KeyHeld('W') ? 1.0f : 0.0f) - (features::KeyHeld('S') ? 1.0f : 0.0f);
+        const int wheel = *reinterpret_cast<int*>(0x754C24 + 8);   // DIMOUSESTATE lZ (120 per notch)
+        g_zoomInput += std::clamp(wheel / 30.0f, -4.0f, 4.0f);
+    }
+    for (int j = 0; j < count; ++j) {
+        if (onlyPad != -2 && onlyPad != j) continue;
+        const auto* axes = reinterpret_cast<const float*>(0x754270 + j * 0x150);
+        auto dz = [](float v) { return std::fabs(v) < 0.25f ? 0.0f : v; };
+        g_turnInput += dz(axes[9]);
+        g_zoomInput -= dz(axes[6]);
+    }
+    g_turnInput = std::clamp(g_turnInput, -1.0f, 1.0f);
     return in;
 }
 
 // ---- rows ----
 // SQUAD tab rows (per soldier).
-enum Row { kRowUniform, kRowFace, kRowVoice, kRowMain, kRowSidearm, kRowLauncher, kRowGrenades, kRowCount };
+// POUCHES = a whole pouch set; with "free pouch choice" (featFreeGear) the 7 spot rows replace it.
+enum Row { kRowUniform, kRowFace, kRowVoice, kRowHead, kRowBack, kRowFaceGear, kRowPouches, kRowBelt, kRowBeltL,
+           kRowBeltR, kRowHipL, kRowHipR, kRowChestL, kRowChestR, kRowMain, kRowSidearm, kRowLauncher, kRowGrenades,
+           kRowCount };
+int GearSlotOf(int row) {   // gear.cpp's slot of a gear row, -1 for other rows
+    if (row >= kRowBelt && row <= kRowChestR) return features::kGearFirstPouch + (row - kRowBelt);
+    return row == kRowHead ? features::kGearHead : row == kRowBack ? features::kGearBack
+                                                   : row == kRowFaceGear ? features::kGearFace : -1;
+}
 
 // A row a Lua mission fixed for this soldier (game.kit with lock): uniform / soldier rows when it set a uniform, the
 // kit rows it named.
@@ -901,9 +1024,340 @@ bool RowLocked(const Member& m, int row) {
     if (row == kRowGrenades) return !k->slot[3].empty();
     return false;
 }
-const char* const kRowNames[kRowCount] = {"UNIFORM", "SOLDIER", "VOICE", "MAIN WEAPON", "SIDEARM", "LAUNCHER", "GRENADES"};
-constexpr float kRowTop = 0.20f, kOptH = 0.075f;  // fractions of the screen height
-float RowY(int r, float H) { return H * (kRowTop + r * kOptH); }
+const char* const kRowNames[kRowCount] = {"UNIFORM", "SOLDIER", "VOICE", "HEADGEAR", "BACKPACK", "FACE", "POUCHES",
+                                          "BELT (BACK)", "BELT (LEFT)", "BELT (RIGHT)", "HIP (LEFT)", "HIP (RIGHT)",
+                                          "CHEST (LEFT)", "CHEST (RIGHT)", "MAIN WEAPON", "SIDEARM", "LAUNCHER", "GRENADES"};
+constexpr float kRowTop = 0.20f;  // fractions of the screen height
+constexpr int kMaxRows = 10;      // rows on the panel at once; more scroll
+bool RowShown(int r) {
+    if ((r >= kRowMain) != (g_tab == kTabLoadout)) return false;   // weapons on LOADOUT, the rest on CHARACTER
+    if (r == kRowVoice) return settings::Get().featVoices;
+    if (r == kRowPouches) return !settings::Get().featFreeGear;
+    if (r >= kRowBelt && r <= kRowChestR) return settings::Get().featFreeGear;
+    return true;
+}
+int ShownBefore(int r) {
+    int at = 0;
+    for (int k = 0; k < r; ++k) at += RowShown(k) ? 1 : 0;
+    return at;
+}
+int ShownRows() { return ShownBefore(kRowCount); }
+float OptH() {   // row pitch: 0.075 of the screen height, less when the rows wouldn't fit above 0.80
+    return std::min(0.075f, 0.60f / std::max(1, std::min(ShownRows(), kMaxRows)));
+}
+int g_rowScroll = 0;   // first row shown (counting shown rows only)
+void FollowRow() {     // keeps the selected row in the window
+    const int at = ShownBefore(g_row);
+    if (at < g_rowScroll) g_rowScroll = at;
+    if (at >= g_rowScroll + kMaxRows) g_rowScroll = at - kMaxRows + 1;
+    g_rowScroll = std::clamp(g_rowScroll, 0, std::max(0, ShownRows() - kMaxRows));
+}
+bool RowVisible(int r) {
+    const int at = ShownBefore(r);
+    return RowShown(r) && at >= g_rowScroll && at < g_rowScroll + kMaxRows;
+}
+float RowY(int r, float H) {   // hidden and scrolled-off rows take no place
+    return H * (kRowTop + (ShownBefore(r) - g_rowScroll) * OptH());
+}
+int StepRow(int r, int dir) {
+    for (int k = 0; k < kRowCount; ++k) {
+        r = (r + dir + kRowCount) % kRowCount;
+        if (RowShown(r)) break;
+    }
+    return r;
+}
+
+// ---- preview camera ----
+// Frames what the selected row changes: the hat for HEADGEAR, the face for FACE, the back for BACKPACK, each pouch
+// spot from its side, the hands for weapons, the whole man for UNIFORM. Body points = the bone connectors' world
+// positions: connector index FUN_00502c30 (thiscall instance, name hash 0x4B9C30), its world matrix FUN_00502ca0
+// (thiscall instance, index; instance +0x22C, 0x44 bytes each), point through the matrix FUN_00540470 (thiscall
+// matrix, in, out) - as the game finds a weapon's muzzle (FUN_004410d0). The side a part faces = from the body's
+// middle at that height (between the belt's side points / chest and back) out to the part.
+// Spin on (setting featLoadoutSpin, R / R3): the camera turns round the part by itself; off: it moves to the part's
+// side and stays. A / D or the right stick turn it, W / S, the wheel or the right stick zoom.
+struct Vec {
+    float x = 0, y = 0, z = 0;
+};
+Vec Add(Vec a, Vec b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+Vec Sub(Vec a, Vec b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+Vec Mid(Vec a, Vec b) { return {(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2}; }
+Vec Flat(Vec v) {   // horizontal unit vector, {} if too short
+    const float l = std::sqrt(v.x * v.x + v.z * v.z);
+    return l < 1.0f ? Vec{} : Vec{v.x / l, 0, v.z / l};
+}
+Vec Turn(Vec v, float deg) {   // about the up axis
+    const float r = deg / 57.2957795f, c = std::cos(r), s2 = std::sin(r);
+    return {v.x * c + v.z * s2, 0, -v.x * s2 + v.z * c};
+}
+
+// A connector's matrix is only kept up to date while something hangs on it (an empty one reads 0, 0, 0); the bones
+// ("BIP01 HEAD", "BIP01 SPINE2", ...) always are - they pose the skin. Bones are found by name in the model's object
+// list (instance +0xC8 first object, +0xE8 next, +0xE4 name hash) - the position in that list is the matrix index.
+void* BoneMatrix(void* inst, uint32_t hash) {
+    int index = 0;
+    for (auto* o = *reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(inst) + 0xC8); o && index < 256;
+         o = *reinterpret_cast<uint8_t**>(o + 0xE8), ++index)
+        if (*reinterpret_cast<uint32_t*>(o + 0xE4) == hash)
+            return *reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(inst) + 0x22C) + index * 0x44;
+    return nullptr;
+}
+
+bool BodyPoint(uint8_t* soldier, const char* connector, Vec& out) {
+    void* inst = *reinterpret_cast<void**>(soldier + 0x2C);
+    if (!inst) return false;
+    const uint32_t hash = reinterpret_cast<uint32_t(__cdecl*)(const char*)>(0x4B9C30)(connector);
+    void* m = nullptr;
+    if (strstr(connector, "CONNECTOR")) {
+        const int index = reinterpret_cast<int(__thiscall*)(void*, uint32_t)>(0x502C30)(inst, hash);
+        if (index >= 0) m = reinterpret_cast<void*(__thiscall*)(void*, int)>(0x502CA0)(inst, index);
+    } else {
+        m = BoneMatrix(inst, hash);
+    }
+    if (!m) return false;
+    const float in[3] = {0, 0, 0};
+    float o[3] = {};
+    reinterpret_cast<void(__thiscall*)(void*, const float*, float*)>(0x540470)(m, in, o);
+    const float* feet = reinterpret_cast<const float*>(soldier + 0x30);
+    const float dx = o[0] - feet[0], dy = o[1] - feet[1], dz = o[2] - feet[2];
+    if (!std::isfinite(o[0]) || dx * dx + dy * dy + dz * dz > 300.0f * 300.0f) {   // not a body point
+#ifndef DS_DIST
+        static std::map<std::string, int> logged;
+        if (logged[connector]++ == 0)
+            dslog::Write("[dev] Customise camera: %s at %.0f %.0f %.0f, %.0f cm from the feet - not used", connector, o[0], o[1],
+                         o[2], std::sqrt(dx * dx + dy * dy + dz * dz));
+#endif
+        return false;
+    }
+    out = {o[0], o[1], o[2]};
+    return true;
+}
+
+struct Focus {
+    Vec target;
+    Vec side;         // where the camera looks from (horizontal unit vector from the target), {} = anywhere
+    float dist = 280; // cm
+    float lift = 30;  // eye above the target, cm
+};
+
+Focus FocusFor(uint8_t* s, int row) {
+    const float* p = reinterpret_cast<const float*>(s + 0x30);
+    const Vec feet{p[0], p[1], p[2]};
+    Vec hat, face, back, belt, beltL, beltR, hipL, hipR, chestL, chestR, hand;
+    // Each part takes its connector if something hangs on it now, else a point made from the bones.
+    Vec head, spine2, pelvis, thighL, thighR, clavL, clavR;
+    const bool okHead = BodyPoint(s, "BIP01 HEAD", head), okSpine = BodyPoint(s, "BIP01 SPINE2", spine2);
+    const bool okPelvis = BodyPoint(s, "BIP01 PELVIS", pelvis);
+    const bool okThighs = BodyPoint(s, "BIP01 L THIGH", thighL) && BodyPoint(s, "BIP01 R THIGH", thighR);
+    const bool okClav = BodyPoint(s, "BIP01 L CLAVICLE", clavL) && BodyPoint(s, "BIP01 R CLAVICLE", clavR);
+    bool okHat = BodyPoint(s, "BIP01 HAT CONNECTOR", hat), okFace = BodyPoint(s, "BIP01 FACE CONNECTOR", face);
+    bool okBack = BodyPoint(s, "BIP01 SPINE1 CONNECTOR", back), okBelt = BodyPoint(s, "BIP01 SPINE2 CONNECTOR", belt);
+    bool okBelts = BodyPoint(s, "BIP01 SPINE2L CONNECTOR", beltL) && BodyPoint(s, "BIP01 SPINE2R CONNECTOR", beltR);
+    bool okHips = BodyPoint(s, "BIP01 HIPL CONNECTOR", hipL) && BodyPoint(s, "BIP01 HIPR CONNECTOR", hipR);
+    bool okChest = BodyPoint(s, "BIP01 CHESTL CONNECTOR", chestL) && BodyPoint(s, "BIP01 CHESTR CONNECTOR", chestR);
+    const bool okHand = BodyPoint(s, "BIP01 R HAND", hand);
+    // facing: chest front minus back (both worn), else square to the clavicles, pointing away from the back of the
+    // spine (the pack side): clavicle line turned a quarter, sign chosen so the head is in front of the upper back
+    Vec fwd = okChest && okBack ? Flat(Sub(Mid(chestL, chestR), back)) : Vec{};
+    if (fwd.x == 0 && fwd.z == 0 && okClav) {
+        const Vec lr = Flat(Sub(clavR, clavL));
+        fwd = {-lr.z, 0, lr.x};
+        // the head sits a little in front of the upper spine: flip if this points the other way
+        if (okHead && okSpine) {
+            const Vec hs = Sub(head, spine2);
+            if (hs.x * fwd.x + hs.z * fwd.z < 0) fwd = {-fwd.x, 0, -fwd.z};
+        }
+    }
+    if (fwd.x == 0 && fwd.z == 0) fwd = {0, 0, 1};
+    // parts with nothing on them now: points made from the bones (cm)
+    auto ahead = [&](Vec p, float f, float up) { return Vec{p.x + fwd.x * f, p.y + up, p.z + fwd.z * f}; };
+    const Vec hipMid = okThighs ? Mid(thighL, thighR) : pelvis;
+    auto outward = [&](Vec t, float k) { return Add(t, Vec{(t.x - hipMid.x) * k, 0, (t.z - hipMid.z) * k}); };
+    if (!okHat && okHead) hat = ahead(head, 0, 14), okHat = true;
+    if (!okFace && okHead) face = ahead(head, 10, 2), okFace = true;
+    if (!okBack && okSpine) back = ahead(spine2, -14, 0), okBack = true;
+    if (!okBelt && okPelvis) belt = ahead(pelvis, -13, 8), okBelt = true;
+    if (!okBelts && okThighs) beltL = Add(outward(thighL, 0.6f), Vec{0, 14, 0}), beltR = Add(outward(thighR, 0.6f), Vec{0, 14, 0}), okBelts = true;
+    if (!okHips && okThighs) hipL = outward(thighL, 1.0f), hipR = outward(thighR, 1.0f), okHips = true;
+    if (!okChest && okClav && okSpine)
+        chestL = ahead(Mid(clavL, spine2), 12, 0), chestR = ahead(Mid(clavR, spine2), 12, 0), okChest = true;
+    const Vec back3 = {-fwd.x, 0, -fwd.z};
+    const Vec waist = okBelts ? Mid(beltL, beltR) : Add(feet, Vec{0, 95, 0});
+    const Vec chest = okChest && okBack ? Mid(Mid(chestL, chestR), back) : Add(waist, Vec{0, 30, 0});
+    auto outFrom = [&](Vec part, Vec centre) {   // the side a part faces
+        Vec d = Flat(Sub(part, centre));
+        return d.x == 0 && d.z == 0 ? fwd : d;
+    };
+    Focus f;
+    const float top = okHat ? hat.y : feet.y + 170;
+    f.target = {feet.x, (feet.y + top) / 2, feet.z};   // the whole man
+    f.side = Turn(fwd, 30);
+    f.dist = 280, f.lift = 30;
+    switch (row) {
+    case kRowHead:
+        if (okHat) f.target = Add(hat, Vec{0, -8, 0}), f.side = Turn(fwd, 25), f.dist = 85, f.lift = 18;
+        break;
+    case kRowFaceGear:
+        if (okFace) f.target = face, f.side = Turn(fwd, 15), f.dist = 70, f.lift = 6;
+        break;
+    case kRowFace:
+    case kRowVoice:
+        if (okFace) f.target = Add(face, Vec{0, -10, 0}), f.side = Turn(fwd, 20), f.dist = 120, f.lift = 10;
+        break;
+    case kRowBack:
+        if (okBack) f.target = back, f.side = Turn(back3, 20), f.dist = 140, f.lift = 25;
+        break;
+    case kRowPouches:
+        f.target = waist, f.side = Turn(back3, 45), f.dist = 150, f.lift = 35;
+        break;
+    case kRowBelt:
+        if (okBelt) f.target = belt, f.side = outFrom(belt, waist), f.dist = 100, f.lift = 20;
+        break;
+    case kRowBeltL:
+    case kRowBeltR:
+        if (okBelts) {
+            const Vec part = row == kRowBeltL ? beltL : beltR;
+            f.target = part, f.side = outFrom(part, waist), f.dist = 100, f.lift = 20;
+        }
+        break;
+    case kRowHipL:
+    case kRowHipR:
+        if (okHips) {
+            const Vec part = row == kRowHipL ? hipL : hipR;
+            f.target = part, f.side = outFrom(part, Add(waist, Vec{0, part.y - waist.y, 0})), f.dist = 100, f.lift = 20;
+        }
+        break;
+    case kRowChestL:
+    case kRowChestR:
+        if (okChest) {
+            const Vec part = row == kRowChestL ? chestL : chestR;
+            f.target = part, f.side = outFrom(part, chest), f.dist = 100, f.lift = 15;
+        }
+        break;
+    case kRowMain:
+    case kRowSidearm:
+        if (okHand) f.target = hand, f.side = Turn(fwd, 40), f.dist = 150, f.lift = 20;
+        break;
+    case kRowLauncher:
+        if (okBack) f.target = back, f.side = Turn(back3, 35), f.dist = 190, f.lift = 30;
+        break;
+    case kRowGrenades:
+        f.target = waist, f.side = Turn(fwd, -35), f.dist = 160, f.lift = 30;
+        break;
+    default:
+        break;   // UNIFORM: the whole man
+    }
+    return f;
+}
+
+struct Camera {
+    bool set = false;
+    Vec target;
+    float yaw = 0, dist = 280, lift = 30;
+} g_cam;
+float g_zoom = 1.0f, g_manualYaw = 0.0f;   // the player's zoom (kept across rows) and turn (until the row changes)
+int g_focusKey = -1;
+
+void ResetCamera() {
+    g_cam = {};
+    g_zoom = 1.0f, g_manualYaw = 0.0f, g_focusKey = -1;
+}
+
+float AngleTo(float from, float to) {   // shortest turn
+    float d = std::fmod(to - from, 6.2831853f);
+    if (d > 3.14159265f) d -= 6.2831853f;
+    if (d < -3.14159265f) d += 6.2831853f;
+    return d;
+}
+
+void CameraView(float* eyeOut, float* angOut) {
+    static LARGE_INTEGER last{};
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    const float dt = last.QuadPart ? std::min(0.1f, static_cast<float>(now.QuadPart - last.QuadPart) / freq.QuadPart) : 0.0f;
+    last = now;
+    uint8_t* soldier = g_squad[g_sel].soldier;
+    const int row = MapTab() ? kRowUniform : g_row;
+    uint8_t* vehicle = g_tab == kTabVehicle ? features::VehicleObject(g_vsel) : nullptr;
+    const int key = vehicle ? 900000 + g_vsel : g_sel * 1000 + g_tab * 100 + row;
+    if (key != g_focusKey) g_focusKey = key, g_manualYaw = 0.0f;   // a new part: back to its own view
+    Focus f;
+    if (vehicle) {   // the VEHICLE tab: the whole vehicle from a few metres out, a little above
+        const float* p = reinterpret_cast<const float*>(vehicle + 0x30);
+        f.target = {p[0], p[1] + 130.0f, p[2]};
+        f.dist = 900.0f, f.lift = 260.0f;
+    } else {
+        f = FocusFor(soldier, row);
+    }
+    const bool spin = settings::Get().featLoadoutSpin;
+    g_zoom = std::clamp(g_zoom * std::exp(-g_zoomInput * dt * 1.4f), 0.45f, 2.2f);
+    const float turn = g_turnInput * 1.8f * dt;
+    const float partYaw = f.side.x == 0 && f.side.z == 0 ? g_cam.yaw : std::atan2(f.side.x, f.side.z);
+    if (!g_cam.set) {   // first frame: straight to the view
+        g_cam.set = true;
+        g_cam.target = f.target, g_cam.yaw = partYaw, g_cam.dist = f.dist * g_zoom, g_cam.lift = f.lift;
+    }
+    const float k = 1.0f - std::exp(-dt * 5.0f);   // ease towards the wanted view
+    g_cam.target = Add(g_cam.target, Vec{(f.target.x - g_cam.target.x) * k, (f.target.y - g_cam.target.y) * k,
+                                         (f.target.z - g_cam.target.z) * k});
+    g_cam.dist += (f.dist * g_zoom - g_cam.dist) * k;
+    g_cam.lift += (f.lift - g_cam.lift) * k;
+    if (spin) {
+        g_cam.yaw += kOrbitSpeed * dt + turn;
+    } else {
+        g_manualYaw += turn;
+        g_cam.yaw += AngleTo(g_cam.yaw, partYaw + g_manualYaw) * k;
+    }
+    const Vec eye = {g_cam.target.x + std::sin(g_cam.yaw) * g_cam.dist, g_cam.target.y + g_cam.lift,
+                     g_cam.target.z + std::cos(g_cam.yaw) * g_cam.dist};
+    const float dx = g_cam.target.x - eye.x, dy = g_cam.target.y - eye.y, dz = g_cam.target.z - eye.z;
+    constexpr float kDeg = 57.2957795f;  // the angles are in degrees (pitch > 0 looks down)
+    eyeOut[0] = eye.x, eyeOut[1] = eye.y, eyeOut[2] = eye.z;
+    angOut[0] = -std::atan2(dy, std::sqrt(dx * dx + dz * dz)) * kDeg, angOut[1] = std::atan2(dx, dz) * kDeg, angOut[2] = 0.0f;
+    // the fog wall stays a little behind the soldier at any zoom
+    const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (vehicle) features::SetSceneFog(true, kFogColour, d + 450.0f, d + 1100.0f);   // (a tank is 7 m long)
+    else features::SetSceneFog(true, kFogColour, d + 40.0f, d + 220.0f);
+}
+
+// ---- the squad's animations keep playing while the world is paused ----
+// Every render instance's animation channels advance in FUN_005022a0 (called per instance from the scene update
+// FUN_004ddee0 at 0x4DDF3D) by the animation timer's frame time, [0x63C954] +0xA8 (read by FUN_005022e0 through
+// FUN_004ba480) - which the paused world (time multiplier 0.0001) makes nearly 0. For the squad's instances it gets the
+// real frame time.
+constexpr uint32_t kAnimateSite = 0x4DDF3D, kAnimate = 0x5022A0;
+void __fastcall Animate(void* inst) {
+    using Fn = void(__thiscall*)(void*);
+    auto* timer = *reinterpret_cast<uint8_t**>(0x63C954);
+    float photoDt = 0.0f;   // photo mode: a posed soldier held / scrubbed
+    if (timer && features::PhotoAnimate(inst, photoDt)) {
+        float& dt = *reinterpret_cast<float*>(timer + 0xA8);
+        const float saved = dt;
+        dt = photoDt;
+        reinterpret_cast<Fn>(kAnimate)(inst);
+        dt = saved;
+        return;
+    }
+    bool squad = false;
+    if (g_phase == Phase::Open && timer && *reinterpret_cast<float*>(kTimeMultiplier) < 0.01f && !features::OverviewPlaying())
+        for (int i = 0; i < g_squadCount && !squad; ++i) squad = *reinterpret_cast<void**>(g_squad[i].soldier + 0x2C) == inst;
+    if (!squad) return reinterpret_cast<Fn>(kAnimate)(inst);
+    float& dt = *reinterpret_cast<float*>(timer + 0xA8);
+    const float saved = dt;
+#ifndef DS_DIST
+    static int calls = 0;
+    if (++calls == 60 || calls == 600) {   // channel 0 / 1 states (instance +0x248 + ch * 0x34: +0 anim, +0xC time, +0x14 loops)
+        auto* ch = static_cast<uint8_t*>(inst) + 0x248;
+        dslog::Write("[dev] Customise: squad animation (call %d, dt %.4f): ch0 anim %p time %.2f loops %d, ch1 anim %p time %.2f",
+                     calls, g_realDt, *reinterpret_cast<void**>(ch), *reinterpret_cast<float*>(ch + 0xC),
+                     *reinterpret_cast<int*>(ch + 0x14), *reinterpret_cast<void**>(ch + 0x34), *reinterpret_cast<float*>(ch + 0x40));
+    }
+#endif
+    dt = g_realDt;
+    reinterpret_cast<Fn>(kAnimate)(inst);
+    dt = saved;
+}
 
 // ---- tabs ----
 // MISSION (map, objectives, time of day), SQUAD (the soldiers' rows) and OVERVIEW (the mission's night-vision
@@ -973,7 +1427,12 @@ void ReadObjectives() {
     }
 }
 
-int MissionRows() { return static_cast<int>(g_objectives.size()) + 2; }
+bool TimeRows() { return settings::Get().featTimeOfDay; }   // TIME OF DAY / TIME FLOW (timeofday.cpp)
+bool WeatherRow() { return settings::Get().featWeather; }    // WEATHER (weather.cpp)
+int SettingRows() { return (TimeRows() ? 2 : 0) + (WeatherRow() ? 1 : 0); }   // rows under the objectives
+// Setting row r (0-based under the objectives): 0 TIME OF DAY, 1 TIME FLOW, 2 WEATHER.
+int SettingKind(int r) { return TimeRows() ? r : r + 2; }
+int MissionRows() { return std::max(1, static_cast<int>(g_objectives.size()) + SettingRows()); }
 
 // World (cm) -> point on the drawn map; false if outside it.
 bool MapPoint(float x, float z, float& sx, float& sy) {
@@ -1040,8 +1499,15 @@ void ChangeMission(int dir) {
         g_textPage = std::max(0, std::min(g_textPages - 1, g_textPage + dir));
         return;
     }
+    const int kind = SettingKind(g_mrow - n);
+    if (kind == 2) {
+        if (g_linkedLevel) return;   // a continuing level keeps its weather
+        features::SetWeather((features::WeatherChoice() + dir + features::kWeatherCount) % features::kWeatherCount);
+        return;
+    }
+    if (!TimeRows()) return;
     int t = features::TimeOfDay(), f = features::TimeFlow();
-    if (g_mrow == n) t = (t + dir + features::kTimeOfDayCount) % features::kTimeOfDayCount;
+    if (kind == 0) t = (t + dir + features::kTimeOfDayCount) % features::kTimeOfDayCount;
     else f = (f + dir + features::kTimeFlowCount) % features::kTimeFlowCount;
     features::SetTimeOfDay(t, f);
 }
@@ -1079,6 +1545,10 @@ std::vector<std::string> Wrap(void* font, const std::string& text, float maxW) {
 void Change(int dir) {
     if (g_linkedLevel) return;   // carried kit and continuing time: view only
     if (g_tab == kTabMission) return ChangeMission(dir);
+    if (g_tab == kTabVehicle) {   // co-op: player 1 picks the vehicles
+        if (g_turn == 0) features::StepVehicle(g_vsel, dir);
+        return;
+    }
     if (g_tab == kTabBriefing) {
         g_textPage = std::max(0, std::min(g_textPages - 1, g_textPage + dir));
         return;
@@ -1099,6 +1569,14 @@ void Change(int dir) {
     }
     if (g_row == kRowGrenades) {
         ChangeGrenades(m.soldier, dir);
+        return;
+    }
+    if (const int g = GearSlotOf(g_row); g >= 0) {
+        ChangeGear(m.soldier, g, dir);
+        return;
+    }
+    if (g_row == kRowPouches) {
+        ChangePouches(m.soldier, dir);
         return;
     }
     if (g_row == kRowMain || g_row == kRowSidearm || g_row == kRowLauncher) {
@@ -1162,10 +1640,32 @@ void NextTurn() {
 
 void Update() {
     const HWND wnd = *reinterpret_cast<HWND*>(kGameWindow);
+#ifndef DS_DIST
+    // Dev: Enter presses on this screen (user: several needed on a real screen) - seen or not, and who had the focus.
+    static bool enterWas = false;
+    const bool enterNow = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+    if (enterNow && !enterWas) {
+        HWND fg = GetForegroundWindow();
+        char cls[64] = "-";
+        if (fg) GetClassNameA(fg, cls, sizeof cls);
+        dslog::Write("[dev] Customise: Enter down - foreground %p (%s), game window %p, focused %d, KeyHeld %d, primed %d",
+                     static_cast<void*>(fg), cls, static_cast<void*>(wnd), features::GameFocused(),
+                     features::KeyHeld(VK_RETURN), g_primed);
+    }
+    enterWas = enterNow;
+#endif
     if (!wnd || !features::GameFocused()) return;
     const uint32_t in = ReadInput();
+#ifndef DS_DIST
+    if (in & kAccept) dslog::Write("[dev] Customise: Accept (tab %d)", g_tab);
+#endif
     for (int step : {in & kPrev ? -1 : 0, in & kNext ? 1 : 0}) {
         if (!step) continue;
+        if (g_tab == kTabVehicle) {   // Q / E: the squad's next kind of vehicle
+            const int n = std::max(1, features::VehicleSlots());
+            g_vsel = ((g_vsel + step) % n + n) % n;
+            continue;
+        }
         for (int k = 1; k <= g_squadCount; ++k) {   // the next of this player's soldiers
             const int i = ((g_sel + step * k) % g_squadCount + g_squadCount) % g_squadCount;
             if (Mine(i)) {
@@ -1184,7 +1684,11 @@ void Update() {
             }
         }
         g_textPage = 0;
+        if (!MapTab() && g_tab != kTabVehicle) g_row = StepRow(kRowCount - 1, 1), g_rowScroll = 0;   // the tab's first row
     }
+    if (g_vsel >= features::VehicleSlots()) g_vsel = 0;
+    // the squad's vehicles: the selected one (or its preview) on the VEHICLE tab, all hidden on the others
+    features::VehicleShow(g_tab == kTabVehicle ? g_vsel : -1);
     if (MapTab()) ReadObjectives();
     if (g_tab == kTabOverview && (in & kPlay)) features::StartOverview();
     if (g_tab == kTabBriefing) {
@@ -1195,12 +1699,26 @@ void Update() {
         if (g_mrow >= n) g_mrow = n - 1;
         if (in & kUp) g_mrow = (g_mrow + n - 1) % n, g_textPage = 0;
         if (in & kDown) g_mrow = (g_mrow + 1) % n, g_textPage = 0;
+    } else if (g_tab == kTabVehicle) {
+        // one row (VEHICLE); Up / Down do nothing
     } else {
-        if (in & kUp) g_row = (g_row + kRowCount - 1) % kRowCount;
-        if (in & kDown) g_row = (g_row + 1) % kRowCount;
+        if (!RowShown(g_row)) g_row = StepRow(g_row, 1);
+        if (in & kUp) g_row = StepRow(g_row, -1);
+        if (in & kDown) g_row = StepRow(g_row, 1);
+        FollowRow();
     }
     if (in & kLeft) Change(-1);
     if (in & kRight) Change(1);
+    if (in & kSpin) {
+        settings::SetToggle(&settings::Values::featLoadoutSpin, !settings::Get().featLoadoutSpin);
+        dslog::Write("Customise: camera spin %s", settings::Get().featLoadoutSpin ? "on" : "off");
+    }
+    if (in & kResetView) {
+        g_resetView = true;
+        Settle();
+        LookAhead();
+        dslog::Write("Customise: view reset");
+    }
     if (in & kAccept) NextTurn();
 }
 
@@ -1237,8 +1755,28 @@ void DrawShapes() {
         return;
     }
     const float rowH = H * 0.09f;
+    if (g_tab == kTabVehicle) {   // the vehicle list left, its one row right
+        band(W * 0.04f, H * 0.20f + g_vsel * rowH, W * 0.30f, rowH, kSel);
+        band(W * 0.66f, H * kRowTop, W * 0.30f, H * 0.075f, kSel);
+        return;
+    }
     band(W * 0.04f, H * 0.20f + g_sel * rowH, W * 0.30f, rowH, kSel);
-    band(W * 0.66f, RowY(g_row, H), W * 0.30f, H * kOptH, kSel);
+    FollowRow();   // (also after the free pouch setting changed the rows)
+    if (RowVisible(g_row)) band(W * 0.66f, RowY(g_row, H), W * 0.30f, H * OptH(), kSel);
+    {   // more rows above / below: small chevrons at the panel's right edge
+        const float x = W * 0.935f, d = H * 0.012f, line = std::max(2.0f, H / 400.0f);
+        constexpr uint32_t kArrow = 0xFFC8A040;
+        if (g_rowScroll > 0) {
+            const float y = H * kRowTop - H * 0.01f;
+            overlay::QueueLine(x - d, y + d * 0.6f, x, y - d * 0.4f, line, kArrow);
+            overlay::QueueLine(x, y - d * 0.4f, x + d, y + d * 0.6f, line, kArrow);
+        }
+        if (g_rowScroll + kMaxRows < ShownRows()) {
+            const float y = H * (kRowTop + kMaxRows * OptH()) + H * 0.01f;
+            overlay::QueueLine(x - d, y - d * 0.6f, x, y + d * 0.4f, line, kArrow);
+            overlay::QueueLine(x, y + d * 0.4f, x + d, y - d * 0.6f, line, kArrow);
+        }
+    }
 }
 
 // Text shortened with "..." to fit maxW pixels (the value, not the arrows around it, gets cut).
@@ -1266,6 +1804,10 @@ bool Playing();
 
 // Prompt line with button icons (icon glyphs inside the game's text): the keys, or the pad of whoever edits now -
 // in co-op the player whose turn it is (their own icon style), else the device in use.
+// Q / E (L1 / R1): the soldier, or on the VEHICLE tab the vehicle (when there is more than one).
+bool Cycle() { return !MapTab() && (g_tab != kTabVehicle || features::VehicleSlots() > 1); }
+std::string CycleWhat() { return g_tab == kTabVehicle ? " VEHICLE     " : " SOLDIER     "; }
+
 std::string PromptLine(bool last) {
     using overlay::Icon;
     int style = Players() ? features::CoopPromptStyle(g_turn) : -1;  // 0 keyboard, 1 PlayStation, 2 Xbox
@@ -1282,13 +1824,32 @@ std::string PromptLine(bool last) {
     if (!style)
         return icon(Icon::KbArrowUp) + icon(Icon::KbArrowDown) + " CHOOSE     " +
                (g_linkedLevel ? std::string() : icon(Icon::KbArrowLeft) + icon(Icon::KbArrowRight) + " CHANGE     ") +
-               (g_tab == kTabSquad ? icon(Icon::KbQ) + icon(Icon::KbE) + " SOLDIER     " : std::string()) +
+               (Cycle() ? icon(Icon::KbQ) + icon(Icon::KbE) + CycleWhat() : std::string()) +
                icon(Icon::KbShift) + icon(Icon::KbTab) + icon(Icon::KbTab) + " TAB     " + icon(Icon::KbEnter) + " " + action;
     const Icon vertical = style == 2 ? Icon::XbDpadVertical : Icon::PsDpadVertical;
     const Icon horizontal = style == 2 ? Icon::XbDpadHorizontal : Icon::PsDpadHorizontal;
     return icon(vertical) + " CHOOSE     " + (g_linkedLevel ? std::string() : icon(horizontal) + " CHANGE     ") +
-           (g_tab == kTabSquad ? icon(pad(6)) + icon(pad(7)) + " SOLDIER     " : std::string()) + icon(pad(4)) + icon(pad(5)) +
+           (Cycle() ? icon(pad(6)) + icon(pad(7)) + CycleWhat() : std::string()) + icon(pad(4)) + icon(pad(5)) +
            " TAB     " + icon(pad(2)) + " " + action;
+}
+
+// Camera hints (soldier tabs): turn, zoom, spin on / off, reset view.
+std::string CameraLine() {
+    using overlay::Icon;
+    int style = Players() ? features::CoopPromptStyle(g_turn) : -1;
+    if (style < 0) style = features::KeyboardInUse() ? 0 : features::PadStyleXbox() ? 2 : 1;
+    const std::string spin = settings::Get().featLoadoutSpin ? "SPIN: ON" : "SPIN: OFF";
+    if (!overlay::GlyphsReady())
+        return style ? "RIGHT STICK  TURN / ZOOM     R3  " + spin + "     L3  RESET VIEW"
+                     : "A/D  TURN     W/S  ZOOM     R  " + spin + "     C  RESET VIEW";
+    auto icon = [](Icon i) { return std::string(overlay::IconChar(i)); };
+    if (!style)
+        return icon(Icon::KbA) + icon(Icon::KbD) + " TURN     " + icon(Icon::KbW) + icon(Icon::KbS) + " ZOOM     " +
+               icon(Icon::KbR) + " " + spin + "     " + icon(Icon::KbC) + " RESET VIEW";
+    const Icon stick = style == 2 ? Icon::XbStickR : Icon::PsStickR;
+    const Icon r3 = static_cast<Icon>(static_cast<int>(style == 2 ? Icon::XbTriangle : Icon::PsTriangle) + 10);
+    const Icon l3 = static_cast<Icon>(static_cast<int>(style == 2 ? Icon::XbTriangle : Icon::PsTriangle) + 9);
+    return icon(stick) + " TURN / ZOOM     " + icon(r3) + " " + spin + "     " + icon(l3) + " RESET VIEW";
 }
 
 // Whether Left / Right on a row has anything else to switch to for this soldier.
@@ -1296,6 +1857,13 @@ bool HasOptions(const Member& m, int row) {
     int u = 0, idx = 0;
     if (g_linkedLevel || RowLocked(m, row)) return false;
     if (row == kRowVoice) return features::SpeechLanguage() >= 0 || features::SoldierHasOwnVoice(m.soldier);
+    if (row == kRowPouches) return features::PouchSetCount() > 1;
+    if (const int g = GearSlotOf(row); g >= 0) {
+        const std::string cur = features::GearOn(m.soldier, g);
+        for (const std::string& c : features::GearChoices(g))
+            if (_stricmp(c.c_str(), cur.c_str()) != 0) return true;
+        return false;
+    }
     const bool known = CurrentSkin(m.soldier, m.role, u, idx);
     if (row == kRowUniform) return known && UniformOptions(m.role).size() > 1;
     if (row == kRowFace) return known && StepSkin(u, m.role, idx, 1, OptionOf(u, m.role, idx)) != idx;
@@ -1313,6 +1881,42 @@ bool HasOptions(const Member& m, int row) {
     for (const std::string& c : choices)
         if (_stricmp(c.c_str(), cur.c_str()) != 0) return true;
     return false;
+}
+
+// VEHICLE tab text: the squad's kinds of vehicle left, the chosen one right (with its side, seats and what starting
+// the mission does with a change).
+void VehicleLateDraw(float W, float H) {
+    constexpr uint32_t kWhite = 0xFFFFFFFF, kDim = 0xFFA0A8B0, kGoldText = 0xFFE8C060;
+    const float rowH = H * 0.09f, maxW = W * 0.27f;
+    Text("VEHICLES", W * 0.06f, H * 0.185f, kGoldText, true);
+    Text("VEHICLE", W * 0.68f, H * 0.185f, kGoldText, true);
+    const int n = features::VehicleSlots();
+    for (int i = 0; i < n; ++i) {
+        const float y = H * 0.20f + i * rowH;
+        Text(features::VehicleSlotName(i).c_str(), W * 0.06f, y + rowH * 0.45f, i == g_vsel ? kWhite : kDim, true, false, maxW);
+        Text(features::VehicleSlotNote(i).c_str(), W * 0.06f, y + rowH * 0.80f, kDim, false, false, maxW);
+    }
+    const float optH = H * 0.075f, y = H * kRowTop;
+    Text("VEHICLE", W * 0.68f, y + optH * 0.40f, kDim);
+    const std::string label = features::VehicleChoiceLabel(g_vsel);
+    const bool open = !g_linkedLevel && g_turn == 0 && features::VehicleHasChoices(g_vsel);
+    const std::string shown =
+        open ? "< " + Fit(overlay::MenuFont(), label, maxW - overlay::TextWidth(overlay::MenuFont(), "<  >")) + " >" : label;
+    Text(shown.c_str(), W * 0.68f, y + optH * 0.85f, kWhite, false, false, maxW);
+    float iy = y + optH * 1.6f;
+    for (const std::string& line : features::VehicleChoiceInfo(g_vsel)) {
+        Text(line.c_str(), W * 0.68f, iy, kDim, false, false, maxW);
+        iy += H * 0.032f;
+    }
+    if (features::VehiclesChanged()) {
+        iy += H * 0.02f;
+        for (const std::string& l : Wrap(overlay::MenuFont(), "STARTING THE MISSION RELOADS IT WITH THE NEW VEHICLES "
+                                                              "(THE INTRO IS SKIPPED, THIS SCREEN COMES BACK).", maxW)) {
+            Text(l.c_str(), W * 0.68f, iy, kGoldText);
+            iy += H * 0.032f;
+        }
+    }
+    if (g_linkedLevel) Text("VEHICLES CARRY ON AS THEY ARE", W * 0.68f, H * 0.83f, kGoldText, false, false, maxW);
 }
 
 // MISSION tab text: the mission's title, its objectives (the selected one's description below), the time rows.
@@ -1378,7 +1982,9 @@ void MissionLateDraw(float W, float H) {
     }
 
     const int n = static_cast<int>(g_objectives.size());
-    const float ty = H * 0.72f;   // time rows at the bottom of the panel
+    const int timeRows = SettingRows();
+    const float rowPitch = H * 0.07f;
+    const float ty = H * 0.86f - timeRows * rowPitch;   // time rows at the bottom of the panel
     g_textPages = 1;
     if (g_mrow < n && !g_objectives[g_mrow].text.empty()) {   // the selected row's text, in pages that fit above them
         y += H * 0.01f;
@@ -1397,15 +2003,18 @@ void MissionLateDraw(float W, float H) {
             Text(page, x, ty - H * 0.045f, kGoldText);
         }
     }
-    for (int r = 0; r < 2; ++r) {
-        const float ry = ty + r * H * 0.07f;
+    for (int r = 0; r < timeRows; ++r) {
+        const float ry = ty + r * rowPitch;
         const bool sel = g_mrow == n + r;
         if (sel) Fill(W * 0.56f, ry - H * 0.03f, W * 0.40f, H * 0.068f, 0xFF3A4652);
-        Text(r ? "TIME FLOW" : "TIME OF DAY", x, ry, kDim);
-        const std::string label = r ? features::TimeFlowLabel(features::TimeFlow()) : features::TimeOfDayLabel(features::TimeOfDay());
+        const int kind = SettingKind(r);
+        Text(kind == 2 ? "WEATHER" : kind ? "TIME FLOW" : "TIME OF DAY", x, ry, kDim);
+        const std::string label = kind == 2 ? features::WeatherLabel(features::WeatherChoice())
+                                  : kind    ? features::TimeFlowLabel(features::TimeFlow())
+                                            : features::TimeOfDayLabel(features::TimeOfDay());
         std::string value = "< " + label + " >";
         if (g_linkedLevel)
-            value = features::TimeContinues() && r == 0 ? "CONTINUES FROM " + Upper(features::LevelDisplayName(g_linkedFrom.c_str())) : label;
+            value = features::TimeContinues() && kind == 0 ? "CONTINUES FROM " + Upper(features::LevelDisplayName(g_linkedFrom.c_str())) : label;
         Text(value.c_str(), x, ry + H * 0.032f, sel ? kWhite : kDim);
     }
 }
@@ -1450,14 +2059,23 @@ void LateDraw() {
         }
     }
     if (MapTab()) {
+        // A level load in progress (scripted level change with the screen up) frees the text tables it reads.
+        if (*reinterpret_cast<int8_t*>(kDispatchMode) != 0) return;
         MissionLateDraw(W, H);
         const bool lastTurn = !Players() || g_turn >= Players() - 1;
         Text(PromptLine(lastTurn).c_str(), W * 0.5f, H * 0.93f, kDim, false, true);
         return;
     }
-    Text("SQUAD", W * 0.06f, H * 0.185f, kGoldText, true);
-    Text("EQUIPMENT", W * 0.68f, H * 0.185f, kGoldText, true);
     const float rowH = H * 0.09f;
+    if (g_tab == kTabVehicle) {
+        VehicleLateDraw(W, H);
+        const bool last = !Players() || g_turn >= Players() - 1;
+        Text(CameraLine().c_str(), W * 0.5f, H * 0.885f, kDim, false, true);
+        Text(PromptLine(last).c_str(), W * 0.5f, H * 0.93f, kDim, false, true);
+        return;
+    }
+    Text("SQUAD", W * 0.06f, H * 0.185f, kGoldText, true);
+    Text(g_tab == kTabLoadout ? "WEAPONS" : "UNIFORM & GEAR", W * 0.68f, H * 0.185f, kGoldText, true);
     for (int i = 0; i < g_squadCount; ++i) {
         const Member& m = g_squad[i];
         const float y = H * 0.20f + i * rowH;
@@ -1476,8 +2094,9 @@ void LateDraw() {
         Text(sub, W * 0.06f, y + rowH * 0.80f, Mine(i) ? kDim : 0xFF606870);
     }
     const Member& m = g_squad[g_sel];
-    const float optH = H * kOptH;
+    const float optH = H * OptH();
     for (int r = 0; r < kRowCount; ++r) {
+        if (!RowVisible(r)) continue;
         const float y = RowY(r, H);
         Text(kRowNames[r], W * 0.68f, y + optH * 0.40f, kDim);
         char value[160] = {};
@@ -1488,6 +2107,11 @@ void LateDraw() {
         case kRowUniform: snprintf(value, sizeof value, "%s", known ? UniformLabel(u, m.role, idx).c_str() : "?"); break;
         case kRowFace: snprintf(value, sizeof value, "%s %s", NamePart(entry, 0x50), NamePart(entry, 0x54)); break;
         case kRowVoice: snprintf(value, sizeof value, "%s", features::VoiceText(m.soldier, m.role).c_str()); break;
+        case kRowPouches: snprintf(value, sizeof value, "%s", features::PouchSetLabel(features::PouchSetOn(m.soldier)).c_str()); break;
+        default:
+            if (GearSlotOf(r) >= 0)
+                snprintf(value, sizeof value, "%s", features::GearLabel(features::GearOn(m.soldier, GearSlotOf(r))).c_str());
+            break;
         case kRowMain: KitText(m.soldier, Slot::Main, value, sizeof value); break;
         case kRowSidearm: KitText(m.soldier, Slot::Sidearm, value, sizeof value); break;
         case kRowLauncher: KitText(m.soldier, Slot::Launcher, value, sizeof value); break;
@@ -1504,6 +2128,7 @@ void LateDraw() {
         Text(("KIT CARRIED OVER FROM " + Upper(features::LevelDisplayName(g_linkedFrom.c_str()))).c_str(), W * 0.68f,
              H * 0.83f, kGoldText, false, false, W * 0.27f);
     const bool last = !Players() || g_turn >= Players() - 1;
+    Text(CameraLine().c_str(), W * 0.5f, H * 0.885f, kDim, false, true);
     Text(PromptLine(last).c_str(), W * 0.5f, H * 0.93f, kDim, false, true);
 }
 
@@ -1514,6 +2139,13 @@ bool Playing() {
 }  // namespace
 
 bool features::CustomiseOpen() { return g_phase == Phase::Open; }
+// Dev / tests (devserver dev.loadout_close): closes the screen as its last Accept would. Game thread.
+bool features::CustomiseClose() {
+    if (g_phase != Phase::Open) return false;
+    Close();
+    return true;
+}
+bool features::CustomisePending() { return g_phase != Phase::Idle && g_phase != Phase::Done && g_phase != Phase::Open; }
 
 void features::ResetScriptLoadout() {
     g_scriptKits.clear();
@@ -1542,16 +2174,51 @@ bool features::CustomiseHidesHud() {
 std::string features::LinkedFrom() { return g_linkedLevel ? g_linkedFrom : std::string(); }
 
 void features::OnFrameCustomise() {
+    features::OnFrameVehicles();
+    if (features::LockstepActive()) return;   // online co-op: no loadout screen yet (its input isn't synced)
+    // features::OnFrame runs before the frame's dispatcher, so this sees a requested load before it happens.
+    if (g_phase == Phase::Open && *reinterpret_cast<int8_t*>(kDispatchMode) == 1) Close(true);
+    {
+        static LARGE_INTEGER last{};
+        LARGE_INTEGER now, freq;
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        g_realDt = last.QuadPart ? std::clamp(static_cast<float>(now.QuadPart - last.QuadPart) / freq.QuadPart, 0.0f, 0.1f) : 0.0f;
+        last = now;
+    }
     char level[32] = {};
     memcpy(level, reinterpret_cast<const char*>(kLevelName), sizeof level - 1);
     if (strcmp(level, g_level) != 0) {  // new level
         if (g_phase == Phase::Open) Close();
+        // Carried kits only when this level follows its chain predecessor in this session (Mission 4's end ->
+        // 5A), or restarts a level that did - CarryFrom stays in the registry for good, so 5A started from the
+        // mission list / a new campaign / another session got the old Mission 4 kits, view-only.
+        // (the last named level: the scene name is cleared between levels for a reload / restart)
+        static std::string lastLevel;
+        static bool lastLinked = false;
+        if (g_level[0]) lastLevel = LevelBase(g_level), lastLinked = g_linkedLevel;
+        const std::string prevBase = lastLevel;
+        const bool prevLinked = lastLinked;
         memcpy(g_level, level, sizeof g_level);
         g_scriptLevel = features::ScriptLevelActive();
-        g_phase = _strnicmp(level, "Mission", 7) == 0 || g_scriptLevel ? Phase::Armed : Phase::Idle;
+        g_loadoutOn = settings::Get().featLoadout;
+        {
+            static int logged = -1;
+            if (logged != static_cast<int>(g_loadoutOn)) {
+                logged = g_loadoutOn;
+                dslog::Write(g_loadoutOn ? "[ok]   Loadout: mission briefing + squad loadout screen"
+                                         : "[off]  Loadout: the game's briefing, no loadout screen / carried kits");
+            }
+        }
+        g_phase = (_strnicmp(level, "Mission", 7) == 0 && g_loadoutOn) || g_scriptLevel ? Phase::Armed : Phase::Idle;
         g_linkedLevel = false;
         g_briefingClosed = g_briefingMessageSent = false;
-        if (g_phase == Phase::Armed && ChainNext(CarryFrom(), LevelBase(level))) {
+        const std::string from = CarryFrom(), base = LevelBase(level);
+        const bool follows = _stricmp(prevBase.c_str(), from.c_str()) == 0 ||
+                             ((prevBase.empty() || _stricmp(prevBase.c_str(), base.c_str()) == 0) && prevLinked);
+        if (g_phase == Phase::Armed && g_loadoutOn && ChainNext(from, base) && !follows)
+            dslog::Write("Customise: %s not entered from %s - own kits, no carry-over", level, from.c_str());
+        if (g_phase == Phase::Armed && g_loadoutOn && ChainNext(from, base) && follows) {
             g_phase = Phase::Carry;
             g_linkedLevel = true;
             g_linkedFrom = CarryFrom();
@@ -1561,7 +2228,8 @@ void features::OnFrameCustomise() {
         overlay::SetLateDraw((g_phase == Phase::Armed || g_phase == Phase::Carry) && !g_scriptLevel ? &LateDraw : nullptr);
     }
     if (*reinterpret_cast<int8_t*>(kDispatchMode) != 0) return;  // loading / other
-    if ((g_phase == Phase::Armed || g_phase == Phase::Waiting || g_phase == Phase::Carry || g_phase == Phase::CarryWaiting) &&
+    if (g_loadoutOn &&
+        (g_phase == Phase::Armed || g_phase == Phase::Waiting || g_phase == Phase::Carry || g_phase == Phase::CarryWaiting) &&
         *reinterpret_cast<uint32_t*>(kFrontEndState) == kBriefingState) {
         // The game's briefing popup (map + story): closed as its Esc does (state 0xE; its leave sets [0x61079C] and its
         // update then starts the overview, which overview.cpp skips). The setter ignores calls during a transition.
@@ -1594,7 +2262,7 @@ void features::OnFrameCustomise() {
                 g_phase = Phase::Done;
                 overlay::SetLateDraw(nullptr);
             } else if (++g_armedFrames > 15) {
-                if (g_scriptLoadout) {
+                if (g_scriptLoadout && g_loadoutOn) {
                     Open();
                 } else {
                     ApplyScriptKits();
@@ -1632,6 +2300,8 @@ void features::OnFrameCustomise() {
         {
             const bool settling = GetTickCount() < g_settleUntil;
             *reinterpret_cast<float*>(kTimeMultiplier) = settling ? g_savedMultiplier : 0.0001f;
+            if (!settling) g_resetView = false;
+            LookAhead();   // every frame the screen is up: nothing else may tilt the frozen soldiers
         }
         Update();
         if (g_phase == Phase::Open) DrawShapes();
@@ -1649,7 +2319,7 @@ void features::OnFrameCustomise() {
     }
     // In a linked mission (one with a next level in its chain): keep a snapshot of the kits for the next level.
     static DWORD lastSnap = 0;
-    if (playing && g_phase != Phase::Open && ChainHasNext(LevelBase(g_level)) && GetTickCount() - lastSnap > 2000) {
+    if (g_loadoutOn && playing && g_phase != Phase::Open && ChainHasNext(LevelBase(g_level)) && GetTickCount() - lastSnap > 2000) {
         lastSnap = GetTickCount();
         FindSquad();
         if (g_squadCount) SnapshotCarry(LevelBase(g_level));
@@ -1657,8 +2327,12 @@ void features::OnFrameCustomise() {
 }
 
 void features::ApplyCustomise() {
+    dslog::Write(settings::Get().featLoadout ? "[ok]   Loadout: on at start-up (taken per level)"
+                                             : "[off]  Loadout: off at start-up (taken per level)");
     if (!patch::HookCall(kSetViewSite, reinterpret_cast<const void*>(&SetView), kSetView))
         dslog::Write("[fail] Customise: camera hook");
     if (!patch::HookCall(kObjectiveBarSite, reinterpret_cast<const void*>(&ObjectiveBar), kObjectiveBar))
         dslog::Write("[fail] Customise: objective bar hook");
+    if (!patch::HookCall(kAnimateSite, reinterpret_cast<const void*>(&Animate), kAnimate))
+        dslog::Write("[fail] Customise: squad animation hook");
 }

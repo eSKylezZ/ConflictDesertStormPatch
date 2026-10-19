@@ -1,0 +1,3 @@
+# test.layer_harness - TEST ONLY: runs the game off-screen without DesertStormFix for
+# tests/live/test_layer_without_dsfix.py (see layer_harness.cpp). Never shipped.
+name = test.layer_harness

@@ -45,8 +45,10 @@ void __cdecl EnterScreen(uint32_t state) {
     At<int32_t>(list, 0x9C) = *reinterpret_cast<int32_t*>(kMouseY);
 }
 
+void* g_yesNoEnterNext = reinterpret_cast<void*>(kYesNoEnter);  // pointer hook chain (patch::HookSlot)
+
 void __fastcall YesNoEnter(uintptr_t screen) {
-    reinterpret_cast<void(__fastcall*)(uintptr_t)>(kYesNoEnter)(screen);
+    reinterpret_cast<void(__fastcall*)(uintptr_t)>(g_yesNoEnterNext)(screen);
     if (*reinterpret_cast<uint32_t*>(kFrontEndState) != kOverwriteState) return;
     if (const uintptr_t list = ListOf(screen)) {
         At<int16_t>(list, 0x28) = 0;
@@ -58,9 +60,8 @@ void __fastcall YesNoEnter(uintptr_t screen) {
 void features::ApplyMenus() {
     bool ok = true;
     for (uint32_t site : kEnterCalls) ok = patch::HookCall(site, reinterpret_cast<const void*>(&EnterScreen), kScreenEnter) && ok;
-    const uint32_t ours = reinterpret_cast<uint32_t>(&YesNoEnter);
-    if (*reinterpret_cast<uint32_t*>(kYesNoEnterSlot) == kYesNoEnter) ok = patch::WriteValue(kYesNoEnterSlot, ours) && ok;
-    else if (*reinterpret_cast<uint32_t*>(kYesNoEnterSlot) != ours) ok = false;
+    ok = patch::HookSlot(kYesNoEnterSlot, reinterpret_cast<const void*>(&YesNoEnter), &g_yesNoEnterNext, kYesNoEnter) &&
+         ok;
     dslog::Write(ok ? "[ok]   Menus: pointer selects only when moved, overwrite question defaults to YES"
                     : "[fail] Menus: screen enter / YES-NO screen not recognised");
 }

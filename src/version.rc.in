@@ -10,12 +10,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "FileDescription",  "Conflict: Desert Storm enhancement patch (dinput8 proxy)"
-            VALUE "FileVersion",      "@PROJECT_VERSION@"
-            VALUE "InternalName",     "DesertStormFix"
-            VALUE "OriginalFilename", "dinput8.dll"
+            VALUE "FileDescription",  "@DS_RC_DESCRIPTION@"
+            VALUE "FileVersion",      "@DS_VERSION_FULL@"
+            VALUE "InternalName",     "@DS_RC_INTERNAL@"
+            VALUE "OriginalFilename", "@DS_RC_FILENAME@"
             VALUE "ProductName",      "DesertStormFix"
-            VALUE "ProductVersion",   "@PROJECT_VERSION@"
+            VALUE "ProductVersion",   "@DS_VERSION_FULL@"
         END
     END
     BLOCK "VarFileInfo"

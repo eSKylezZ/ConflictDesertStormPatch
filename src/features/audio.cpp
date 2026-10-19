@@ -18,6 +18,8 @@
 // camera along the current view direction (so it follows walking and turning, and panning still follows the view).
 // When aiming ends it stays there until the camera has swung back out. Only the camera is used - the soldier's
 // position is not needed.
+// Optional (settings featAimAudio), live: the listener hook (once per frame) follows the setting - off = the game's
+// listener and the shot byte patch reverted.
 #include <windows.h>
 
 #include <cmath>
@@ -25,6 +27,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "generated/patch_tables.h"
 
@@ -148,9 +151,27 @@ float* Listener(void* mgr, int cam, float* camPos, int mode) {
     return camPos;
 }
 
+// The shot patch as the setting wants it (applied / reverted on a change; also from ApplyAudio).
+void SyncShotPatch() {
+    static int state = -1;
+    const bool on = settings::Get().featAimAudio;
+    if (state == static_cast<int>(on)) return;
+    state = on;
+    if (on) patch::ApplyGroup("Audio: positional own gunshots", gen::kAudio);
+    else patch::RevertGroup("Audio: positional own gunshots", gen::kAudio);
+    dslog::Write(on ? "[ok]   Aim audio: own shots positional, listener keeps the third-person place while aiming"
+                    : "[off]  Aim audio: the game's shot sound and listener");
+}
+
 float* __fastcall ListenerPosition(void* mgr, void*, int cam) {
     float* camPos = reinterpret_cast<VecFn>(kCameraPos)(mgr, cam);
     if (cam < 0 || cam >= kMaxCameras) return camPos;
+    SyncShotPatch();
+    if (!settings::Get().featAimAudio) {
+        g_state[cam].phase = Phase::Normal;
+        g_state[cam].prevTime.QuadPart = 0;
+        return camPos;
+    }
     const uint8_t* player = PlayerOfCamera(cam);
     const int mode = player ? *reinterpret_cast<const int*>(player + 8) : -1;
     return Listener(mgr, cam, camPos, mode);
@@ -160,9 +181,7 @@ float* __fastcall ListenerPosition(void* mgr, void*, int cam) {
 void features::ApplyAudio() {
     static bool done = false;
     if (done) return;
-    patch::ApplyGroup("Audio: positional own gunshots", gen::kAudio);
-    if ((done = patch::HookCall(kListenerPosCall, &ListenerPosition, kCameraPos)))
-        dslog::Write("[ok]   Audio listener keeps the third-person place while aiming");
-    else
+    SyncShotPatch();
+    if (!(done = patch::HookCall(kListenerPosCall, &ListenerPosition, kCameraPos)))
         dslog::Write("[fail] Audio listener: unexpected bytes at 0x%08X", kListenerPosCall);
 }

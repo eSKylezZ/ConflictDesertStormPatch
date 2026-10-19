@@ -16,8 +16,8 @@ Patch for the PC version of Conflict: Desert Storm, adding 16x9 support, control
 
 ## Install
 Copy `dinput8.dll` into the game folder (next to `DesertStorm.exe`). The exe itself is not modified;
-delete the DLL to uninstall. Settings live in the game's registry key and will be editable from the
-launcher / Options menu.
+delete the DLL to uninstall. Settings live in the registry (`HKCU\Software\PSE\ds1\Plugins\dsfix`, see
+[docs/sdk/ds1-settings.md](docs/sdk/ds1-settings.md)) and are changed from the launcher / Options menu.
 
 ## Building
 Requirements: Visual Studio 2022 Build Tools (C++ workload, includes CMake) and VS Code with the

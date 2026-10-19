@@ -234,8 +234,10 @@ void features::ApplyController() {
     uint8_t call[6] = {0xE8, 0, 0, 0, 0, 0x90};
     const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&PadStub) - (kPollSite + 5));
     memcpy(call + 1, &rel, 4);
+    // The poll hook is a call@ code group (patch::WriteCall over the 6-byte cmp, which PadStub replays).
     if (!s.controller) {
         patch::RevertGroup("Controller", gen::kPad);
+        patch::RevertCode(kPollSite);
         if (patch::Matches(kPollSite, call, sizeof call)) patch::Write(kPollSite, kPollOriginal, sizeof kPollOriginal);
         return;
     }
@@ -245,6 +247,7 @@ void features::ApplyController() {
     }
     if (patch::ApplyGroup("Controller", gen::kPad)) {
         patch::WriteValue(kDeadzoneVa, static_cast<int32_t>(s.padDeadzone * 100));
-        patch::Write(kPollSite, call, sizeof call);
+        if (!patch::WriteCall(kPollSite, reinterpret_cast<const void*>(&PadStub), sizeof kPollOriginal, kPollOriginal))
+            dslog::Write("[fail] Controller: poll hook at 0x%08X not written", kPollSite);
     }
 }

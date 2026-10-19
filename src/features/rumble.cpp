@@ -19,12 +19,15 @@
 // held weapon object, +4 type 6, +0x24 definition: +0 category 5 = weapon, +0xC0 rumble class; object +0x5C current
 // fire mode, 0x100 = M203) - or, for 1.5 s after it fired, the weapon that last fired for that player, which covers
 // mounted guns and vehicle weapons (the fire call is hooked to note it).
+// Optional (settings featRumble, OPTIONS > DESERTSTORMFIX), live: the rows follow the setting before every weapon's
+// rumble (the fire call is the only user of rows 0-14); off = the game's rows and no per-weapon trigger feel.
 #include <windows.h>
 
 #include <cstring>
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -79,8 +82,32 @@ Fired g_fired[4];
 
 bool Readable(const void* p) { return reinterpret_cast<uintptr_t>(p) >= 0x10000; }
 
+int g_table = -1;  // rows 0-14 hold: -1 not checked yet / unknown, 0 the game's, 1 ours
+
+// Rows 0-14 as the setting wants them (only from a known state: ours or the game's).
+void SyncTable() {
+    const bool on = settings::Get().featRumble;
+    if (g_table == (on ? 1 : 0)) return;
+    if (g_table < 0) {
+        if (patch::Matches(kEffectTable, kOriginal, sizeof kOriginal)) g_table = 0;
+        else if (patch::Matches(kEffectTable, kTuned, sizeof kTuned)) g_table = 1;
+        else {
+            static bool logged = false;
+            if (!logged) logged = true, dslog::Write("[fail] Rumble: effect table not recognised at 0x%08X - kept", kEffectTable);
+            return;
+        }
+        if (g_table == (on ? 1 : 0)) return;
+    }
+    if (patch::Write(kEffectTable, on ? kTuned : kOriginal, sizeof kTuned)) {
+        g_table = on ? 1 : 0;
+        dslog::Write(on ? "[ok]   Rumble: weapon effects retuned, trigger feel per weapon"
+                        : "[off]  Rumble: the game's own weapon effects, no per-weapon trigger feel");
+    }
+}
+
 // Weapon fire: note which weapon fired for which player (mounted / vehicle guns aren't the held weapon).
 void __stdcall NoteFire(const uint8_t* weapon, const uint8_t* block) {
+    SyncTable();
     const uintptr_t b = reinterpret_cast<uintptr_t>(block);
     if (!Readable(weapon) || b < kInputBlocks || b >= kInputBlocks + 4 * kInputBlockSize) return;
     Fired& f = g_fired[(b - kInputBlocks) / kInputBlockSize];
@@ -119,7 +146,7 @@ features::TriggerFeel FeelOf(const uint8_t* def, uint32_t mode) {
 }  // namespace
 
 features::TriggerFeel features::PlayerTriggerFeel(int player) {
-    if (player < 0 || player > 3) return TriggerFeel::Default;
+    if (player < 0 || player > 3 || !settings::Get().featRumble) return TriggerFeel::Default;  // off: one feel for all
     const Fired& f = g_fired[player];
     if (f.def && GetTickCount() - f.time < kFiredWindow) return FeelOf(f.def, f.mode);
     const auto* block = reinterpret_cast<const uint8_t*>(kInputBlocks + player * kInputBlockSize);
@@ -135,12 +162,7 @@ void features::ApplyRumble() {
     static bool done = false;
     if (done) return;
     done = true;
-    if (patch::Matches(kEffectTable, kOriginal, sizeof kOriginal))
-        patch::Write(kEffectTable, kTuned, sizeof kTuned);
-    else if (!patch::Matches(kEffectTable, kTuned, sizeof kTuned))
-        dslog::Write("[fail] Rumble: effect table not recognised at 0x%08X - kept", kEffectTable);
-    if (patch::HookCall(kFireRumbleCall, reinterpret_cast<const void*>(&FireRumbleStub), kRumble))
-        dslog::Write("[ok]   Rumble: weapon effects retuned, trigger feel per weapon");
-    else
+    SyncTable();  // logs [ok] / [off]; again whenever the setting changes (checked at every weapon's rumble)
+    if (!patch::HookCall(kFireRumbleCall, reinterpret_cast<const void*>(&FireRumbleStub), kRumble))
         dslog::Write("[fail] Rumble: weapon fire call not recognised at 0x%08X", kFireRumbleCall);
 }

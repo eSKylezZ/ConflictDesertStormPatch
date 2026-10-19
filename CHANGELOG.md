@@ -1,5 +1,100 @@
 # Changelog
 
+## 3.3.0-Alpha – 2026-10-15
+
+Alpha build for testers. It includes everything since 3.0.0; 3.1.0 and 3.2.0 were packaged without changelog entries.
+
+### Added
+
+**Settings in the game**
+
+- OPTIONS > VIDEO: every launcher setting in the game – resolution, display mode, V-Sync, frame rate limit,
+  anti-aliasing, texture filtering, texture resolution, draw distance, shrubs, shadows, per-pixel lighting, moving
+  vegetation, detail textures, decals, environment maps, HUD scaling / size, split-screen layout. Resolution, display
+  mode, V-Sync and anti-aliasing change without a restart (APPLY NOW, kept after confirming within 15 s); others
+  apply live, from the next level, or after APPLY > RESTART NOW
+- Start without the launcher (OPTIONS > VIDEO > LAUNCHER AT START, or the launcher's Settings); hold Shift at start
+  to see it again, and it comes back by itself after a start that failed
+- OPTIONS > DESERTSTORMFIX > CONTROLLER SUPPORT
+- Long menu texts are narrowed to fit their boxes (options rows, values, buttons) at every resolution; the online host /
+  join status lines wrap instead of running off the screen; CONTROLLER screen header no longer overlaps its title on 4:3
+
+**Briefing / squad screen**
+
+- CHARACTER tab: HEADGEAR, BACKPACK, FACE and POUCHES rows (caps, helmets, berets, shemaghs, packs, radio, sunglasses,
+  cigars, pouch sets of every faction); the camera moves to the part a row changes, and the squad keeps moving while
+  you choose. OPTIONS > DESERTSTORMFIX > FREE POUCH CHOICE replaces the pouch sets with one row per pouch spot
+- Changing faction (SAS / Delta / Russian / Iraqi) also puts on that faction's gear
+- A main weapon or sidearm picked on the LOADOUT tab comes with as much ammo as the gun it replaces had (as a share of
+  each gun's maximum) – the missions' kits are full, so you get a full load instead of 5 magazines
+- Your soldiers look straight ahead when the screen opens, not at the ground where the view was a moment before
+  (OPTIONS > DESERTSTORMFIX > LOADOUT: LOOK AHEAD, on by default); C / L3 = RESET VIEW straightens them up at any time
+- MISSION tab, Missions 8 and 9: VEHICLE row – swap the squad's vehicle for another ground vehicle (the level
+  restarts with it; the choice is remembered and kept in saves)
+
+**Gameplay**
+
+- VERY EASY and VERY HARD difficulties (OPTIONS > DESERTSTORMFIX > VERY EASY & VERY HARD, then restart the game)
+- Fixes ported from the Japanese release (OPTIONS > DESERTSTORMFIX > JAPANESE RELEASE FIXES): stuck tanks get free,
+  soldiers whose route is impossible are moved when no one is looking, path-builder overflow guards, dropped items no
+  longer land inside scenery
+- Field of view per player (OPTIONS > DESERTSTORMFIX > FIELD OF VIEW - PLAYER n)
+- Menu bar colour and HUD colour (OPTIONS > DESERTSTORMFIX): game green or any colour from a colour picker; text
+  on the bars stays readable
+- YOUR SOLDIER TALKS also covers spotted-enemy callouts, man down and incoming grenade
+- CHEATS: COMMANDEER ANY VEHICLE (trucks, BMPs, tanks the game normally never lets you enter); DEVELOPER > DEBUG
+  KEYS (the original developers' key bindings)
+- Bigger battles: higher engine limits for vehicles, physics objects, projectiles, particles, events and sounds
+  (saves stay compatible with the original game)
+
+**Weather and footprints**
+
+- WEATHER on the briefing screen's MISSION tab: clear, overcast, light rain, rain, thunderstorm, light snow, snow,
+  blizzard, dust, sandstorm, fog or random. Falling rain / snow / sand (stops at roofs), darker or tinted light,
+  greyer sky, closer fog (enemies see less), wet ground and puddles that form in rain and dry up after (reflecting, with rain ripples, on the Direct3D 9
+  renderers), gusting wind that bends bushes and carries smoke and dust, lightning,
+  and rain / wind / sand / thunder sound. Online the host's weather is used; Lua missions: `game.weather`
+- Footprints (OPTIONS > DESERTSTORMFIX > FOOTPRINTS): the game's own footprints last 12 s – now also 2 minutes,
+  permanent or off; every soldier can leave them (FOOTPRINTS: EVERYONE); wind, rain, snow and sand wear them away
+  (WEATHER WIPES FOOTPRINTS). Room for marks on the ground (footprints, bullet holes, blood) is 4× larger, and they
+  no longer vanish after every cutscene
+
+**Online co-op**
+
+- New sync model: every player's PC runs its own soldiers and the host runs the rest (as Pivotal's later games
+  did). Replaces the input lockstep, so differing graphics settings or frame rates no longer split the game
+- 3 and 4 players; grenades, rockets and M203 shots, damage, healing, deaths, vehicles (driving, turrets, getting
+  in and out) and mission events are shared; RESTART LEVEL starts the mission fresh for everyone
+
+**Mods**
+
+- Bigger textures: a mod's large textures (2048² and up) load; the main menu shows "2 GB MEMORY MODE" until the
+  4 GB patcher (DesertStormFix-Patcher.exe, in the zip) is run
+- `.unit` files: new soldier types (based on, type, model, health, experience, voice, items); bad table rows are left
+  out and reported instead of crashing the game
+- `.vehicle` files: `grip`, `spin damping` and `engine sound` for a vehicle's own handling and sound
+- `.gear` and `.pouches` files: new hats, packs, face items and pouch sets for the CHARACTER tab
+- Lua: `game.kill`, `game.explode`, `game.difficulty`, `game.hud`
+
+### Fixed
+
+- Loading a "… Start" save (the one offered after MISSION SUCCESSFUL) unlocked the cheats and could crash
+  Mission 5A right after the loading bar
+- Free camera (F6) crashed in some levels on the first frame
+- Swapping a vehicle made every vehicle in the level sink through the ground
+- Vehicles on flat custom levels disappeared at once
+- A linked mission (5A …) picked from the mission list got the kit of an older play-through
+- Split screen at low resolutions: the HUD was drawn outside the views
+- Online: the game ran in slow motion below 60 fps
+
+### Needs testing
+
+- Online co-op between two homes and with 3–4 players; driving a vehicle online
+- Field of view, vehicle swaps and COMMANDEER ANY VEHICLE in real play
+- The Japanese-release fixes haven't been seen firing in play yet
+- 4 GB patcher on real installs
+- Weather in every mission, split screen, at night and on Renderers 1–3; the weather sounds by ear
+
 ## 3.0.0 – 2026-10-10
 
 ### Added

@@ -21,6 +21,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -206,9 +207,12 @@ int __fastcall SpUpdate(void* screen, void*) {
 }  // namespace
 
 // coop.cpp's SINGLE PLAYER set-up wrapper, after the original (3 items in the pool of 4): CUSTOM CAMPAIGNS as the
-// fourth row when a campaign exists.
+// fourth row when a campaign exists. FeatCustomMissions is read here, every time the menu is entered (live): off = the
+// game's three items (the update copy and the 4-item capacity stay installed - they behave like the original then).
+static bool CustomMissionsOn() { return settings::Get().featCustomMissions; }
+
 void features::CampaignsMenuItem(void* screen) {
-    if (g_campaigns.empty() || !g_built) return;
+    if (g_campaigns.empty() || !g_built || !CustomMissionsOn()) return;
     void* list = At<void*>(screen, 8);
     if (At<int16_t>(list, 0x24) < 4 || At<int16_t>(list, 0x26) != 3) return;  // capacity patch missing / co-op layout
     void* item = ItemAt(list, 3);
@@ -224,7 +228,7 @@ void features::CampaignsMenuItem(void* screen) {
     reinterpret_cast<void(__thiscall*)(void*)>(0x4E8130)(list);
 }
 
-void* features::CampaignsScreen() { return g_built ? g_screen : nullptr; }
+void* features::CampaignsScreen() { return g_built && CustomMissionsOn() ? g_screen : nullptr; }
 
 const char* features::CampaignsText(uint32_t hash) {
     if (hash == kTextCustom) return "CUSTOM CAMPAIGNS";
@@ -244,19 +248,19 @@ const char* features::CampaignNext(const char* level) {
 }
 
 void features::ApplyCampaigns() {
-    LoadCampaigns();
+    if (features::ModsFolderEnabled()) LoadCampaigns();   // campaigns are Mods folders (FeatMods off: none)
     const uint8_t three = 3, four = 4;
     const uint32_t three32 = 3, four32 = 4;
-    const uint32_t spUpdate = kSpUpdate, ours = reinterpret_cast<uint32_t>(&SpUpdate);
     if (!patch::Matches(kSpCapacity, &three, 1) || !patch::Matches(kSpItemCount, &three32, 4) ||
-        !patch::Matches(kSpUpdateSlot, &spUpdate, 4)) {
+        !patch::HookSlot(kSpUpdateSlot, reinterpret_cast<const void*>(&SpUpdate), nullptr, kSpUpdate)) {
         dslog::Write("[fail] Campaign: SINGLE PLAYER menu not recognised");
         return;
     }
     patch::Write(kSpCapacity, &four, 1);
     patch::Write(kSpItemCount, &four32, 4);
-    patch::Write(kSpUpdateSlot, &ours, 4);
-    dslog::Write("Campaign: %u custom campaign(s)", static_cast<unsigned>(g_campaigns.size()));
+    dslog::Write(CustomMissionsOn() ? "[ok]   Campaign: CUSTOM CAMPAIGNS - %u custom campaign(s) (live setting)"
+                                    : "[off]  Campaign: CUSTOM CAMPAIGNS hidden (live setting; %u campaign(s) found)",
+                 static_cast<unsigned>(g_campaigns.size()));
 }
 
 void features::OnFrameCampaigns() {

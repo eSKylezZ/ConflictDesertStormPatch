@@ -14,7 +14,7 @@
 //   0x4112B0  ClipCursor to the window rect inset by 4 px while active -> ClipToWindow (client area if windowed)
 //   0x5386EA  menu cursor = GetCursorPos + ScreenToClient in back-buffer pixels -> ScreenToGame scales the client
 //             position when the client area is not the back-buffer size (borderless / shrunk window)
-// The mode is taken when the window is placed (after the launcher) and fixed for the session.
+// The mode is taken when the window is placed (after the launcher); OPTIONS > VIDEO changes it live (PlaceGameWindow).
 #include <windows.h>
 
 #include <algorithm>
@@ -95,6 +95,11 @@ constexpr int kBackgroundPos = -8000;   // dev background tests: windows go here
 HWND WINAPI CreateGameWindow(DWORD exStyle, LPCSTR cls, LPCSTR title, DWORD style, int x, int y, int w, int h,
                              HWND parent, HMENU menu, HINSTANCE inst, LPVOID param) {
     DPI_AWARENESS_CONTEXT old = SetThreadDpi(kPerMonitorV2);
+    // The game checks no window messages during a level load or at PRESS ANY KEY (only key / mouse ones): after 5 s
+    // Windows would put a "not responding" ghost over the window, and the ghost swallows the key that ends the wait.
+    if (auto noGhosts = reinterpret_cast<void(WINAPI*)()>(GetProcAddress(GetModuleHandleA("user32.dll"),
+                                                                         "DisableProcessWindowsGhosting")))
+        noGhosts();
     if (features::DevBackground()) {   // dev background tests: off-screen, never the active window
         exStyle |= WS_EX_NOACTIVATE;
         x = y = kBackgroundPos;
@@ -128,21 +133,9 @@ void BringToFront(HWND wnd) {
     dslog::Write("Display: +level start - game window %s", GetForegroundWindow() == wnd ? "brought to the front" : "still behind");
 }
 
-BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT flags) {
-    g_mode = static_cast<features::DisplayMode>(settings::Get().displayMode);
-    // cx/cy = the mode size run through AdjustWindowRect(0xcf0000) by the game; undo that in its DPI context.
-    RECT frame{};
-    AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
-    const int w = cx - (frame.right - frame.left), h = cy - (frame.bottom - frame.top);
-    SetThreadDpi(kPerMonitorV2);  // the game thread from here on: real pixels for the window, cursor, clipping
-
-    if (g_mode == features::DisplayMode::Fullscreen || w <= 0 || h <= 0) {
-        g_mode = features::DisplayMode::Fullscreen;
-        const BOOL ok = SetWindowPos(wnd, after, x, y, cx, cy, flags);
-        BringToFront(wnd);
-        return ok;
-    }
-
+// Windowed: caption + minimize box, client w x h centred on the adapter's monitor (shrunk to its work area);
+// borderless: popup over the whole monitor. g_mode is set.
+BOOL PlaceFramed(HWND wnd, int w, int h) {
     MONITORINFO mi{sizeof mi};
     GetMonitorInfoA(GameMonitor(wnd), &mi);
     SetWindowTextA(wnd, "Conflict: Desert Storm");
@@ -183,6 +176,23 @@ BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT
     SetForegroundWindow(wnd);
     BringToFront(wnd);
     return ok;
+}
+
+BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT flags) {
+    g_mode = static_cast<features::DisplayMode>(features::EffectiveDisplayMode(settings::Get().displayMode));
+    // cx/cy = the mode size run through AdjustWindowRect(0xcf0000) by the game; undo that in its DPI context.
+    RECT frame{};
+    AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
+    const int w = cx - (frame.right - frame.left), h = cy - (frame.bottom - frame.top);
+    SetThreadDpi(kPerMonitorV2);  // the game thread from here on: real pixels for the window, cursor, clipping
+
+    if (g_mode == features::DisplayMode::Fullscreen || w <= 0 || h <= 0) {
+        g_mode = features::DisplayMode::Fullscreen;
+        const BOOL ok = SetWindowPos(wnd, after, x, y, cx, cy, flags);
+        BringToFront(wnd);
+        return ok;
+    }
+    return PlaceFramed(wnd, w, h);
 }
 
 // Called at 0x40B897 with the renderer in esi; keeps it for GameMonitor (0x63C924 may not be set yet).
@@ -237,13 +247,15 @@ BOOL WINAPI ScreenToGame(HWND wnd, POINT* pt) {
     return ok;
 }
 
-bool WriteCallJump(uint32_t site, const void* fn, uint32_t jumpTo) {
+// call fn; jmp jumpTo over `original` (10 bytes): one byte group, checked and owned through the broker.
+bool WriteCallJump(const char* group, uint32_t site, const void* fn, uint32_t jumpTo, const uint8_t (&original)[10]) {
     uint8_t code[10] = {0xE8, 0, 0, 0, 0, 0xE9};
     const int32_t call = static_cast<int32_t>(reinterpret_cast<uint32_t>(fn) - (site + 5));
     const int32_t jump = static_cast<int32_t>(jumpTo - (site + 10));
     std::memcpy(code + 1, &call, 4);
     std::memcpy(code + 6, &jump, 4);
-    return patch::Write(site, code, sizeof code);
+    const BytePatch p[] = {{DS_PATCH_NAME("call + jump"), site, original, code, sizeof code, false}};
+    return patch::ApplyGroup(group, p);
 }
 
 bool InstallHooks() {
@@ -265,12 +277,44 @@ bool InstallHooks() {
         dslog::Write("[fail] Display mode: unexpected bytes - different exe version? Not applied.");
         return false;
     }
+    // FUN_004112B0 is replaced by ClipToWindow (an entry hook that never runs the original); the ScreenToClient load
+    // becomes mov ebp, ScreenToGame (a byte group).
+    const BytePatch loadPatch[] = {{DS_PATCH_NAME("mov ebp, ScreenToGame"), kScreenToClientLoad, kLoadOrig, load,
+                                    sizeof load, false}};
     return patch::HookIndirectCall(kCreateWindowCall, &CreateGameWindow, kIatCreateWindowExA) &&
            patch::HookIndirectCall(kPlaceWindowCall, &PlaceWindowStub, kIatSetWindowPos) &&
-           WriteCallJump(kStyleCheck, &StyleCheck, kStyleCheckEnd) && patch::WriteJump(kClipCursorFn, &ClipToWindow) &&
-           patch::Write(kScreenToClientLoad, load, sizeof load);
+           WriteCallJump("Display: style check", kStyleCheck, &StyleCheck, kStyleCheckEnd, kStyleOrig) &&
+           patch::HookFunction(kClipCursorFn, reinterpret_cast<const void*>(&ClipToWindow), nullptr, kClipOrig,
+                               sizeof kClipOrig) &&
+           patch::ApplyGroup("Display: menu cursor mapping", loadPatch);
 }
 }  // namespace
+
+// OPTIONS > VIDEO (graphics.cpp ChangeDisplayMode): the window for a new mode, before the device is reset. Fullscreen:
+// the game's style (the message loop's StyleCheck keeps it) - D3D sizes the window itself.
+void features::PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode) {
+    HWND wnd = *reinterpret_cast<HWND*>(kGameWindow);
+    if (!wnd) return;
+    g_mode = static_cast<features::DisplayMode>(features::EffectiveDisplayMode(std::min<uint32_t>(mode, 2)));
+    if (g_mode == features::DisplayMode::Fullscreen) {
+        SetWindowLongA(wnd, GWL_STYLE, kFullscreenStyle);
+        SetWindowTextA(wnd, "Pivotal Games Ltd");
+        const int x = features::DevBackground() ? kBackgroundPos : 0;
+        SetWindowPos(wnd, HWND_TOP, x, x, static_cast<int>(w), static_cast<int>(h),
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS | (features::DevBackground() ? SWP_NOACTIVATE : 0));
+        dslog::Write("Display: fullscreen %ux%u", w, h);
+        return;
+    }
+    PlaceFramed(wnd, static_cast<int>(w), static_cast<int>(h));
+}
+
+// Renderer 3 presents through a DXGI flip swap chain into the window: no exclusive fullscreen, a borderless window
+// over the monitor instead (same latency with independent flip, instant Alt+Tab).
+uint32_t features::EffectiveDisplayMode(uint32_t mode) {
+    if (mode == static_cast<uint32_t>(DisplayMode::Fullscreen) && settings::Get().renderer == 3)
+        return static_cast<uint32_t>(DisplayMode::Borderless);
+    return mode;
+}
 
 void features::ApplyDisplay() {
     if (!g_hooked) {
@@ -279,6 +323,7 @@ void features::ApplyDisplay() {
         dslog::Write("[ok]   Display mode: window hooks");
     }
     // Read by the launcher's OK handler, after the settings dialog may have changed the mode.
-    const uint32_t fullscreen = settings::Get().displayMode == static_cast<uint32_t>(DisplayMode::Fullscreen);
+    const uint32_t fullscreen =
+        features::EffectiveDisplayMode(settings::Get().displayMode) == static_cast<uint32_t>(DisplayMode::Fullscreen);
     patch::WriteValue(kFullscreenImm, fullscreen);
 }

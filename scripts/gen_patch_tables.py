@@ -17,6 +17,11 @@ groups = {
     "kPad": d.CONTROLLER,
     "kTiming": d.TIMING,
     "kAudio": d.AUDIO,
+    "kSceneMessages": d.SCENE_MESSAGES,
+    "kCommandeer": d.COMMANDEER,
+    "kPlayerVoice": d.PLAYER_VOICE,
+    "kDebugKeys": d.DEBUG_KEYS,
+    "kLimits": d.LIMITS,
 }
 
 
@@ -36,6 +41,12 @@ for g, entries in groups.items():
         lines.append(f'    {{DS_PATCH_NAME("{name}"), 0x{va:08X}, {g}_o{i}, {g}_n{i}, {len(o) // 2}, '
                      f'{"true" if anyv else "false"}}},')
     lines.append("};")
+# Every group in one list, for code that walks all of them (pse/tests/test_patch_tables.cpp).
+lines += ["struct PatchGroup {", "    const char* name;", "    const BytePatch* patches;", "    size_t count;", "};",
+          "inline constexpr PatchGroup kAllGroups[] = {"]
+for g in groups:
+    lines.append(f'    {{"{g}", {g}, sizeof({g}) / sizeof({g}[0])}},')
+lines.append("};")
 lines.append("}  // namespace gen\n")
 dst = os.path.join(ROOT, "src", "generated", "patch_tables.h")
 os.makedirs(os.path.dirname(dst), exist_ok=True)

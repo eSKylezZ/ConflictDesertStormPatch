@@ -5,7 +5,7 @@
 //   Classic    as default.key (fire R1, orders L1, targeting L2 / R2);
 //   Default    L1 <-> L2 and R1 <-> R2 in every context: fire on R2, orders on L2, targeting on the bumpers (modern);
 //   Southpaw   Default with the sticks swapped (axis codes 0-5 <-> 6-11).
-// Saved per player in the registry (Enhancements\PadPreset<n> DWORD, PadLayout<n> binary for Custom).
+// Saved per player in the registry (settings key PadPreset<n> DWORD, PadLayout<n> binary for Custom).
 // The binding table [0x60687C] = {sets, slots, actions, int32* data}, entry (set, slot, action) at
 // data[(set * slots + slot) * actions + action]; set n = player n+1 (4 sets, splitscreen.cpp).
 #include "features/padlayout.h"
@@ -16,11 +16,11 @@
 #include <cstdio>
 #include <cstring>
 
+#include "core/settings.h"
 #include "core/log.h"
 
 namespace {
 constexpr uint32_t kBindingTable = 0x60687C, kActionNames = 0x5EC2B8;
-constexpr const char* kKey = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 constexpr int kButton = 2, kAxis = 1;
 
 int Type(int32_t e) { return e < 0 ? -1 : e >> 16; }
@@ -93,20 +93,16 @@ int g_gyro[padlayout::kPlayers] = {};
 DWORD ReadValue(const char* base, int player, DWORD fallback) {
     char name[32];
     snprintf(name, sizeof name, "%s%d", base, player + 1);
-    DWORD v = fallback, size = sizeof v;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_DWORD, nullptr, &v, &size) != ERROR_SUCCESS) v = fallback;
+    uint32_t v = fallback;
+    if (!settings::ReadDword(false, name, v)) v = fallback;
     return v;
 }
 bool ReadFlag(const char* base, int player) { return ReadValue(base, player, 1) != 0; }
 
 void WriteValue(const char* base, int player, DWORD v) {
-    HKEY key = nullptr;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
     char name[32];
     snprintf(name, sizeof name, "%s%d", base, player + 1);
-    RegSetValueExA(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof v);
-    RegCloseKey(key);
+    settings::WriteDword(false, name, v);
 }
 void WriteFlag(const char* base, int player, bool on) { WriteValue(base, player, on ? 1 : 0); }
 bool g_loaded = false;
@@ -116,10 +112,9 @@ void Load() {
     g_loaded = true;
     for (int p = 0; p < padlayout::kPlayers; ++p) {
         char name[32];
-        DWORD v = 0, size = sizeof v;
+        uint32_t v = 0;
         snprintf(name, sizeof name, "PadPreset%d", p + 1);
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_DWORD, nullptr, &v, &size) != ERROR_SUCCESS ||
-            v >= static_cast<DWORD>(padlayout::Preset::Count))
+        if (!settings::ReadDword(false, name, v) || v >= static_cast<uint32_t>(padlayout::Preset::Count))
             v = 0;
         g_preset[p] = static_cast<padlayout::Preset>(v);
         g_vibration[p] = ReadFlag("PadVibration", p);
@@ -129,10 +124,8 @@ void Load() {
         g_layout[p] = padlayout::Make(g_preset[p]);
         if (g_preset[p] == padlayout::Preset::Custom) {
             snprintf(name, sizeof name, "PadLayout%d", p + 1);
-            size = sizeof g_layout[p];
             padlayout::Layout custom;
-            if (RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_BINARY, nullptr, &custom, &size) ==
-                    ERROR_SUCCESS && size == sizeof custom)
+            if (settings::ReadBinary(name, &custom, sizeof custom))
                 g_layout[p] = custom;
         }
     }
@@ -182,18 +175,13 @@ void padlayout::Set(int player, Preset preset, const Layout& layout) {
     Load();
     g_preset[player] = preset;
     g_layout[player] = layout;
-    HKEY key = nullptr;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+    {
         char name[32];
-        const DWORD v = static_cast<DWORD>(preset);
         snprintf(name, sizeof name, "PadPreset%d", player + 1);
-        RegSetValueExA(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v), sizeof v);
+        settings::WriteDword(false, name, static_cast<uint32_t>(preset));
         snprintf(name, sizeof name, "PadLayout%d", player + 1);
-        if (preset == Preset::Custom)
-            RegSetValueExA(key, name, 0, REG_BINARY, reinterpret_cast<const BYTE*>(&layout), sizeof layout);
-        else
-            RegDeleteValueA(key, name);
-        RegCloseKey(key);
+        if (preset == Preset::Custom) settings::WriteBinary(name, &layout, sizeof layout);
+        else settings::DeleteValue(name);
     }
     ApplyToGame();
 }

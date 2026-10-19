@@ -30,6 +30,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
@@ -200,6 +201,22 @@ void BuildSoldierVolume(int* self, const float* light, const uint8_t* verts) {
     reinterpret_cast<UnlockFn>(0x52A8C0)(self);
 }
 
+// The game's own builders (entry hooks through the broker: its trampolines, or the next subscriber): run when the fix
+// is switched off (settings featShadowFix, live) and by the dev self-check.
+void* g_origObject = nullptr;
+void* g_origSoldier = nullptr;
+
+bool FixOn() {
+    static int logged = -1;
+    const bool on = settings::Get().featShadowFix;
+    if (logged != static_cast<int>(on)) {
+        logged = on;
+        dslog::Write(on ? "[ok]   Shadows: volumes end below the caster (no shadows through floors / walls)"
+                        : "[off]  Shadows: the game's own shadow volumes");
+    }
+    return on;
+}
+
 #ifndef DS_DIST
 DWORD DevDword(const char* name) {
     DWORD v = 0, size = sizeof v;
@@ -209,21 +226,9 @@ DWORD DevDword(const char* name) {
 
 // Dev self-check (Dev\ShadowCompare = 1): for the first calls the game's own builder runs first (trampoline), then
 // ours without the plane; both outputs must match. Logs the result per builder.
-void* g_origObject = nullptr;
-void* g_origSoldier = nullptr;
 int g_compareLeft[2] = {0, 0};
 float g_refVertex[kMaxQuads * 12];
 uint16_t g_refIndex[kMaxQuads * 6];
-
-void* Trampoline(uint32_t va, size_t len) {
-    auto* t = static_cast<uint8_t*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!t) return nullptr;
-    std::memcpy(t, reinterpret_cast<const void*>(va), len);
-    t[len] = 0xE9;
-    const int32_t rel = static_cast<int32_t>(va + len) - static_cast<int32_t>(reinterpret_cast<uint32_t>(t + len + 5));
-    std::memcpy(t + len + 1, &rel, 4);
-    return t;
-}
 
 void Compare(int which, const char* name, auto runOriginal, auto runOurs) {
     runOriginal();
@@ -246,6 +251,7 @@ void Compare(int which, const char* name, auto runOriginal, auto runOurs) {
 #endif
 
 void ObjectVolume(uint8_t* mesh, const uint8_t* entry) {
+    if (!FixOn()) return reinterpret_cast<void(__fastcall*)(void*)>(g_origObject)(mesh);
 #ifndef DS_DIST
     if (g_compareLeft[0] > 0 && g_origObject) {
         Compare(0, "object", [&] { reinterpret_cast<void(__fastcall*)(void*)>(g_origObject)(mesh); },
@@ -256,6 +262,8 @@ void ObjectVolume(uint8_t* mesh, const uint8_t* entry) {
 }
 
 void __fastcall SoldierVolume(int* self, int, const float* light, const uint8_t* verts) {
+    if (!FixOn())
+        return reinterpret_cast<void(__thiscall*)(void*, const float*, const uint8_t*)>(g_origSoldier)(self, light, verts);
 #ifndef DS_DIST
     if (g_compareLeft[1] > 0 && g_origSoldier) {
         Compare(1, "soldier",
@@ -302,19 +310,17 @@ void features::ApplyShadows() {
     }
 #ifndef DS_DIST
     g_enabled = DevDword("ShadowFixOff") == 0;
-    if (DevDword("ShadowCompare")) {
-        g_origObject = Trampoline(kObjectBuilder, sizeof kObjectEntry);
-        g_origSoldier = Trampoline(kSoldierBuilder, sizeof kSoldierEntry);
-        g_compareLeft[0] = g_compareLeft[1] = 20;
-    }
+    if (DevDword("ShadowCompare")) g_compareLeft[0] = g_compareLeft[1] = 20;
 #endif
     if (!patch::HookCall(kSoldierDrawCall, reinterpret_cast<const void*>(&SoldierDrawStub), kSoldierDraw) ||
-        !patch::WriteJump(kObjectBuilder, reinterpret_cast<const void*>(&ObjectVolumeStub)) ||
-        !patch::WriteJump(kSoldierBuilder, reinterpret_cast<const void*>(&SoldierVolume))) {
+        !patch::HookFunction(kObjectBuilder, reinterpret_cast<const void*>(&ObjectVolumeStub), &g_origObject, kObjectEntry,
+                             sizeof kObjectEntry) ||
+        !patch::HookFunction(kSoldierBuilder, reinterpret_cast<const void*>(&SoldierVolume), &g_origSoldier,
+                             kSoldierEntry, sizeof kSoldierEntry)) {
         dslog::Write("[fail] Shadows: hooks");
         return;
     }
     applied = true;
-    dslog::Write("[ok]   Shadows: volumes end below the caster (no shadows through floors / walls)%s",
-                 g_enabled ? "" : " - dev: switched off");
+    FixOn();  // logs [ok] / [off] (and again when the setting changes)
+    if (!g_enabled) dslog::Write("[dev] Shadows: plane switched off (Dev\\ShadowFixOff)");
 }

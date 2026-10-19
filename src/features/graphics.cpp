@@ -30,11 +30,15 @@
 #include <cstring>
 
 #include "core/log.h"
+#include "core/comhooks.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/framerec.h"
 #include "features/overlay.h"
+#include "loader.h"
+#include "render/d3d8to9.h"
 
 namespace {
 constexpr uint32_t kIatDirect3DCreate8 = 0x5D8308;
@@ -48,7 +52,7 @@ struct DisplayMode {  // D3DDISPLAYMODE
 };
 constexpr uint32_t kIntervalOne = 1;
 enum Device : int {
-    kGetDeviceCaps = 7, kReset = 14, kPresent = 15, kCreateDepthStencilSurface = 26, kEndScene = 35, kSetRenderTarget = 31, kGetRenderTarget = 32,
+    kTestCooperativeLevel = 3, kGetDeviceCaps = 7, kReset = 14, kPresent = 15, kCreateDepthStencilSurface = 26, kEndScene = 35, kSetRenderTarget = 31, kGetRenderTarget = 32,
     kSetRenderState = 50, kSetTextureStageState = 63, kDrawPrimitiveUP = 72, kDrawIndexedPrimitiveUP = 73, kSetVertexShader = 76, kCreateTexture = 20,
 #ifndef DS_DIST
     kGetBackBuffer = 16, kCreateRenderTarget = 25, kCopyRects = 28, kGetFrontBuffer = 30,
@@ -85,6 +89,7 @@ using CheckMultiSampleFn = HRESULT(__stdcall*)(void*, UINT, uint32_t, uint32_t, 
 using CreateDeviceFn = HRESULT(__stdcall*)(void*, UINT, uint32_t, HWND, DWORD, d3d8::PresentParams*, void**);
 using GetCapsFn = HRESULT(__stdcall*)(void*, d3d8::Caps*);
 using ResetFn = HRESULT(__stdcall*)(void*, d3d8::PresentParams*);
+using TestCoopFn = HRESULT(__stdcall*)(void*);
 using PresentFn = HRESULT(__stdcall*)(void*, const RECT*, const RECT*, HWND, const void*);
 using CreateDepthFn = HRESULT(__stdcall*)(void*, UINT, UINT, uint32_t, uint32_t, void**);
 using SetRenderTargetFn = HRESULT(__stdcall*)(void*, void*, void*);
@@ -97,25 +102,40 @@ using SetVertexShaderFn = HRESULT(__stdcall*)(void*, DWORD);
 using ReleaseFn = ULONG(__stdcall*)(void*);
 using GetDescFn = HRESULT(__stdcall*)(void*, d3d8::SurfaceDesc*);
 
+// COM vtable hooks through the broker (core/comhooks.h): one record per COM class - the IDirect3D8 object's class and
+// the device's (d3d8.dll's, or the D3D9 wrapper's own classes in src/render when Renderer >= 1). g_xxx(obj, ...) =
+// the next function in that slot's chain for obj's class. Priority kD3dHookPriority (features.h): other plugins chain
+// in front (higher) or behind (lower) at their own priority.
+using DevTable = comhooks::Table<80>;
+using D3dTable = comhooks::Table<16>;
+DevTable g_devHooks;
+D3dTable g_d3dHooks;
+template <int I, class Fn>
+using DevNext = comhooks::Next<DevTable, g_devHooks, I, Fn>;
+
 Direct3DCreate8Fn g_create8 = nullptr;
-CheckMultiSampleFn g_checkMultiSample = nullptr;
-CreateDeviceFn g_createDevice = nullptr;
-ResetFn g_reset = nullptr;
-PresentFn g_present = nullptr;
-CreateDepthFn g_createDepth = nullptr;
-SetRenderTargetFn g_setRenderTarget = nullptr;
-GetRenderTargetFn g_getRenderTarget = nullptr;
-SetTssFn g_setTss = nullptr;
-EndSceneFn g_endScene = nullptr;
-DrawUpFn g_drawUp = nullptr;
-DrawIndexedUpFn g_drawIndexedUp = nullptr;
-SetVertexShaderFn g_setVertexShader = nullptr;
+const comhooks::Next<D3dTable, g_d3dHooks, d3d8::kCreateDevice, CreateDeviceFn> g_createDevice{};
+const DevNext<d3d8::kReset, ResetFn> g_reset{};
+const DevNext<d3d8::kTestCooperativeLevel, TestCoopFn> g_testCoop{};
+bool g_forceReset = false;              // ChangeDisplayMode: TestCooperativeLevel answers DEVICENOTRESET once
+d3d8::PresentParams g_fallback{};       // ChangeDisplayMode: the parameters to go back to if the new ones fail
+bool g_haveFallback = false;
+bool g_resetFailed = false;
+const DevNext<d3d8::kPresent, PresentFn> g_present{};
+const DevNext<d3d8::kSetRenderTarget, SetRenderTargetFn> g_setRenderTarget{};
+const DevNext<d3d8::kSetTextureStageState, SetTssFn> g_setTss{};
+const DevNext<d3d8::kEndScene, EndSceneFn> g_endScene{};
+const DevNext<d3d8::kDrawPrimitiveUP, DrawUpFn> g_drawUp{};
+const DevNext<d3d8::kDrawIndexedPrimitiveUP, DrawIndexedUpFn> g_drawIndexedUp{};
+const DevNext<d3d8::kSetVertexShader, SetVertexShaderFn> g_setVertexShader{};
 using SetRsFn = HRESULT(__stdcall*)(void*, DWORD, DWORD);
-SetRsFn g_setRs = nullptr;
+const DevNext<d3d8::kSetRenderState, SetRsFn> g_setRs{};
 bool g_pretransformed = false;  // current vertex shader is an FVF with D3DFVF_XYZRHW
 
 uint32_t g_samples = 0;     // MSAA sample count of the current device (0 = off)
 uint32_t g_anisotropy = 0;  // anisotropy forced on linear-filtered textures (0 = game default)
+uint32_t g_maxAnisotropy = 0;  // the device's limit (0 = no anisotropic minification)
+void* g_device = nullptr;      // the device made by CreateDevice (OPTIONS > VIDEO changes the filtering live)
 void* g_ownDepth = nullptr; // plain depth buffer for non-multisampled render targets
 d3d8::SurfaceDesc g_ownDepthDesc{};
 
@@ -124,20 +144,6 @@ void** Vtable(void* obj) { return *static_cast<void***>(obj); }
 template <class Fn>
 Fn Method(void* obj, int index) {
     return reinterpret_cast<Fn>(Vtable(obj)[index]);
-}
-
-// Points vtable slot `index` of `obj` at `hook`; returns the previous function (or the saved one when the slot is
-// already ours, e.g. for a second device - vtables are per class, not per object).
-template <class Fn>
-bool HookSlot(void* obj, int index, void* hook, Fn& original) {
-    void** slot = &Vtable(obj)[index];
-    if (*slot == hook) return original != nullptr;
-    original = reinterpret_cast<Fn>(*slot);
-    DWORD old;
-    if (!VirtualProtect(slot, sizeof *slot, PAGE_READWRITE, &old)) return false;
-    *slot = hook;
-    VirtualProtect(slot, sizeof *slot, old, &old);
-    return true;
 }
 
 bool Desc(void* surface, d3d8::SurfaceDesc& d) {
@@ -173,7 +179,8 @@ void SetAnisotropyLevels(void* dev) {
 HRESULT __stdcall SetRenderTarget(void* dev, void* target, void* depth) {
     if (g_samples && depth) {
         void* current = nullptr;
-        if (!target && SUCCEEDED(g_getRenderTarget(dev, &current))) target = current;  // null = keep the target
+        if (!target && SUCCEEDED(Method<GetRenderTargetFn>(dev, d3d8::kGetRenderTarget)(dev, &current)))
+            target = current;  // null = keep the target
         d3d8::SurfaceDesc t{}, z{};
         if (Desc(target, t) && Desc(depth, z) && t.multiSample == 0 && z.multiSample != 0) {
             if (g_ownDepth && (g_ownDepthDesc.width < t.width || g_ownDepthDesc.height < t.height ||
@@ -181,7 +188,8 @@ HRESULT __stdcall SetRenderTarget(void* dev, void* target, void* depth) {
                 Release(g_ownDepth);
             if (!g_ownDepth) {
                 const UINT w = std::max(t.width, z.width), h = std::max(t.height, z.height);
-                if (SUCCEEDED(g_createDepth(dev, w, h, z.format, 0, &g_ownDepth)) && Desc(g_ownDepth, g_ownDepthDesc))
+                const auto create = Method<CreateDepthFn>(dev, d3d8::kCreateDepthStencilSurface);   // (not hooked)
+                if (SUCCEEDED(create(dev, w, h, z.format, 0, &g_ownDepth)) && Desc(g_ownDepth, g_ownDepthDesc))
                     dslog::Write("Graphics: plain %ux%u depth buffer for render-to-texture (%ux%u target)", w, h,
                                  t.width, t.height);
                 else
@@ -281,7 +289,18 @@ struct SceneFog {
     bool wanted = false, active = false;
     uint32_t colour = 0;
     float start = 0, end = 0;
+    // The game's own values of the six states (D3D defaults until it sets them): put back on the device at EndScene and
+    // when the override ends - the game sets its fog once and its renderer caches render states, so without this our
+    // 3-5 m fog stayed on after the loadout screen closed (the whole mission looked fogged in).
+    DWORD game[6] = {0, 0, 0, 0, 0x3F800000u, 0};
 } g_fog;
+constexpr DWORD kFogStates[6] = {28, 34, 35, 36, 37, 140};
+
+int FogIndex(DWORD type) {
+    for (int i = 0; i < 6; ++i)
+        if (kFogStates[i] == type) return i;
+    return -1;
+}
 
 DWORD FloatBits(float f) {
     DWORD d;
@@ -303,12 +322,21 @@ bool FogOverride(DWORD type, DWORD& value) {
 }
 
 HRESULT __stdcall SetRenderState(void* dev, DWORD type, DWORD value) {
+    if (int i = FogIndex(type); i >= 0) g_fog.game[i] = value;
     FogOverride(type, value);
     return g_setRs(dev, type, value);
 }
 
-HRESULT __stdcall EndScene(void* dev) {
+// Ends the scene fog override: the game's fog states back on the device.
+void EndSceneFog(void* dev) {
+    if (!g_fog.active) return;
     g_fog.active = false;
+    if (dev && g_setRs)
+        for (int i = 0; i < 6; ++i) g_setRs(dev, kFogStates[i], g_fog.game[i]);
+}
+
+HRESULT __stdcall EndScene(void* dev) {
+    EndSceneFog(dev);
     overlay::Render(dev);
     return g_endScene(dev);
 }
@@ -319,6 +347,14 @@ HRESULT __stdcall Present(void* dev, const RECT* src, const RECT* dst, HWND wnd,
 HRESULT __stdcall Reset(void* dev, d3d8::PresentParams* pp) {
     Release(g_ownDepth);
     HRESULT hr = g_reset(dev, pp);
+    if (FAILED(hr) && g_haveFallback) {  // a mode change the device refused: back to what worked (same struct)
+        dslog::Write("Graphics: %ux%u %s refused (0x%08lX) - back to %ux%u", pp->width, pp->height,
+                     pp->windowed ? "windowed" : "fullscreen", static_cast<unsigned long>(hr), g_fallback.width,
+                     g_fallback.height);
+        *pp = g_fallback;
+        g_resetFailed = true;
+        hr = g_reset(dev, pp);
+    }
     if (SUCCEEDED(hr)) SetAnisotropyLevels(dev);  // Reset returns every state to its default
     if (SUCCEEDED(hr)) StartVsyncCheck();          // re-time: the mode may differ after alt-tab
     dslog::Write("Graphics: device reset %s (0x%08lX, %u samples)", SUCCEEDED(hr) ? "ok" : "FAILED",
@@ -327,7 +363,7 @@ HRESULT __stdcall Reset(void* dev, d3d8::PresentParams* pp) {
 }
 
 using CreateTextureFn = HRESULT(__stdcall*)(void*, UINT, UINT, UINT, DWORD, uint32_t, uint32_t, void**);
-CreateTextureFn g_createTexture = nullptr;
+const DevNext<d3d8::kCreateTexture, CreateTextureFn> g_createTexture{};
 
 #ifndef DS_DIST
 // Development builds: report the calls that would not work with a multisampled back buffer.
@@ -335,10 +371,10 @@ using GetBackBufferFn = HRESULT(__stdcall*)(void*, UINT, uint32_t, void**);
 using CreateRenderTargetFn = HRESULT(__stdcall*)(void*, UINT, UINT, uint32_t, uint32_t, BOOL, void**);
 using CopyRectsFn = HRESULT(__stdcall*)(void*, void*, const RECT*, UINT, void*, const POINT*);
 using GetFrontBufferFn = HRESULT(__stdcall*)(void*, void*);
-GetBackBufferFn g_getBackBuffer = nullptr;
-CreateRenderTargetFn g_createRenderTarget = nullptr;
-CopyRectsFn g_copyRects = nullptr;
-GetFrontBufferFn g_getFrontBuffer = nullptr;
+const DevNext<d3d8::kGetBackBuffer, GetBackBufferFn> g_getBackBuffer{};
+const DevNext<d3d8::kCreateRenderTarget, CreateRenderTargetFn> g_createRenderTarget{};
+const DevNext<d3d8::kCopyRects, CopyRectsFn> g_copyRects{};
+const DevNext<d3d8::kGetFrontBuffer, GetFrontBufferFn> g_getFrontBuffer{};
 int g_reports = 0;
 
 template <class... Args>
@@ -378,28 +414,40 @@ HRESULT __stdcall CreateTexture(void* dev, UINT w, UINT h, UINT levels, DWORD us
     const double t0 = framerec::Now();
     const HRESULT hr = g_createTexture(dev, w, h, levels, usage, fmt, pool, out);
     framerec::AddTexture(w, h, fmt, framerec::Now() - t0);
+    if (SUCCEEDED(hr) && out) features::NoteTexture(*out, w, h, levels, fmt, pool);
     return hr;
 }
 
+// FUN_00548920 (the message loop's device check, 0x4116A3) resets the device - releasing and re-making its render
+// targets, back buffer / depth surfaces and render-state cache - when this answers DEVICENOTRESET; ChangeDisplayMode
+// borrows that path.
+HRESULT __stdcall TestCooperativeLevel(void* dev) {
+    if (g_forceReset) {
+        g_forceReset = false;
+        return static_cast<HRESULT>(0x88760869);  // D3DERR_DEVICENOTRESET
+    }
+    return g_testCoop(dev);
+}
+
 void HookDevice(void* dev) {
-    bool ok = HookSlot(dev, d3d8::kSetRenderState, reinterpret_cast<void*>(&SetRenderState), g_setRs) &&
-              HookSlot(dev, d3d8::kSetTextureStageState, reinterpret_cast<void*>(&SetTextureStageState), g_setTss) &&
-              HookSlot(dev, d3d8::kSetRenderTarget, reinterpret_cast<void*>(&SetRenderTarget), g_setRenderTarget) &&
-              HookSlot(dev, d3d8::kReset, reinterpret_cast<void*>(&Reset), g_reset) &&
-              HookSlot(dev, d3d8::kPresent, reinterpret_cast<void*>(&Present), g_present) &&
-              HookSlot(dev, d3d8::kCreateTexture, reinterpret_cast<void*>(&CreateTexture), g_createTexture) &&
-              HookSlot(dev, d3d8::kEndScene, reinterpret_cast<void*>(&EndScene), g_endScene) &&
-              HookSlot(dev, d3d8::kSetVertexShader, reinterpret_cast<void*>(&SetVertexShader), g_setVertexShader) &&
-              HookSlot(dev, d3d8::kDrawPrimitiveUP, reinterpret_cast<void*>(&DrawPrimitiveUP), g_drawUp) &&
-              HookSlot(dev, d3d8::kDrawIndexedPrimitiveUP, reinterpret_cast<void*>(&DrawIndexedPrimitiveUP),
-                       g_drawIndexedUp);
-    g_getRenderTarget = Method<GetRenderTargetFn>(dev, d3d8::kGetRenderTarget);
-    g_createDepth = Method<CreateDepthFn>(dev, d3d8::kCreateDepthStencilSurface);
+    patch::OwnerScope owner(pse_host::Find("dsfix.graphics"));  // run-time hooks: owned by this feature's PSE plugin
+    auto hook = [dev](int index, const void* fn) { return g_devHooks.Hook(dev, index, fn, features::kD3dHookPriority); };
+    bool ok = hook(d3d8::kTestCooperativeLevel, reinterpret_cast<const void*>(&TestCooperativeLevel));
+    ok = hook(d3d8::kSetRenderState, reinterpret_cast<const void*>(&SetRenderState)) && ok;
+    ok = hook(d3d8::kSetTextureStageState, reinterpret_cast<const void*>(&SetTextureStageState)) && ok;
+    ok = hook(d3d8::kSetRenderTarget, reinterpret_cast<const void*>(&SetRenderTarget)) && ok;
+    ok = hook(d3d8::kReset, reinterpret_cast<const void*>(&Reset)) && ok;
+    ok = hook(d3d8::kPresent, reinterpret_cast<const void*>(&Present)) && ok;
+    ok = hook(d3d8::kCreateTexture, reinterpret_cast<const void*>(&CreateTexture)) && ok;
+    ok = hook(d3d8::kEndScene, reinterpret_cast<const void*>(&EndScene)) && ok;
+    ok = hook(d3d8::kSetVertexShader, reinterpret_cast<const void*>(&SetVertexShader)) && ok;
+    ok = hook(d3d8::kDrawPrimitiveUP, reinterpret_cast<const void*>(&DrawPrimitiveUP)) && ok;
+    ok = hook(d3d8::kDrawIndexedPrimitiveUP, reinterpret_cast<const void*>(&DrawIndexedPrimitiveUP)) && ok;
 #ifndef DS_DIST
-    HookSlot(dev, d3d8::kGetBackBuffer, reinterpret_cast<void*>(&GetBackBuffer), g_getBackBuffer);
-    HookSlot(dev, d3d8::kCreateRenderTarget, reinterpret_cast<void*>(&CreateRenderTarget), g_createRenderTarget);
-    HookSlot(dev, d3d8::kCopyRects, reinterpret_cast<void*>(&CopyRects), g_copyRects);
-    HookSlot(dev, d3d8::kGetFrontBuffer, reinterpret_cast<void*>(&GetFrontBuffer), g_getFrontBuffer);
+    hook(d3d8::kGetBackBuffer, reinterpret_cast<const void*>(&GetBackBuffer));
+    hook(d3d8::kCreateRenderTarget, reinterpret_cast<const void*>(&CreateRenderTarget));
+    hook(d3d8::kCopyRects, reinterpret_cast<const void*>(&CopyRects));
+    hook(d3d8::kGetFrontBuffer, reinterpret_cast<const void*>(&GetFrontBuffer));
 #endif
     if (!ok) {
         dslog::Write("[fail] Graphics: device hooks");
@@ -411,9 +459,10 @@ void HookDevice(void* dev) {
 
 // Highest sample count <= wanted that the adapter supports for the back buffer and the depth buffer.
 uint32_t PickSamples(void* d3d, UINT adapter, uint32_t type, const d3d8::PresentParams& pp, uint32_t wanted) {
+    const auto check = Method<CheckMultiSampleFn>(d3d, d3d8::kCheckDeviceMultiSampleType);   // (not hooked)
     for (uint32_t s = wanted; s >= 2; --s) {
-        if (SUCCEEDED(g_checkMultiSample(d3d, adapter, type, pp.format, pp.windowed, s)) &&
-            (!pp.autoDepthStencil || SUCCEEDED(g_checkMultiSample(d3d, adapter, type, pp.depthFormat, pp.windowed, s))))
+        if (SUCCEEDED(check(d3d, adapter, type, pp.format, pp.windowed, s)) &&
+            (!pp.autoDepthStencil || SUCCEEDED(check(d3d, adapter, type, pp.depthFormat, pp.windowed, s))))
             return s;
     }
     return 0;
@@ -495,6 +544,7 @@ void WaitForVblanks() {
 }
 
 HRESULT __stdcall Present(void* dev, const RECT* src, const RECT* dst, HWND wnd, const void* dirty) {
+    if (features::LockstepSkipRender()) return 0;   // online catch-up frame / lost device: nothing was drawn
     if (g_vsync && !g_decided) {
         LARGE_INTEGER now, f;
         QueryPerformanceCounter(&now);
@@ -524,8 +574,10 @@ HRESULT __stdcall Present(void* dev, const RECT* src, const RECT* dst, HWND wnd,
     const double t0 = framerec::Now();
     if (g_softVsync) WaitForVblanks();
     const double t1 = framerec::Now();
+    features::PhotoBeforePresent(dev);   // photo mode: the finished frame (overlay included) read back
     const HRESULT hr = g_present(dev, src, dst, wnd, dirty);
     framerec::AddPresent(t1 - t0, framerec::Now() - t1);
+    features::PhotoAfterPresent(dev);    // (system D3D8 + MSAA: from the front buffer)
     return hr;
 }
 
@@ -609,13 +661,13 @@ HRESULT __stdcall CreateDevice(void* d3d, UINT adapter, uint32_t type, HWND wnd,
 
     void* dev = *out;
     NoteRefresh(dev, pp);
-    g_anisotropy = 0;
-    if (v.anisotropy >= 2) {
-        d3d8::Caps caps{};
-        if (SUCCEEDED(Method<GetCapsFn>(dev, d3d8::kGetDeviceCaps)(dev, &caps)) &&
-            (caps.fields[d3d8::kTextureFilterCaps] & d3d8::kFilterCapsMinAnisotropic))
-            g_anisotropy = std::min<uint32_t>(v.anisotropy, std::max<uint32_t>(caps.maxAnisotropy, 1));
-    }
+    g_device = dev;
+    g_maxAnisotropy = 0;
+    d3d8::Caps caps{};
+    if (SUCCEEDED(Method<GetCapsFn>(dev, d3d8::kGetDeviceCaps)(dev, &caps)) &&
+        (caps.fields[d3d8::kTextureFilterCaps] & d3d8::kFilterCapsMinAnisotropic))
+        g_maxAnisotropy = std::max<uint32_t>(caps.maxAnisotropy, 1);
+    g_anisotropy = v.anisotropy >= 2 && g_maxAnisotropy ? std::min<uint32_t>(v.anisotropy, g_maxAnisotropy) : 0;
     HookDevice(dev);
     dslog::Write("Graphics: %ux%u %s, MSAA %ux (setting %u), anisotropic filtering %ux (setting %u), V-Sync %s at %u Hz",
                  pp->width, pp->height, pp->windowed ? "windowed" : "fullscreen", g_samples, v.antialiasing,
@@ -624,27 +676,121 @@ HRESULT __stdcall CreateDevice(void* d3d, UINT adapter, uint32_t type, HWND wnd,
 }
 
 void* WINAPI Direct3DCreate8Hook(UINT sdkVersion) {
-    void* d3d = g_create8(sdkVersion);
+    // Renderer 1 / 2 / 3: our D3D8-on-D3D9 objects (src/render; 2 = D3D9 on D3D12, 3 = + own DXGI presenter); the hooks below then wrap them like the system's D3D8.
+    void* d3d = settings::Get().renderer >= 1 ? render::CreateDirect3D8On9(sdkVersion, settings::Get().renderer >= 2, settings::Get().renderer == 3) : nullptr;
+    if (!d3d) d3d = g_create8(sdkVersion);
     if (!d3d) return d3d;
-    g_checkMultiSample = Method<CheckMultiSampleFn>(d3d, d3d8::kCheckDeviceMultiSampleType);
-    if (!HookSlot(d3d, d3d8::kCreateDevice, reinterpret_cast<void*>(&CreateDevice), g_createDevice))
+    patch::OwnerScope owner(pse_host::Find("dsfix.graphics"));
+    if (!g_d3dHooks.Hook(d3d, d3d8::kCreateDevice, reinterpret_cast<const void*>(&CreateDevice), features::kD3dHookPriority))
         dslog::Write("[fail] Graphics: IDirect3D8::CreateDevice hook");
     return d3d;
 }
 }  // namespace
+
+// OPTIONS > VIDEO > TEXTURE FILTERING: the new level from now on. The game sets each stage's MINFILTER per material,
+// so the next draws pick it up; MAXANISOTROPY is set on every stage here (as after a Reset).
+void features::ApplyAnisotropy() {
+    const uint32_t want = settings::Get().anisotropy;
+    const uint32_t now = want >= 2 && g_maxAnisotropy ? std::min<uint32_t>(want, g_maxAnisotropy) : 0;
+    if (now == g_anisotropy || !g_device || !g_setTss) {
+        g_anisotropy = now;
+        return;
+    }
+    if (!now)  // back to the game's filtering: plain linear until the game sets the stage again
+        for (DWORD s = 0; s < d3d8::kMaxStages; ++s) g_setTss(g_device, s, d3d8::kTssMinFilter, d3d8::kTexfLinear);
+    g_anisotropy = now;
+    SetAnisotropyLevels(g_device);
+    dslog::Write("Graphics: anisotropic filtering now %ux (setting %u)", g_anisotropy, want);
+}
+
+// OPTIONS > VIDEO: resolution / display mode / anti-aliasing / V-Sync without a restart. The new mode goes where
+// the sample framework's device creation (FUN_00542AC0) would have put it - present parameters (renderer +0x84), mode
+// index (device +0x13A8), fullscreen flag (adapter +0x66C8), windowed flag (renderer +0x40528), back-buffer size and
+// bits (+0x40688 ..) - then the game's own device-lost path resets the device (as after alt-tab). A refused mode
+// falls back to the old parameters inside the Reset hook. Only between frames (the frame-cap hook).
+bool features::ChangeDisplayMode(uint32_t modeIndex, uint32_t displayMode) {
+    displayMode = features::EffectiveDisplayMode(displayMode);
+    constexpr uint32_t kRendererPtr = 0x63C924, kDeviceCheck = 0x548920;
+    auto* r = *reinterpret_cast<uint8_t**>(kRendererPtr);
+    if (!r || !g_testCoop || !g_device) return false;
+    const int adapterIndex = *reinterpret_cast<int*>(r + 0xE0);
+    uint8_t* adapter = r + 0xE4 + adapterIndex * 0x66D0;
+    uint8_t* device = adapter + 0x440 + *reinterpret_cast<int*>(adapter + 0x66C4) * 0x13B4;
+    if (modeIndex >= *reinterpret_cast<uint32_t*>(device + 0xE4)) return false;
+    const uint32_t* m = reinterpret_cast<const uint32_t*>(device + 0xE8 + modeIndex * 0x20);
+    auto* pp = reinterpret_cast<d3d8::PresentParams*>(r + 0x84);
+    const bool windowed = displayMode != 0;
+
+    struct Saved {
+        uint32_t mode, fullscreen, windowedFlag, wh[2], bits[3];
+    } old{*reinterpret_cast<uint32_t*>(device + 0x13A8), *reinterpret_cast<uint32_t*>(adapter + 0x66C8),
+          *reinterpret_cast<uint32_t*>(r + 0x40528), {*reinterpret_cast<uint32_t*>(r + 0x40688),
+          *reinterpret_cast<uint32_t*>(r + 0x4068C)}, {*reinterpret_cast<uint32_t*>(r + 0x40694),
+          *reinterpret_cast<uint32_t*>(r + 0x40698), *reinterpret_cast<uint32_t*>(r + 0x4069C)}};
+    g_fallback = *pp;
+    g_haveFallback = true;
+    g_resetFailed = false;
+
+    features::PlaceGameWindow(m[0], m[1], displayMode);
+    pp->width = m[0];
+    pp->height = m[1];
+    pp->windowed = windowed;
+    pp->format = windowed ? *reinterpret_cast<uint32_t*>(adapter + 0x438) : m[2];  // desktop format when windowed
+    pp->depthFormat = m[4];
+    pp->refresh = 0;
+    pp->interval = 0;
+    pp->multiSample = 0;
+    auto* d3d = *reinterpret_cast<void**>(r + 0x4052C);
+    const settings::Values& v = settings::Get();
+    ApplyVsync(d3d, adapterIndex, pp);
+    g_samples = v.antialiasing >= 2 && pp->swapEffect == 1 && !(pp->flags & 1)
+                    ? PickSamples(d3d, adapterIndex, d3d8::kDevHal, *pp, v.antialiasing)
+                    : 0;
+    pp->multiSample = g_samples;
+    *reinterpret_cast<uint32_t*>(device + 0x13A8) = modeIndex;
+    *reinterpret_cast<uint32_t*>(device + 0x13AC) = windowed;
+    *reinterpret_cast<uint32_t*>(adapter + 0x66C8) = windowed ? 0 : 1;
+    *reinterpret_cast<uint32_t*>(r + 0x40528) = windowed;
+    *reinterpret_cast<uint32_t*>(r + 0x40688) = m[0];
+    *reinterpret_cast<uint32_t*>(r + 0x4068C) = m[1];
+    for (int i = 0; i < 3; ++i) *reinterpret_cast<uint32_t*>(r + 0x40694 + i * 4) = m[5 + i];
+
+    g_forceReset = true;
+    reinterpret_cast<int(__thiscall*)(void*)>(kDeviceCheck)(r);
+    g_forceReset = false;
+    g_haveFallback = false;
+    if (g_resetFailed) {  // the old mode is back on the device: the game's fields too
+        *reinterpret_cast<uint32_t*>(device + 0x13A8) = old.mode;
+        *reinterpret_cast<uint32_t*>(device + 0x13AC) = old.windowedFlag;
+        *reinterpret_cast<uint32_t*>(adapter + 0x66C8) = old.fullscreen;
+        *reinterpret_cast<uint32_t*>(r + 0x40528) = old.windowedFlag;
+        *reinterpret_cast<uint32_t*>(r + 0x40688) = old.wh[0];
+        *reinterpret_cast<uint32_t*>(r + 0x4068C) = old.wh[1];
+        for (int i = 0; i < 3; ++i) *reinterpret_cast<uint32_t*>(r + 0x40694 + i * 4) = old.bits[i];
+        features::PlaceGameWindow(old.wh[0], old.wh[1], old.fullscreen ? 0 : displayMode);
+        g_samples = g_fallback.multiSample;
+        return false;
+    }
+    dslog::Write("Graphics: display now %ux%u %s, MSAA %ux, V-Sync %s", m[0], m[1],
+                 displayMode == 0 ? "fullscreen" : displayMode == 1 ? "windowed" : "borderless", g_samples,
+                 g_vsync ? "on" : "off");
+    return true;
+}
 
 void features::ApplyGraphics() {
     if (g_create8) return;  // installed once; the settings are read when the device is created
     auto slot = reinterpret_cast<Direct3DCreate8Fn*>(kIatDirect3DCreate8);
     HMODULE d3d8 = GetModuleHandleA("d3d8.dll");
     auto real = d3d8 ? reinterpret_cast<Direct3DCreate8Fn>(GetProcAddress(d3d8, "Direct3DCreate8")) : nullptr;
-    if (!real || *slot != real) {
+    // (The game layer, pse.game.ds1, hooks the slot first - PSE's D3D events; then it holds the layer's hook and the
+    // broker knows the slot: this hook chains behind it, its next is still the real function.)
+    if (!real || (*slot != real && !pse::HooksInterface()->OwnerOf(kIatDirect3DCreate8))) {
         dslog::Write("[fail] Graphics: Direct3DCreate8 import not found - different exe version? Not applied.");
         return;
     }
-    g_create8 = real;
-    auto hook = &Direct3DCreate8Hook;
-    if (patch::WriteValue(kIatDirect3DCreate8, hook))
+    // IAT slot pointer hook: g_create8 = the chain's next (the real function unless another hook joined).
+    if (patch::HookSlot(kIatDirect3DCreate8, reinterpret_cast<const void*>(&Direct3DCreate8Hook),
+                        reinterpret_cast<void**>(&g_create8), reinterpret_cast<uint32_t>(real)))
         dslog::Write("[ok]   Graphics: anti-aliasing / anisotropic filtering hooks");
     else
         g_create8 = nullptr;
@@ -665,7 +811,7 @@ uint32_t features::VsyncProbeFps() {
 void features::SetSceneFog(bool on, uint32_t colour, float start, float end) {
     g_fog.wanted = on;
     g_fog.colour = colour, g_fog.start = start, g_fog.end = end;
-    if (!on) g_fog.active = false;
+    if (!on) EndSceneFog(*reinterpret_cast<void**>(0x755050));
 }
 
 // Called when the frame's 3-D camera is set: forces the fog states now (the game may not set them again this frame).
@@ -674,7 +820,7 @@ void features::SceneFogBegin() {
     void* dev = *reinterpret_cast<void**>(0x755050);
     if (!dev) return;
     g_fog.active = true;
-    for (DWORD type : {28u, 34u, 35u, 36u, 37u, 140u}) {
+    for (DWORD type : kFogStates) {
         DWORD value = 0;
         FogOverride(type, value);
         g_setRs(dev, type, value);

@@ -27,6 +27,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <initializer_list>
+#include <set>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -36,10 +37,11 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
-constexpr uint32_t kResolve = 0x4BE810, kResolveCont = 0x4BE815;
+constexpr uint32_t kResolve = 0x4BE810;
 constexpr uint8_t kResolveEntry[] = {0xA1, 0x60, 0x83, 0x5F, 0x00};  // mov eax, [0x5F8360]
 constexpr uint32_t kPathBuffer = 0x63BF28;                            // the resolver's result buffer
 constexpr size_t kPathBufferSize = 0x600;
@@ -47,7 +49,7 @@ constexpr size_t kPathBufferSize = 0x600;
 using ResolveFn = char*(__cdecl*)(const char*, void*, int);
 ResolveFn g_resolve = nullptr;
 
-constexpr uint32_t kOpen = 0x4BD8A0, kOpenCont = 0x4BD8AA;
+constexpr uint32_t kOpen = 0x4BD8A0;
 constexpr uint8_t kOpenEntry[] = {0x8B, 0x44, 0x24, 0x04, 0x81, 0xEC, 0x08, 0x02, 0x00, 0x00};
 constexpr uint32_t kFileFlags = 0x63B4C8;  // bit 0 = archive mode
 using OpenFn = int(__thiscall*)(void*, const char*);
@@ -75,10 +77,26 @@ std::string g_levelLoc;                                            // "M01" of t
 std::vector<ModFile> g_skinFiles;                                 // .skin: readable skin definitions
 std::vector<features::SkinVariant> g_skinVariants;                // .skin files with "uniform name"
 std::vector<ModFile> g_weaponFiles;                               // .weapon: readable weapon definitions
+std::vector<ModFile> g_gearFiles, g_pouchFiles;                   // .gear / .pouches: loadout gear (gear.cpp)
+std::vector<features::ModGearPiece> g_modGear;
+std::vector<features::ModPouchSet> g_modPouchSets;
+std::vector<ModFile> g_vehicleFiles;                              // .vehicle: vehicle skins / new vehicles (vehicles.cpp)
+std::vector<ModFile> g_unitFiles;                                 // .unit: new soldier types (BuildUnits)
+struct ModUnit {
+    std::string id, model;
+    std::vector<std::string> items;
+};
+std::vector<ModUnit> g_modUnits;                                  // built from .unit files (BorrowUnitData)
+std::vector<features::ModVehicle> g_modVehicles;
+std::vector<features::VehicleHandling> g_vehicleHandling;            // .vehicle "grip" / "spin damping"
+std::unordered_map<std::string, bool> g_vehicleData;              // "UNIT|LEVEL.DAT" whose files were borrowed
 std::vector<std::string> g_bankPacks;                             // .sch files: sound banks added to every level
+// With the asset store (assetstore.cpp): banks of other levels that every level gets, by key (ElfHash "<NAME>.sbk") -
+// served from the store as bank packs when a level cache is built (SoundCache) instead of copied into bank_*.sch files.
+std::vector<uint32_t> g_storeBanks;
 // Game data a mod uses without shipping it (built from the player's own install at start-up, BuildReferences):
 // .uses lists, .envpatch / .rmdpatch = a scene / route network as changes against the game's own file.
-std::vector<ModFile> g_usesFiles, g_envPatches, g_rmdPatches;
+std::vector<ModFile> g_usesFiles, g_envPatches, g_rmdPatches, g_dllPatches;
 // .sch files named like a game level cache (MISSION1.SCH ...): their samples replace that level's samples with the
 // same language + id (e.g. ModKit cli/ds_gc_audio.py: the GameCube's higher-rate sound effects). Upper-case name ->
 // files in mod order (a later mod wins).
@@ -125,6 +143,7 @@ std::string GameDir();
 bool ReadAll(const std::string& path, std::string& out);
 uint32_t TextureHash(const std::string& name);
 std::string Trim(const std::string& v);
+std::string JoinRow(const std::vector<std::string>& row);
 
 // A mod's .strings file: "KEY = text" lines (# comments; "\n" in a text = a new line). The text is found by the
 // catalog's hash of the lower-cased key (TextureHash), so a game key (an objective, a briefing page, a message) is
@@ -160,6 +179,9 @@ void LoadStrings(const std::string& path) {
     }
     features::ModLog("Mods: %d text(s) from %s", n, path.substr(path.find_last_of("\\/") + 1).c_str());
 }
+
+uint32_t g_largestFile = 0;  // see ScanFolder
+std::string g_largestName;
 
 void ScanFolder(const std::string& dir, int mod, int& count) {
     WIN32_FIND_DATAA fd;
@@ -198,6 +220,26 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             ++count;
             continue;
         }
+        if (key.size() > 5 && key.compare(key.size() - 5, 5, ".GEAR") == 0) {
+            g_gearFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 8 && key.compare(key.size() - 8, 8, ".VEHICLE") == 0) {
+            g_vehicleFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 5 && key.compare(key.size() - 5, 5, ".UNIT") == 0) {
+            g_unitFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 8 && key.compare(key.size() - 8, 8, ".POUCHES") == 0) {
+            g_pouchFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
         if (key.size() > 5 && key.compare(key.size() - 5, 5, ".USES") == 0) {
             g_usesFiles.push_back({path, mod});
             ++count;
@@ -210,6 +252,11 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
         }
         if (key.size() > 9 && key.compare(key.size() - 9, 9, ".RMDPATCH") == 0) {
             g_rmdPatches.push_back({path, mod});
+            ++count;
+            continue;
+        }
+        if (key.size() > 9 && key.compare(key.size() - 9, 9, ".DLLPATCH") == 0) {
+            g_dllPatches.push_back({path, mod});
             ++count;
             continue;
         }
@@ -232,6 +279,16 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             g_streams[language ? folder + "\\" + key : key] = path;
             ++count;
             continue;
+        }
+        {   // the Global Heap is sized to the largest file a mod adds (memory.cpp); not ones the game never reads whole
+            static const char* const kSkip[] = {".DLL", ".WAV", ".BLEND", ".BLEND1", ".EXE", ".ZIP", ".7Z", ".MP4", ".JSON", ".MD", ".PY"};
+            const size_t dot = key.find_last_of('.');
+            bool skip = false;
+            for (const char* e : kSkip) skip |= dot != std::string::npos && key.compare(dot, std::string::npos, e) == 0;
+            if (!skip && !fd.nFileSizeHigh && fd.nFileSizeLow > g_largestFile) {
+                g_largestFile = fd.nFileSizeLow;
+                g_largestName = fd.cFileName;
+            }
         }
         auto it = g_files.find(key);
         if (it != g_files.end())
@@ -419,6 +476,7 @@ void MergeTables() {
     for (auto& [key, parts] : g_tables) {
         std::string text;
         auto replace = g_tableReplace.find(key);
+        if (parts.empty() && replace == g_tableReplace.end()) continue;   // an empty entry (g_tables[key] read somewhere)
         const ModFile& first = !parts.empty() ? parts.front() : replace->second.front();
         std::string name = first.path.substr(first.path.find_last_of("\\/") + 1);
         if (parts.empty()) name = name.substr(0, name.size() - 12) + ".txt";   // X.replace.txt -> X.txt
@@ -447,6 +505,292 @@ void MergeTables() {
         g_files[key] = {out, parts.empty() ? replace->second.back().mod : parts.back().mod};
         features::ModLog("Mods: %s = %s + %zu mod part(s)", name.c_str(), game ? "game rows" : "no game file", parts.size());
     }
+}
+
+// ---- unit tables ----
+// Units.txt / HStat.txt / UnitWpns.txt rows the game can't load safely (research/custom_units.md): a text field longer
+// than the loader's buffer (35 / HStat name 39 chars), an unknown unit type / base stat / experience (the type falls
+// to an unhandled 6, the other two make the game drop the whole table), a UnitWpns row for a unit that doesn't exist
+// (whole table dropped). Such rows are left out of the merged table with a [fail] line. Column 14 (item slots) is
+// raised to the unit's UnitWpns row count - more rows than slots = "Trying to allocate" box + table dropped; more slots
+// than rows is harmless now (units.cpp skips empty slots) and only noted for mod rows. Runs after MergeTables, only
+// when a mod touches one of the three tables.
+std::vector<std::string> Lines(const std::string& text) {
+    std::vector<std::string> out;
+    for (size_t pos = 0; pos < text.size();) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        out.push_back(line);
+    }
+    return out;
+}
+
+std::vector<std::string> Fields(const std::string& line) {   // as the game's %[^','] sees them: not trimmed
+    std::vector<std::string> out;
+    for (size_t a = 0;;) {
+        const size_t e = line.find(',', a);
+        out.push_back(line.substr(a, e == std::string::npos ? std::string::npos : e - a));
+        if (e == std::string::npos) return out;
+        a = e + 1;
+    }
+}
+
+bool TableText(const char* key, const char* name, std::string& text) {
+    auto it = g_files.find(key);
+    return it != g_files.end() ? ReadAll(it->second.path, text) : ReadGameFile(name, text);
+}
+
+void StoreTable(const char* key, const char* name, const std::vector<std::string>& lines) {
+    std::string text;
+    for (const std::string& l : lines) text += l + "\r\n";
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    const std::string path = g_mergedRoot + "\\" + name;
+    if (!WriteAll(path, text)) {
+        features::ModLog("[fail] Mods: can't write %s", path.c_str());
+        return;
+    }
+    auto it = g_files.find(key);
+    g_files[key] = {path, it != g_files.end() ? it->second.mod : -1};
+}
+
+void CheckUnitTables() {
+    if (!g_tables.count("UNITS.TXT") && !g_tables.count("HSTAT.TXT") && !g_tables.count("UNITWPNS.TXT")) return;
+    std::string unitsText, statsText, itemsText, gameUnits;
+    if (!TableText("UNITS.TXT", "Units.txt", unitsText) || !TableText("HSTAT.TXT", "HStat.txt", statsText) ||
+        !TableText("UNITWPNS.TXT", "UnitWpns.txt", itemsText)) {
+        features::ModLog("[fail] Units: unit tables not readable - not checked");
+        return;
+    }
+    ReadGameFile("Units.txt", gameUnits);
+    std::set<std::string> gameRows;
+    for (const std::string& l : Lines(gameUnits)) gameRows.insert(l);
+    static const char* const kTypes[] = {"SOLDIER", "CIVILIAN", "GOAT HERDER", "EMIR", "MISSILE EXPERT", "POW"};
+    static const char* const kExperience[] = {"Rookie", "Green", "Trained", "Regular", "Veteran", "Expert", "Professional",
+                                              "Guard", "Crack", "Elite", "Specialist", "Skill One", "Skill Two",
+                                              "Skill Three", "Skill Four"};
+    auto known = [](const std::string& v, const char* const* list, size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            if (v == list[i]) return true;
+        return false;
+    };
+    constexpr int kMaxSlots = 25;
+
+    bool statsChanged = false;
+    std::vector<std::string> stats;
+    std::set<std::string> statNames;
+    for (const std::string& l : Lines(statsText)) {
+        const std::string name = Fields(l)[0];
+        if (!l.empty() && name.size() > 39) {
+            features::ModLog("[fail] HStat.txt: row \"%s\" left out - its name is longer than 39 characters", name.c_str());
+            statsChanged = true;
+            continue;
+        }
+        if (!l.empty()) statNames.insert(name);
+        stats.push_back(l);
+    }
+
+    bool unitsChanged = false;
+    std::vector<std::string> units;
+    std::set<std::string> unitNames;
+    for (const std::string& l : Lines(unitsText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 14) {
+            why = "it has " + std::to_string(f.size()) + " of the 14 columns";
+        } else {
+            for (size_t i = 0; i < 13 && why.empty(); ++i)
+                if (i != 8 && f[i].size() > 35)
+                    why = "column " + std::to_string(i + 1) + " is longer than 35 characters";
+            if (why.empty() && !known(f[1], kTypes, 6))
+                why = "unit type \"" + f[1] + "\" isn't SOLDIER, CIVILIAN, GOAT HERDER, EMIR, MISSILE EXPERT or POW";
+            if (why.empty() && !statNames.count(f[4])) why = "base stat \"" + f[4] + "\" isn't in HStat.txt";
+            if (why.empty() && !known(f[9], kExperience, sizeof kExperience / sizeof *kExperience))
+                why = "experience \"" + f[9] + "\" isn't a known level (Rookie, Green, Trained, Regular, Veteran ...)";
+        }
+        if (!why.empty()) {
+            features::ModLog("[fail] Units.txt: row \"%s\" left out - %s", f[0].c_str(), why.c_str());
+            unitsChanged = true;
+            continue;
+        }
+        unitNames.insert(f[0]);
+        units.push_back(l);
+    }
+
+    bool itemsChanged = false;
+    std::vector<std::string> items;
+    std::unordered_map<std::string, int> itemRows;
+    for (const std::string& l : Lines(itemsText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 4) why = "it has " + std::to_string(f.size()) + " of the 4 columns";
+        for (size_t i = 0; i < 3 && i < f.size() && why.empty(); ++i)
+            if (f[i].size() > 35) why = "column " + std::to_string(i + 1) + " is longer than 35 characters";
+        if (why.empty() && !unitNames.count(f[0])) why = "unit \"" + f[0] + "\" isn't in Units.txt";
+        if (why.empty() && itemRows[f[0]] >= kMaxSlots) why = "the unit already has 25 items";
+        if (!why.empty()) {
+            features::ModLog("[fail] UnitWpns.txt: row \"%s\" left out - %s", l.c_str(), why.c_str());
+            itemsChanged = true;
+            continue;
+        }
+        ++itemRows[f[0]];
+        items.push_back(l);
+    }
+
+    for (std::string& l : units) {
+        std::vector<std::string> f = Fields(l);
+        const int slots = atoi(f[13].c_str()), rows = itemRows[f[0]];
+        if (rows > slots || slots > kMaxSlots) {
+            const int fixed = rows > slots ? rows : kMaxSlots;
+            features::ModLog("Units.txt: %s - item slots (column 14) %d -> %d (%d UnitWpns.txt row(s))", f[0].c_str(), slots,
+                             fixed, rows);
+            l = l.substr(0, l.find_last_of(',') + 1) + std::to_string(fixed);
+            unitsChanged = true;
+        } else if (slots > rows && !gameRows.count(l)) {
+            features::ModLog("note Units.txt: %s has %d item slot(s) (column 14) but %d UnitWpns.txt row(s) - the rest "
+                             "stay empty", f[0].c_str(), slots, rows);
+        }
+    }
+    if (statsChanged) StoreTable("HSTAT.TXT", "HStat.txt", stats);
+    if (unitsChanged) StoreTable("UNITS.TXT", "Units.txt", units);
+    if (itemsChanged) StoreTable("UNITWPNS.TXT", "UnitWpns.txt", items);
+    features::ModLog("[ok]   Units: %zu units, %zu base stats, %zu unit items checked", units.size(), statNames.size(),
+                     items.size());
+}
+
+// Vehicle.txt / VStat.txt / VehWpns.txt / Props.txt, same idea: rows left out when a field is longer than its buffer
+// (Vehicle.txt seat / exit connectors 34 characters, other names 35; VStat.txt name 39, propulsion 35), the base stats
+// (VStat.txt) or propulsion (Props.txt) is unknown, a VehWpns row names an unknown vehicle or a non-weapon (the game
+// drops the whole table for these), a Props.txt row's type (column 2) isn't one of the 12 the game knows (FUN_00493e60:
+// a wrong one stops the game at start-up). Column 1 is the name VStat.txt uses - a new name with a built-in type is a new
+// propulsion with its own engine sound; column 4 is never read. Vehicle.txt column 26 (gun slots) is set to the vehicle's VehWpns row count - the
+// game's own data always matches; an empty slot crashes the vehicle set-up (units.cpp). More than 8 crew is only noted
+// (the game cuts it to 8 with a box).
+void CheckVehicleTables() {
+    if (!g_tables.count("VEHICLE.TXT") && !g_tables.count("VSTAT.TXT") && !g_tables.count("VEHWPNS.TXT") &&
+        !g_tables.count("PROPS.TXT"))
+        return;
+    std::string vehiclesText, statsText, gunsText, propsText, weaponsText;
+    if (!TableText("VEHICLE.TXT", "Vehicle.txt", vehiclesText) || !TableText("VSTAT.TXT", "VStat.txt", statsText) ||
+        !TableText("VEHWPNS.TXT", "VehWpns.txt", gunsText) || !TableText("PROPS.TXT", "Props.txt", propsText) ||
+        !TableText("WEAPS.TXT", "Weaps.txt", weaponsText)) {
+        features::ModLog("[fail] Vehicles: vehicle tables not readable - not checked");
+        return;
+    }
+    constexpr int kMaxSlots = 25;
+    static const char* const kPropTypes[] = {"Wheels", "Tracks", "Infantry", "Ski", "Halftracks", "Airplane", "Scud",
+                                             "Amphibious", "Goat", "Chinook", "Apache", "None"};
+    bool propsChanged = false;
+    std::vector<std::string> propRows;
+    std::set<std::string> props, weapons;
+    for (const std::string& l : Lines(propsText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 4) why = "it has " + std::to_string(f.size()) + " of the 4 columns";
+        for (size_t i = 0; i < 3 && i < f.size() && why.empty(); ++i)
+            if (f[i].size() > 35) why = "column " + std::to_string(i + 1) + " is longer than 35 characters";
+        if (why.empty() && std::find_if(std::begin(kPropTypes), std::end(kPropTypes),
+                                        [&](const char* t) { return f[1] == t; }) == std::end(kPropTypes))
+            why = "type \"" + f[1] + "\" (column 2) isn't Wheels, Tracks, Infantry, Ski, Halftracks, Airplane, Scud, "
+                  "Amphibious, Goat, Chinook, Apache or None";
+        if (!why.empty()) {
+            features::ModLog("[fail] Props.txt: row \"%s\" left out - %s", f[0].c_str(), why.c_str());
+            propsChanged = true;
+            continue;
+        }
+        props.insert(f[0]);
+        propRows.push_back(l);
+    }
+    for (const std::string& l : Lines(weaponsText))
+        if (!l.empty()) weapons.insert(Fields(l)[0]);
+
+    bool statsChanged = false;
+    std::vector<std::string> stats;
+    std::set<std::string> statNames;
+    for (const std::string& l : Lines(statsText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 27) why = "it has " + std::to_string(f.size()) + " of the 27 columns";
+        else if (f[0].size() > 39) why = "its name is longer than 39 characters";
+        else if (f[12].size() > 35 || !props.count(f[12])) why = "propulsion \"" + f[12] + "\" isn't in Props.txt";
+        if (!why.empty()) {
+            features::ModLog("[fail] VStat.txt: row \"%s\" left out - %s", f[0].c_str(), why.c_str());
+            statsChanged = true;
+            continue;
+        }
+        if (atoi(f[11].c_str()) > 8)
+            features::ModLog("note VStat.txt: %s has %d crew - the game allows 8", f[0].c_str(), atoi(f[11].c_str()));
+        statNames.insert(f[0]);
+        stats.push_back(l);
+    }
+
+    bool vehiclesChanged = false;
+    std::vector<std::string> vehicles;
+    std::set<std::string> vehicleNames;
+    for (const std::string& l : Lines(vehiclesText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 27) why = "it has " + std::to_string(f.size()) + " of the 27 columns";
+        for (size_t i = 0; i < 25 && i < f.size() && why.empty(); ++i) {
+            if (i == 5) continue;   // a number
+            const size_t max = i >= 6 && i <= 21 ? 34 : 35;
+            if (f[i].size() > max) why = "column " + std::to_string(i + 1) + " is longer than " + std::to_string(max) + " characters";
+        }
+        if (why.empty() && !statNames.count(f[4])) why = "base stats \"" + f[4] + "\" aren't in VStat.txt";
+        if (!why.empty()) {
+            features::ModLog("[fail] Vehicle.txt: row \"%s\" left out - %s", f[0].c_str(), why.c_str());
+            vehiclesChanged = true;
+            continue;
+        }
+        vehicleNames.insert(f[0]);
+        vehicles.push_back(l);
+    }
+
+    bool gunsChanged = false;
+    std::vector<std::string> guns;
+    std::unordered_map<std::string, int> gunRows;
+    for (const std::string& l : Lines(gunsText)) {
+        if (l.empty()) continue;
+        const std::vector<std::string> f = Fields(l);
+        std::string why;
+        if (f.size() < 4) why = "it has " + std::to_string(f.size()) + " of the 4 columns";
+        for (size_t i = 0; i < 3 && i < f.size() && why.empty(); ++i)
+            if (f[i].size() > 35) why = "column " + std::to_string(i + 1) + " is longer than 35 characters";
+        if (why.empty() && !vehicleNames.count(f[0])) why = "vehicle \"" + f[0] + "\" isn't in Vehicle.txt";
+        if (why.empty() && (f[2] != "WEAPON" || !weapons.count(f[1]))) why = "\"" + f[1] + "\" isn't a weapon (Weaps.txt, kind WEAPON)";
+        if (why.empty() && gunRows[f[0]] >= kMaxSlots) why = "the vehicle already has 25 guns";
+        if (!why.empty()) {
+            features::ModLog("[fail] VehWpns.txt: row \"%s\" left out - %s", l.c_str(), why.c_str());
+            gunsChanged = true;
+            continue;
+        }
+        ++gunRows[f[0]];
+        guns.push_back(l);
+    }
+
+    for (std::string& l : vehicles) {
+        const std::vector<std::string> f = Fields(l);
+        const int slots = atoi(f[25].c_str()), rows = gunRows[f[0]];
+        if (slots == rows) continue;
+        features::ModLog("Vehicle.txt: %s - gun slots (column 26) %d -> %d (VehWpns.txt rows)", f[0].c_str(), slots, rows);
+        std::vector<std::string> g = f;
+        g[25] = std::to_string(rows);
+        l = JoinRow(g);
+        vehiclesChanged = true;
+    }
+    if (propsChanged) StoreTable("PROPS.TXT", "Props.txt", propRows);
+    if (statsChanged) StoreTable("VSTAT.TXT", "VStat.txt", stats);
+    if (vehiclesChanged) StoreTable("VEHICLE.TXT", "Vehicle.txt", vehicles);
+    if (gunsChanged) StoreTable("VEHWPNS.TXT", "VehWpns.txt", guns);
+    features::ModLog("[ok]   Vehicles: %zu vehicles, %zu base stats, %zu guns checked", vehicles.size(), statNames.size(),
+                     guns.size());
 }
 
 // ---- sound banks ----
@@ -540,7 +884,9 @@ std::string SoundCache(const char* name) {
     if (cached != g_soundCaches.end()) return cached->second;
     std::string& result = g_soundCaches[key];
     std::string file;
-    if (!ReadAll(GameDir() + "\\" + name, file)) return result;
+    // The level's own cache: from the asset store when it is on (rebuilt byte-identical from its chunks), else the file.
+    const bool fromStore = features::AssetStoreSoundCache(name, &file);
+    if (!fromStore && !ReadAll(GameDir() + "\\" + name, file)) return result;
     std::vector<Chunk> level = Chunks(file);
     if (level.empty()) return result;
     int replaced = 0;
@@ -594,9 +940,7 @@ std::string SoundCache(const char* name) {
                 }
         }
     }
-    for (const std::string& path : g_bankPacks) {
-        std::string pack;
-        if (!ReadAll(path, pack)) continue;
+    auto addPack = [&](const std::string& pack) {   // its banks / samples the cache doesn't have yet
         for (const Chunk& c : Chunks(pack)) {
             if (c.tag == kTagBank && !banks[BankKey(c)]) {
                 banks[BankKey(c)] = true;
@@ -607,8 +951,20 @@ std::string SoundCache(const char* name) {
                 extra.append(c.data, c.size);
             }
         }
+    };
+    for (const std::string& path : g_bankPacks) {   // mods' packs (+ Borrow* copies when the store is off)
+        std::string pack;
+        if (ReadAll(path, pack)) addPack(pack);
     }
-    if (extra.empty() && !replaced) return result;
+    int fromStoreBanks = 0;
+    for (uint32_t bank : g_storeBanks) {   // other levels' banks, straight from the asset store
+        std::string pack;
+        if (banks[bank] || !features::AssetStoreBankPack(bank, &pack, nullptr)) continue;
+        addPack(pack);
+        ++fromStoreBanks;
+    }
+    if (fromStoreBanks) dslog::Write("Mods: %s - %d bank(s) of other levels from the asset store", name, fromStoreBanks);
+    if (extra.empty() && !replaced) return result;   // (the store's copy = the file: the game reads the file)
     file += extra;
     const uint32_t body = static_cast<uint32_t>(file.size() - 8);
     memcpy(file.data() + 4, &body, 4);
@@ -621,7 +977,8 @@ std::string SoundCache(const char* name) {
     CloseHandle(f);
     if (ok) {
         result = out;
-        dslog::Write("Mods: %s + %d sound bank(s) (voices and mods), %zu bytes", name, added, extra.size());
+        dslog::Write("Mods: %s + %d sound bank(s) (voices and mods), %zu bytes%s", name, added, extra.size(),
+                     fromStore ? " - level cache from the asset store" : "");
     }
     return result;
 }
@@ -741,10 +1098,12 @@ uint32_t ElfHash(const std::string& s) {  // FUN_004b9bf0, the sound bank key (c
 }
 
 // Copies bank <name>.sbk and the samples it refers to out of the first game sound cache that has it into a bank pack.
+// With the asset store on, nothing is copied: the bank's key goes into g_storeBanks and SoundCache adds it (with its
+// samples) to every level cache from the store. Returns true when the level caches get something new.
 std::vector<std::string> g_borrowed;
-void BorrowBank(const std::string& name) {
+bool BorrowBank(const std::string& name) {
     for (const std::string& b : g_borrowed)
-        if (b == name) return;
+        if (b == name) return false;
     g_borrowed.push_back(name);
     const uint32_t key = ElfHash(name + ".sbk");
     for (const std::string& path : g_bankPacks) {  // a mod's own .sch already brings it
@@ -753,12 +1112,23 @@ void BorrowBank(const std::string& name) {
         for (const Chunk& c : Chunks(pack))
             if (c.tag == kTagBank && BankKey(c) == key) {
                 features::ModLog("Mods: sound bank %s from %s", name.c_str(), path.c_str());
-                return;
+                return false;
             }
+    }
+    if (features::AssetStoreSound()) {
+        std::string cache;
+        if (!features::AssetStoreHasBank(key, &cache)) {
+            features::ModLog("[fail] Mods: sound bank %s is in no level sound cache", name.c_str());
+            return false;
+        }
+        if (std::find(g_storeBanks.begin(), g_storeBanks.end(), key) != g_storeBanks.end()) return false;
+        g_storeBanks.push_back(key);
+        features::ModLog("Mods: sound %s served by the asset store (from %s)", name.c_str(), cache.c_str());
+        return true;
     }
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return false;
     std::vector<std::string> caches;
     do caches.push_back(fd.cFileName);
     while (FindNextFileA(h, &fd));
@@ -793,10 +1163,12 @@ void BorrowBank(const std::string& name) {
         if (WriteAll(path, out)) {
             g_bankPacks.push_back(path);
             features::ModLog("Mods: sound %s borrowed from %s (%d samples)", name.c_str(), cache.c_str(), samples);
+            return true;
         }
-        return;
+        return false;
     }
     features::ModLog("[fail] Mods: sound bank %s is in no level sound cache", name.c_str());
+    return false;
 }
 
 // A retextured copy of a mesh: <newName>.evo = <model>.evo (from the archives) with the model name in every object
@@ -910,6 +1282,18 @@ std::string EncodeSample(const Pcm& pcm, uint32_t id) {
 // The chunks of bank <name>.sbk and its samples, from the first game sound cache that has it.
 bool FindBank(const std::string& name, std::string& bank, std::vector<std::pair<uint32_t, std::string>>& samples) {
     const uint32_t key = ElfHash(name + ".sbk");
+    if (features::AssetStoreSound()) {   // the store's bank pack: the bank + its samples (no .sch scanning)
+        std::string pack;
+        if (!features::AssetStoreBankPack(key, &pack, nullptr)) return false;
+        bank.clear();
+        samples.clear();
+        for (const Chunk& c : Chunks(pack)) {
+            if (c.tag == kTagBank && bank.empty()) bank.assign(c.data, c.size);
+            else if (c.tag == kTagSample || c.tag == kTagStream)
+                samples.push_back({static_cast<uint32_t>(SampleKey(c)), std::string(c.data, c.size)});
+        }
+        return !bank.empty();
+    }
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -1536,6 +1920,18 @@ void BorrowKitBanks() {
     std::unordered_map<uint32_t, std::string> want;
     for (const std::string& n : names) want[ElfHash(n + ".sbk")] = n;
     if (want.empty()) return;
+    if (features::AssetStoreSound()) {   // the store serves them: keys only, no .sch reading / pack file
+        int found = 0;
+        for (const auto& [key, name] : want) {
+            if (!features::AssetStoreHasBank(key, nullptr)) continue;
+            g_borrowed.push_back(name);
+            if (std::find(g_storeBanks.begin(), g_storeBanks.end(), key) == g_storeBanks.end()) g_storeBanks.push_back(key);
+            ++found;
+        }
+        features::ModLog("Mods: %d kit weapon sound banks available in every level (asset store)%s", found,
+                         found == static_cast<int>(want.size()) ? "" : " (some not found)");
+        return;
+    }
     std::vector<std::string> caches;
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
@@ -1628,18 +2024,22 @@ int __fastcall Open(void* file, void* /*edx*/, const char* path) {
     return result;
 }
 
-uint8_t* Trampoline(const uint8_t* entry, size_t len, uint32_t cont) {
-    auto* tramp = static_cast<uint8_t*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
-    if (!tramp) return nullptr;
-    memcpy(tramp, entry, len);
-    tramp[len] = 0xE9;
-    const int32_t rel = static_cast<int32_t>(cont - (reinterpret_cast<uint32_t>(tramp) + len + 5));
-    memcpy(tramp + len + 1, &rel, 4);
-    return tramp;
+// Entry hook through the broker; next = its trampoline (the moved prologue) or the next subscriber.
+template <class Fn>
+bool HookEntry(uint32_t entry, const void* fn, Fn& next, const uint8_t* prologue, size_t len) {
+    return patch::HookFunction(entry, fn, reinterpret_cast<void**>(&next), prologue, len);
+}
+
+// The resolver and the archive opener (both entry hooks).
+bool HookResolveAndOpen() {
+    return HookEntry(kResolve, reinterpret_cast<const void*>(&Resolve), g_resolve, kResolveEntry, sizeof kResolveEntry) &&
+           HookEntry(kOpen, reinterpret_cast<const void*>(&Open), g_open, kOpenEntry, sizeof kOpenEntry);
 }
 }  // namespace
 
 const std::vector<features::SkinVariant>& features::SkinVariants() { return g_skinVariants; }
+const std::vector<features::ModGearPiece>& features::ModGear() { return g_modGear; }
+const std::vector<features::ModPouchSet>& features::ModPouchSets() { return g_modPouchSets; }
 
 namespace {
 int g_generation = 0;  // bumped by every reload (features::ModsGeneration: caches of mod data refresh)
@@ -1654,6 +2054,11 @@ int g_generation = 0;  // bumped by every reload (features::ModsGeneration: cach
 //                    line changes against the game's scene (start = 0-based line of the base) -> <name>.ENV
 //   <name>.rmdpatch  "base MISSION1.RMD", "count <n>", then "<i> x y z l0 l1 l2 l3 l4 flags weight" for every route
 //                    marker that differs from the base marker <i> -> <name>.RMD
+//   <name>.dllpatch  a changed copy of a shipped mission DLL (Pivotal's code isn't redistributed): "base Mission6.dll"
+//                    (a file in the game folder), "base-size <bytes>", optional "size <bytes>" (output, default the
+//                    base's), then hunks "@ <file offset hex> <original bytes hex | -> <new bytes hex>" -> <name>.DLL,
+//                    loaded through scripthost.cpp's mission DLL hook. Every original byte must match (another
+//                    version of the DLL is refused); "-" = bytes past the base's end. # starts a comment.
 // Built into %TEMP%\DesertStormFix\merged\game at start-up and indexed like mod files; a real file of the same name in
 // a mod wins. ModKit editor/commands.py writes them (save_mission), conflict_ds_tools/env.py applies them too.
 std::vector<std::string> SplitLines(const std::string& text) {
@@ -1746,6 +2151,76 @@ bool ApplyRmdPatch(const std::string& patch, std::string& out, std::string& base
     return true;
 }
 
+int HexNibble(char c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+bool HexBytes(const std::string& hex, std::string& out) {
+    out.clear();
+    if (hex.size() % 2) return false;
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        const int hi = HexNibble(hex[i]), lo = HexNibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out += static_cast<char>(hi << 4 | lo);
+    }
+    return true;
+}
+
+// error = why it doesn't fit (for the report)
+bool ApplyDllPatch(const std::string& patch, std::string& out, std::string& base, std::string& error) {
+    size_t baseSize = 0, size = 0;
+    bool haveBaseSize = false, haveSize = false;
+    std::vector<std::string> hunks;
+    for (std::string line : SplitLines(patch)) {
+        const size_t hash = line.find('#');
+        if (hash != std::string::npos) line.resize(hash);
+        char key[16] = {}, value[MAX_PATH] = {};
+        if (sscanf_s(line.c_str(), "%15s %259s", key, 16, value, MAX_PATH) < 1) continue;
+        if (!strcmp(key, "base")) base = value;
+        else if (!strcmp(key, "base-size")) haveBaseSize = sscanf_s(value, "%zu", &baseSize) == 1;
+        else if (!strcmp(key, "size")) haveSize = sscanf_s(value, "%zu", &size) == 1;
+        else if (!strcmp(key, "@")) hunks.push_back(line);
+    }
+    // a bare file name in the game folder (no paths out of it)
+    if (base.empty() || base.find_first_of("\\/:") != std::string::npos || !haveBaseSize) {
+        error = "no \"base <file>\" / \"base-size\" line";
+        return false;
+    }
+    std::string file;
+    if (!ReadAll(GameDir() + "\\" + base, file)) {
+        error = base + " isn't in the game folder";
+        return false;
+    }
+    if (file.size() != baseSize) {
+        error = base + " is another version (size differs)";
+        return false;
+    }
+    out = file;
+    out.resize(haveSize ? size : file.size(), '\0');
+    for (const std::string& h : hunks) {
+        char offsetText[16] = {}, origText[4096] = {}, newText[4096] = {};
+        size_t offset = 0;
+        std::string orig, now;
+        if (sscanf_s(h.c_str(), "@ %15s %4095s %4095s", offsetText, 16, origText, 4096, newText, 4096) != 3 ||
+            sscanf_s(offsetText, "%zx", &offset) != 1 || !HexBytes(newText, now) ||
+            (strcmp(origText, "-") && !HexBytes(origText, orig)) || (!orig.empty() && orig.size() != now.size()) ||
+            offset + now.size() > out.size()) {
+            error = "bad line \"" + h + "\"";
+            return false;
+        }
+        if (!orig.empty() && (offset + orig.size() > file.size() || file.compare(offset, orig.size(), orig))) {
+            error = base + " is another version (bytes at " + offsetText + " differ)";
+            return false;
+        }
+        if (orig.empty() && offset < file.size()) {
+            error = "bytes at " + std::string(offsetText) + " are in the base but have no original (\"-\")";
+            return false;
+        }
+        out.replace(offset, now.size(), now);
+    }
+    return true;
+}
+
 // Kit piece: object `index` of a world-piece model (no transform keys - every object is in world space) as a one-object
 // static prop: the bytes from its EOBJ to its NEXT / DONE, header patched (model name +8, node type +0x8C = 0, parent
 // +0xB0 = "ROOT"), last tag DONE. Objects are found by their "EOBJ" + version 0x2F tag after the previous one's NEXT.
@@ -1828,20 +2303,664 @@ void BuildReferences() {
             AddBuilt(name, out, m.mod, kind ? "routes" : "scene");
             features::ModLog("Mods: %s = %s + %s", name.c_str(), base.c_str(), file.c_str());
         }
+    for (const ModFile& m : g_dllPatches) {
+        std::string patch, out, base, error;
+        const std::string file = m.path.substr(m.path.find_last_of("\\/") + 1);
+        const std::string name = file.substr(0, file.find_last_of('.')) + ".DLL";
+        if (!ReadAll(m.path, patch) || !ApplyDllPatch(patch, out, base, error)) {
+            features::ModLog("[fail] Mods: %s: %s doesn't fit this game: %s", g_mods[m.mod].c_str(), file.c_str(),
+                             error.empty() ? "can't read it" : error.c_str());
+            continue;
+        }
+        AddBuilt(name, out, m.mod, "mission DLL");
+        features::ModLog("Mods: %s = %s + %s", name.c_str(), base.c_str(), file.c_str());
+    }
 }
 
+// ---- gear (.gear / .pouches, the loadout screen's HEADGEAR / BACKPACK / FACE / pouch rows, gear.cpp) ----
+// A .gear file adds one piece:
+//   slot = head | back | face | pouch    which rows offer it
+//   name = Pink Beret                     shown on the row (default: from the id)
+//   id = PINK_BERET                       its model name (letters, digits, _; max 35)
+// and its model, one of:
+//   based on = IR_BERET_RED + texture = PinkBeret     a game model with your texture (.dds / .tga in the mod) - no
+//                                                      modelling; "texture <part> = X" for a model with more parts
+//   model = MYHAT                          a model the mod ships (MYHAT.evo), e.g. exported from Blender based on a
+//                                          game piece (the connector point is the model's origin)
+//   (neither)                              the mod ships <id>.evo
+// A .pouches file adds one set to the POUCHES row: name = ..., then belt / belt left / belt right / hip left /
+// hip right / chest left / chest right = a pouch (game model or a .gear pouch id), none or - for nothing; spots left
+// out are empty.
+std::vector<std::pair<std::string, std::string>> ReadKeyValues(const std::string& path) {
+    std::vector<std::pair<std::string, std::string>> kv;
+    std::string text;
+    if (!ReadAll(path, text)) return kv;
+    for (size_t pos = 0; pos < text.size();) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(pos, nl - pos);
+        pos = nl + 1;
+        if (const size_t hash = line.find('#'); hash != std::string::npos) line.resize(hash);
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        kv.push_back({KeyOf(line.substr(0, eq)), Trim(line.substr(eq + 1))});
+    }
+    return kv;
+}
+
+void BuildGear() {
+    static const char* const kSlots[] = {"head", "back", "face", "pouch"};
+    for (const ModFile& gf : g_gearFiles) {
+        const std::string file = gf.path.substr(gf.path.find_last_of("\\/") + 1);
+        std::string id, name, base, model;
+        int slot = -1;
+        std::vector<std::pair<std::string, std::string>> retexture;
+        for (auto& [k, v] : ReadKeyValues(gf.path)) {
+            if (k == "id") id = Upper(v);
+            else if (k == "name" || k == "displayname") name = v;
+            else if (k == "basedon") base = Upper(v);
+            else if (k == "model") model = Upper(v);
+            else if (k.compare(0, 7, "texture") == 0) retexture.push_back({k.substr(7), v});
+            else if (k == "slot") {
+                const std::string s = KeyOf(v);
+                for (int i = 0; i < 4; ++i)
+                    if (s == kSlots[i] || (i == 0 && (s == "headgear" || s == "hat")) || (i == 1 && s == "backpack") ||
+                        (i == 3 && (s == "pouches" || s == "belt")))
+                        slot = i;
+            } else {
+                features::ModLog("[fail] Mods: %s - unknown setting \"%s\"", file.c_str(), k.c_str());
+            }
+        }
+        if (id.empty() || id.size() > 35 || slot < 0) {
+            features::ModLog("[fail] Mods: %s - needs \"id = ...\" (max 35 characters) and \"slot = head / back / face / "
+                             "pouch\"", file.c_str());
+            continue;
+        }
+        if (!base.empty()) {   // a game model with the mod's texture
+            if (retexture.empty()) retexture.push_back({"", id});   // (no texture: its own copy under the new name)
+            if (!CopyModel(base, id, retexture, file)) continue;
+        } else if (!model.empty() && model != id) {
+            if (!Find((model + ".evo").c_str())) {
+                features::ModLog("[fail] Mods: %s - model %s.evo isn't in a mod", file.c_str(), model.c_str());
+                continue;
+            }
+            id = model;
+        } else if (!Find((id + ".evo").c_str())) {
+            features::ModLog("[fail] Mods: %s - %s.evo isn't in a mod (or give \"based on = <game model>\" + \"texture = "
+                             "...\")", file.c_str(), id.c_str());
+            continue;
+        }
+        if (name.empty()) {
+            name = id;
+            for (char& c : name) c = c == '_' ? ' ' : c;
+        }
+        for (char& c : name) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        g_modGear.push_back({id, slot, name});
+        features::ModLog("Mods: gear %s (%s) on the %s row%s", name.c_str(), id.c_str(),
+                         slot == 0 ? "HEADGEAR" : slot == 1 ? "BACKPACK" : slot == 2 ? "FACE" : "pouch",
+                         base.empty() ? "" : (" - " + base + " with a new texture").c_str());
+    }
+    static const char* const kSpots[7][3] = {{"belt", "beltback", "back"}, {"beltleft", "left", "spine2l"},
+                                             {"beltright", "right", "spine2r"}, {"hipleft", "hipl", nullptr},
+                                             {"hipright", "hipr", nullptr}, {"chestleft", "chestl", nullptr},
+                                             {"chestright", "chestr", nullptr}};
+    for (const ModFile& pf : g_pouchFiles) {
+        const std::string file = pf.path.substr(pf.path.find_last_of("\\/") + 1);
+        features::ModPouchSet set;
+        int pieces = 0;
+        for (auto& [k, v] : ReadKeyValues(pf.path)) {
+            if (k == "name") {
+                set.name = v;
+                continue;
+            }
+            int spot = -1;
+            for (int s = 0; s < 7; ++s)
+                for (const char* alias : kSpots[s])
+                    if (alias && k == alias) spot = s;
+            if (spot < 0) {
+                features::ModLog("[fail] Mods: %s - unknown spot \"%s\" (belt, belt left, belt right, hip left, hip right, "
+                                 "chest left, chest right)", file.c_str(), k.c_str());
+                continue;
+            }
+            const std::string m = Upper(v);
+            set.model[spot] = m == "NONE" || m == "-" ? "" : m;
+            pieces += set.model[spot].empty() ? 0 : 1;
+        }
+        if (set.name.empty()) set.name = file.substr(0, file.find_last_of('.'));
+        for (char& c : set.name) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        g_modPouchSets.push_back(set);
+        features::ModLog("Mods: pouch set %s - %d piece(s)", set.name.c_str(), pieces);
+    }
+}
+
+// ---- vehicles (.vehicle: the loadout screen's VEHICLE rows, vehicles.cpp) ----
+// A .vehicle file adds one vehicle to the choices:
+//   id = DESERT_ABRAMS                    its unit name (letters, digits, _; max 31)
+//   based on = US_VEH_M1Abrams            the game vehicle (VEHICLE.TXT) whose seats, handling, guns and sounds it has
+//   name = M1 Abrams (Desert)             shown on the row (default: from the id)
+//   texture = AbramsDesert                a skin: the base model with your texture ("texture <part> = X" for a model
+//                                         with more texture slots); "damaged texture" likewise for the wreck
+//   model = MYTANK                        or a model the mod ships (MYTANK.evo, + MYTANK.DYN for tracks / wheels -
+//                                         the base model's is used when it has none); "damaged model" likewise
+//   faction = US / UK / Iraqi             shown with the name (default: the base vehicle's side)
+//   engine sound = Hovercraft             its own engine bank (a .sch bank pack in the mod, events as Wheels.sbk /
+//                                         Tracks.sbk): a Props.txt row <ID>_ENGINE (the base's propulsion type, this
+//                                         bank) and a VStat.txt copy <ID>_STATS naming it
+//   grip = 0.3                            tyre friction (handling.cpp; the game's vehicles have unlimited friction,
+//                                         so they never slide): low = drifts and slides like a hovercraft
+//   spin damping = 2                      how fast the chassis stops turning (the game's 0.2): stops a sliding
+//                                         vehicle from spinning on after the steering is let go
+// Rows written: VEHICLE.TXT (the base row with the id and models), VEHWPNS.TXT (the base vehicle's guns), VStat.txt /
+// Props.txt with "engine sound". Handling = the model's .DYN (research/custom_units.md has the field list).
+std::vector<std::vector<std::string>> TableRows(const char* table) {
+    std::vector<std::vector<std::string>> rows;
+    std::string text;
+    if (!features::ReadGameTable(table, text)) return rows;
+    for (const std::string& line : SplitLines(text))
+        if (!Trim(line).empty() && Trim(line)[0] != '#') rows.push_back(SplitRow(line));
+    return rows;
+}
+
+const std::vector<std::string>* FindRow(const std::vector<std::vector<std::string>>& rows, const std::string& key) {
+    for (const auto& r : rows)
+        if (!r.empty() && _stricmp(r[0].c_str(), key.c_str()) == 0) return &r;
+    return nullptr;
+}
+
+std::string JoinRow(const std::vector<std::string>& row) {
+    std::string line;
+    for (size_t i = 0; i < row.size(); ++i) line += (i ? "," : "") + row[i];
+    return line;
+}
+
+// <model>.DYN (tracks, wheels) for a renamed model: the mod's own, else a copy of the base model's.
+void CopyDyn(const std::string& base, const std::string& model) {
+    if (Find((model + ".DYN").c_str())) return;
+    std::string dyn;
+    if (!ReadGameFile(base + ".DYN", dyn)) {
+        const ModFile* own = Find((base + ".DYN").c_str());
+        if (!own || !ReadAll(own->path, dyn)) return;
+    }
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    CreateDirectoryA((g_mergedRoot + "\\models").c_str(), nullptr);
+    const std::string path = g_mergedRoot + "\\models\\" + model + ".DYN";
+    if (WriteAll(path, dyn)) g_files[Upper(model + ".DYN")] = {path, -1};
+}
+
+std::vector<std::vector<std::string>> RowsOf(const std::string& text) {
+    std::vector<std::vector<std::string>> rows;
+    for (const std::string& line : SplitLines(text))
+        if (!Trim(line).empty() && Trim(line)[0] != '#') rows.push_back(SplitRow(line));
+    return rows;
+}
+
+void BuildVehicles() {
+    if (g_vehicleFiles.empty()) return;
+    // the game's rows + mods' own VEHICLE.TXT parts (not merged yet: a .vehicle may be based on one of them too)
+    std::vector<std::vector<std::string>> vehicles, weapons;
+    std::string text;
+    if (ReadGameFile("VEHICLE.TXT", text)) vehicles = RowsOf(text);
+    for (const ModFile& part : g_tables["VEHICLE.TXT"])
+        if (ReadAll(part.path, text))
+            for (auto& r : RowsOf(text)) vehicles.push_back(r);
+    if (ReadGameFile("VEHWPNS.TXT", text)) weapons = RowsOf(text);
+    for (const ModFile& part : g_tables["VEHWPNS.TXT"])
+        if (ReadAll(part.path, text))
+            for (auto& r : RowsOf(text)) weapons.push_back(r);
+    std::vector<std::vector<std::string>> stats, props;   // for "engine sound"
+    if (ReadGameFile("VSTAT.TXT", text)) stats = RowsOf(text);
+    if (auto it = g_tables.find("VSTAT.TXT"); it != g_tables.end())
+        for (const ModFile& part : it->second)
+            if (ReadAll(part.path, text))
+                for (auto& r : RowsOf(text)) stats.push_back(r);
+    if (ReadGameFile("PROPS.TXT", text)) props = RowsOf(text);
+    if (auto it = g_tables.find("PROPS.TXT"); it != g_tables.end())
+        for (const ModFile& part : it->second)
+            if (ReadAll(part.path, text))
+                for (auto& r : RowsOf(text)) props.push_back(r);
+    std::string rows, gunRows, statRows, propRows;
+    int lastMod = 0;
+    for (const ModFile& vf : g_vehicleFiles) {
+        const std::string file = vf.path.substr(vf.path.find_last_of("\\/") + 1);
+        std::string id, name, base, model, damagedModel, faction, engine;
+        float grip = -1.0f, spin = -1.0f;
+        std::vector<std::pair<std::string, std::string>> retexture, damagedRetexture;
+        for (auto& [k, v] : ReadKeyValues(vf.path)) {
+            if (k == "id") id = v;
+            else if (k == "name" || k == "displayname") name = v;
+            else if (k == "basedon") base = v;
+            else if (k == "model") model = Upper(v);
+            else if (k == "damagedmodel" || k == "wreckmodel") damagedModel = Upper(v);
+            else if (k == "faction" || k == "side") faction = v;
+            else if (k == "enginesound" || k == "engine") engine = v;
+            else if (k == "grip") grip = static_cast<float>(atof(v.c_str()));
+            else if (k == "spindamping") spin = static_cast<float>(atof(v.c_str()));
+            else if (k.compare(0, 14, "damagedtexture") == 0) damagedRetexture.push_back({k.substr(14), v});
+            else if (k.compare(0, 7, "texture") == 0) retexture.push_back({k.substr(7), v});
+            else features::ModLog("[fail] Mods: %s - unknown setting \"%s\"", file.c_str(), k.c_str());
+        }
+        const std::vector<std::string>* found = base.empty() ? nullptr : FindRow(vehicles, base);
+        if (id.empty() || id.size() > 31 || id.find_first_of(" ,") != std::string::npos || !found || found->size() < 5) {
+            features::ModLog("[fail] Mods: %s - needs \"id = ...\" (max 31 characters, no spaces) and \"based on = <game "
+                             "vehicle>\" (a VEHICLE.TXT row, e.g. US_VEH_Hum_Vee)", file.c_str());
+            continue;
+        }
+        if (FindRow(vehicles, id)) {
+            features::ModLog("[fail] Mods: %s - vehicle %s exists already", file.c_str(), id.c_str());
+            continue;
+        }
+        const std::vector<std::string> baseRow = *found;   // (vehicles grows below)
+        std::vector<std::string> row = baseRow;
+        row[0] = id;
+        const std::string baseModel = Upper(row[1]);
+        if (!model.empty()) {   // the mod's own model
+            if (!Find((model + ".evo").c_str())) {
+                features::ModLog("[fail] Mods: %s - model %s.evo isn't in a mod", file.c_str(), model.c_str());
+                continue;
+            }
+            CopyDyn(baseModel, model);
+            row[1] = model;
+        } else if (!retexture.empty()) {   // a skin: the base model with new textures, under the vehicle's id
+            if (!CopyModel(baseModel, Upper(id), retexture, file)) continue;
+            CopyDyn(baseModel, Upper(id));
+            row[1] = Upper(id);
+        }
+        if (!damagedModel.empty()) {
+            if (Find((damagedModel + ".evo").c_str())) row[2] = damagedModel;
+            else features::ModLog("[fail] Mods: %s - damaged model %s.evo isn't in a mod", file.c_str(), damagedModel.c_str());
+        } else if (!damagedRetexture.empty() && row[2] != "-1" && _stricmp(row[2].c_str(), "dummy") != 0) {
+            if (CopyModel(Upper(row[2]), Upper(id) + "_WRECK", damagedRetexture, file)) row[2] = Upper(id) + "_WRECK";
+        }
+        if (!engine.empty()) {   // own engine bank: a Props row (base's propulsion type) + a VStat copy naming it
+            if (engine.size() > 4 && _stricmp(engine.c_str() + engine.size() - 4, ".sbk") == 0) engine.resize(engine.size() - 4);
+            const std::vector<std::string>* st = FindRow(stats, row[4]);
+            const std::vector<std::string>* pr = st && st->size() > 12 ? FindRow(props, (*st)[12]) : nullptr;
+            if (!pr || pr->size() < 4 || engine.size() > 31) {
+                features::ModLog("[fail] Mods: %s - engine sound: the base vehicle's stats / propulsion weren't found",
+                                 file.c_str());
+            } else {
+                std::vector<std::string> p = *pr, v = *st;
+                p[0] = id + "_ENGINE";
+                p[2] = engine + ".sbk";
+                v[0] = id + "_STATS";
+                v[12] = p[0];
+                propRows += JoinRow(p) + "\r\n";
+                statRows += JoinRow(v) + "\r\n";
+                props.push_back(p);
+                stats.push_back(v);
+                row[4] = v[0];
+            }
+        }
+        if (grip >= 0.0f || spin >= 0.0f) g_vehicleHandling.push_back({Upper(row[1]), grip, spin});
+        rows += JoinRow(row) + "\r\n";
+        vehicles.push_back(row);
+        int guns = 0;
+        for (const auto& w : weapons)
+            if (!w.empty() && _stricmp(w[0].c_str(), baseRow[0].c_str()) == 0) {
+                std::vector<std::string> g = w;
+                g[0] = id;
+                gunRows += JoinRow(g) + "\r\n";
+                ++guns;
+            }
+        if (name.empty()) {
+            name = id;
+            for (char& c : name) c = c == '_' ? ' ' : c;
+        }
+        for (char& c : name) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        for (char& c : faction) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        g_modVehicles.push_back({id, name, baseRow[0], faction});
+        lastMod = vf.mod;
+        features::ModLog("Mods: vehicle %s (%s) based on %s, model %s, %d gun(s)", name.c_str(), id.c_str(),
+                         baseRow[0].c_str(), row[1].c_str(), guns);
+    }
+    if (rows.empty()) return;
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    CreateDirectoryA((g_mergedRoot + "\\vehicles").c_str(), nullptr);
+    const std::string path = g_mergedRoot + "\\vehicles\\Vehicle.txt";
+    if (WriteAll(path, rows)) g_tables["VEHICLE.TXT"].push_back({path, lastMod});
+    const std::string gunPath = g_mergedRoot + "\\vehicles\\VehWpns.txt";
+    if (!gunRows.empty() && WriteAll(gunPath, gunRows)) g_tables["VEHWPNS.TXT"].push_back({gunPath, lastMod});
+    const std::string statPath = g_mergedRoot + "\\vehicles\\VStat.txt", propPath = g_mergedRoot + "\\vehicles\\Props.txt";
+    if (!statRows.empty() && WriteAll(statPath, statRows)) g_tables["VSTAT.TXT"].push_back({statPath, lastMod});
+    if (!propRows.empty() && WriteAll(propPath, propRows)) g_tables["PROPS.TXT"].push_back({propPath, lastMod});
+}
+
+// ---- .unit files: new soldier types (research/custom_units.md) ----
+// "key = value" lines, # comments. A unit starts as a copy of `based on` (a Units.txt row - the game's or a mod's), its
+// base stats (HStat.txt) and its kit (UnitWpns.txt), and changes only what is listed:
+//   id = Iraqi_Militia                 required, max 35 characters, no commas
+//   based on = Iraqi_Conscript         required
+//   type = SOLDIER                     SOLDIER, CIVILIAN, GOAT HERDER, EMIR, MISSILE EXPERT or POW (game behaviour)
+//   model = IraqInfantry01_Sandy       a soldier model (game or mod .evo) with the standard 51-object skeleton
+//   health = 60
+//   experience = Veteran               Rookie, Green, Trained, Regular, Veteran, Expert, Professional, Guard, Crack,
+//                                      Elite, Specialist, Skill One .. Skill Four
+//   voice = Iraqi_soldier              speech bank (.sbk); one no level has is borrowed from the game's sound caches
+//   item = IR_WPN_AK47                 kit, one line per item (a weapon or an inventory item, optionally ", amount");
+//                                      any item line replaces the base's kit; "item = none" = no kit
+//   column N = value                   Units.txt column N (1-based) for the rest
+//   stat column N = value              HStat.txt column N (1-based)
+// Writes Units.txt / HStat.txt (own row "<id>" when a stat changes) / UnitWpns.txt parts; column 14 (item slots) is the
+// item count. CheckUnitTables validates the result like any other mod row.
+std::vector<std::string> NodeNames(const std::string& evo) {   // DS1 EOBJ (version 0x2F): node name at +0x48
+    std::vector<std::string> out;
+    for (size_t p = evo.find("EOBJ"); p != std::string::npos; p = evo.find("EOBJ", p + 4))
+        if (p + 0x48 + 64 <= evo.size() && static_cast<uint8_t>(evo[p + 4]) == 0x2F && evo[p + 5] == 0)
+            out.push_back(Upper(std::string(evo.c_str() + p + 0x48, strnlen(evo.c_str() + p + 0x48, 64))));
+    return out;
+}
+
+bool ModelBytes(const std::string& model, std::string& out) {
+    auto it = g_files.find(Upper(model + ".evo"));
+    return it != g_files.end() ? ReadAll(it->second.path, out) : ReadGameFile(model + ".evo", out);
+}
+
+void BuildUnits() {
+    if (g_unitFiles.empty()) return;
+    auto tableRows = [](const char* name, const char* key) {   // the game's rows + mods' own parts (not merged yet)
+        std::vector<std::vector<std::string>> rows;
+        std::string text;
+        if (ReadGameFile(name, text)) rows = RowsOf(text);
+        auto it = g_tables.find(key);   // (not g_tables[key]: an empty entry would make MergeTables look for a replace part)
+        if (it != g_tables.end())
+            for (const ModFile& part : it->second)
+                if (ReadAll(part.path, text))
+                    for (auto& r : RowsOf(text)) rows.push_back(r);
+        return rows;
+    };
+    std::vector<std::vector<std::string>> units = tableRows("Units.txt", "UNITS.TXT"),
+                                          stats = tableRows("HStat.txt", "HSTAT.TXT"),
+                                          kits = tableRows("UnitWpns.txt", "UNITWPNS.TXT"),
+                                          weapons = tableRows("Weaps.txt", "WEAPS.TXT"),
+                                          inventory = tableRows("Inven.txt", "INVEN.TXT");
+    static const char* const kTypes[] = {"SOLDIER", "CIVILIAN", "GOAT HERDER", "EMIR", "MISSILE EXPERT", "POW"};
+    std::string unitRows, statRows, kitRows;
+    int lastMod = 0;
+    for (const ModFile& uf : g_unitFiles) {
+        const std::string file = uf.path.substr(uf.path.find_last_of("\\/") + 1);
+        std::string id, base, type, model, experience, voice;
+        int health = -1;
+        bool ownKit = false, ok = true;
+        std::vector<std::pair<std::string, std::string>> items;   // item, amount
+        std::vector<std::pair<int, std::string>> columns, statColumns;
+        for (auto& [k, v] : ReadKeyValues(uf.path)) {
+            if (k == "id") id = v;
+            else if (k == "basedon") base = v;
+            else if (k == "type" || k == "kind") type = v;
+            else if (k == "model") model = v;
+            else if (k == "health") health = atoi(v.c_str());
+            else if (k == "experience") experience = v;
+            else if (k == "voice" || k == "speechbank") voice = v;
+            else if (k == "item") {
+                ownKit = true;
+                if (_stricmp(v.c_str(), "none") == 0) continue;
+                const size_t comma = v.find(',');
+                items.push_back({Trim(v.substr(0, comma)), comma == std::string::npos ? "0" : Trim(v.substr(comma + 1))});
+            } else if (k.compare(0, 10, "statcolumn") == 0 && atoi(k.c_str() + 10) > 1) statColumns.push_back({atoi(k.c_str() + 10), v});
+            else if (k.compare(0, 6, "column") == 0 && atoi(k.c_str() + 6) > 1) columns.push_back({atoi(k.c_str() + 6), v});
+            else if (k == "scale") features::ModLog("[fail] Mods: %s - \"scale\" isn't supported yet (ignored)", file.c_str());
+            else features::ModLog("[fail] Mods: %s - unknown setting \"%s\"", file.c_str(), k.c_str());
+        }
+        const std::vector<std::string>* found = base.empty() ? nullptr : FindRow(units, base);
+        if (id.empty() || id.size() > 35 || id.find(',') != std::string::npos || !found || found->size() < 14) {
+            features::ModLog("[fail] Mods: %s - needs \"id = ...\" (max 35 characters, no commas) and \"based on = <unit>\" "
+                             "(a Units.txt row, e.g. Iraqi_Conscript)", file.c_str());
+            continue;
+        }
+        if (FindRow(units, id)) {
+            features::ModLog("[fail] Mods: %s - unit %s exists already", file.c_str(), id.c_str());
+            continue;
+        }
+        const std::vector<std::string> baseRow = *found;
+        std::vector<std::string> row = baseRow;
+        row[0] = id;
+        if (!type.empty()) {
+            std::string t = type;
+            for (char& c : t) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            if (std::find_if(std::begin(kTypes), std::end(kTypes), [&](const char* s) { return t == s; }) == std::end(kTypes)) {
+                features::ModLog("[fail] Mods: %s - type \"%s\" isn't SOLDIER, CIVILIAN, GOAT HERDER, EMIR, MISSILE EXPERT "
+                                 "or POW", file.c_str(), type.c_str());
+                continue;
+            }
+            row[1] = t;
+        }
+        if (!model.empty()) row[2] = model;
+        std::string evo, baseEvo;
+        if (!ModelBytes(row[2], evo)) {
+            features::ModLog("[fail] Mods: %s - model %s.evo isn't in the game or a mod", file.c_str(), row[2].c_str());
+            continue;
+        }
+        if (_stricmp(row[2].c_str(), baseRow[2].c_str()) != 0 && ModelBytes(baseRow[2], baseEvo)) {
+            const std::vector<std::string> mine = NodeNames(evo), theirs = NodeNames(baseEvo);
+            if (mine != theirs) {
+                features::ModLog("[fail] Mods: %s - model %s has %zu objects, %s has %zu: a soldier model needs the same "
+                                 "skeleton (objects and order) as the game's soldiers - the animations have one track per "
+                                 "object", file.c_str(), row[2].c_str(), mine.size(), baseRow[2].c_str(), theirs.size());
+                continue;
+            }
+        }
+        if (!experience.empty()) row[9] = experience;
+        if (!voice.empty()) {
+            if (voice.size() < 4 || _stricmp(voice.c_str() + voice.size() - 4, ".sbk") != 0) voice += ".sbk";
+            if (_stricmp(voice.c_str(), baseRow[10].c_str()) != 0) BorrowBank(voice.substr(0, voice.size() - 4));
+            row[10] = voice;
+        }
+        if (health >= 0 || !statColumns.empty()) {   // own base stats, named like the unit
+            const std::vector<std::string>* baseStats = FindRow(stats, baseRow[4]);
+            if (!baseStats || id.size() > 39) {
+                features::ModLog("[fail] Mods: %s - base stats %s not found", file.c_str(), baseRow[4].c_str());
+                continue;
+            }
+            std::vector<std::string> s = *baseStats;
+            s[0] = id;
+            if (health >= 0) s[1] = std::to_string(health);
+            for (auto& [n, v] : statColumns)
+                if (n <= static_cast<int>(s.size())) s[n - 1] = v;
+                else ok = false;
+            if (!ok) {
+                features::ModLog("[fail] Mods: %s - HStat.txt has %zu columns", file.c_str(), s.size());
+                continue;
+            }
+            statRows += JoinRow(s) + "\r\n";
+            stats.push_back(s);
+            row[4] = id;
+        }
+        for (auto& [n, v] : columns)
+            if (n <= static_cast<int>(row.size()) && n != 14) row[n - 1] = v;
+            else ok = false;
+        if (!ok) {
+            features::ModLog("[fail] Mods: %s - Units.txt has 14 columns; column 14 (item slots) comes from the items",
+                             file.c_str());
+            continue;
+        }
+        std::vector<std::vector<std::string>> kit;
+        if (ownKit) {
+            for (auto& [item, amount] : items) {
+                const std::vector<std::string>* w = FindRow(weapons, item);
+                const std::vector<std::string>* inv = w ? nullptr : FindRow(inventory, item);
+                if (!w && (!inv || inv->size() < 2)) {
+                    features::ModLog("[fail] Mods: %s - item %s isn't a weapon (Weaps.txt) or an inventory item (Inven.txt)",
+                                     file.c_str(), item.c_str());
+                    ok = false;
+                    break;
+                }
+                kit.push_back({id, w ? (*w)[0] : (*inv)[0], w ? "WEAPON" : (*inv)[1], amount});
+            }
+            if (!ok) continue;
+        } else {
+            for (const auto& k : kits)
+                if (k.size() >= 4 && k[0] == baseRow[0]) kit.push_back({id, k[1], k[2], k[3]});
+        }
+        if (kit.size() > 25) {
+            features::ModLog("[fail] Mods: %s - %zu items, at most 25", file.c_str(), kit.size());
+            continue;
+        }
+        row[13] = std::to_string(kit.size());
+        ModUnit mu{id, row[2], {}};
+        for (const auto& k : kit) kitRows += JoinRow(k) + "\r\n", mu.items.push_back(k[1]);
+        g_modUnits.push_back(mu);
+        unitRows += JoinRow(row) + "\r\n";
+        units.push_back(row);
+        lastMod = uf.mod;
+        features::ModLog("Mods: unit %s based on %s, type %s, model %s, %zu item(s)", id.c_str(), baseRow[0].c_str(),
+                         row[1].c_str(), row[2].c_str(), kit.size());
+    }
+    if (unitRows.empty()) return;
+    if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+    const std::string dir = g_mergedRoot + "\\units";
+    CreateDirectoryA(dir.c_str(), nullptr);
+    if (WriteAll(dir + "\\Units.txt", unitRows)) g_tables["UNITS.TXT"].push_back({dir + "\\Units.txt", lastMod});
+    if (!statRows.empty() && WriteAll(dir + "\\HStat.txt", statRows)) g_tables["HSTAT.TXT"].push_back({dir + "\\HStat.txt", lastMod});
+    if (!kitRows.empty() && WriteAll(dir + "\\UnitWpns.txt", kitRows))
+        g_tables["UNITWPNS.TXT"].push_back({dir + "\\UnitWpns.txt", lastMod});
+}
+
+// ---- vehicle data from other levels (vehicles.cpp: a swapped-in vehicle the level's archive doesn't carry) ----
+// A vehicle needs its model, wreck model + shard, crew animations (VEHICLE.TXT), its .DYN and the models named there
+// (tracks, wheels), its guns (VEHWPNS.TXT -> WEAPS.TXT: models, muzzle flashes, animations), every texture those
+// models name (TEXL), and sound banks: the engine (VSTAT.TXT column 12) and each gun's (WEAPS.TXT column 64). Files the
+// level's archive (or catalog / chardata) has are left to the game; the rest are copied from whichever game archive
+// has them into the merged folder the resolver serves, banks go into the level's sound cache as packs.
+struct ArchiveLoc {
+    std::string dat;
+    uint32_t offset, size;
+};
+
+std::vector<uint32_t> ArchiveEntries(const std::string& dat) {   // {hash, offset, size} x n of a game archive
+    std::vector<uint32_t> entries(0x8000 / 4);
+    HANDLE f = CreateFileA((GameDir() + "\\" + dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return {};
+    DWORD got = 0;
+    ReadFile(f, entries.data(), 0x8000, &got, nullptr);
+    CloseHandle(f);
+    entries.resize(got / 4 / 3 * 3);
+    for (size_t i = 0; i + 2 < entries.size(); i += 3)
+        if (!entries[i] && !entries[i + 1] && !entries[i + 2]) {
+            entries.resize(i);
+            break;
+        }
+    return entries;
+}
+
+const std::unordered_map<uint32_t, ArchiveLoc>& GameArchiveIndex() {   // first archive per name hash (catalog first)
+    static std::unordered_map<uint32_t, ArchiveLoc> index;
+    if (!index.empty()) return index;
+    std::vector<std::string> dats = {"catalog.dat", "chardata.dat"};
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((GameDir() + "\\*.dat").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do
+            if (_stricmp(fd.cFileName, "catalog.dat") && _stricmp(fd.cFileName, "chardata.dat")) dats.push_back(fd.cFileName);
+        while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    for (const std::string& dat : dats) {
+        const std::vector<uint32_t> e = ArchiveEntries(dat);
+        for (size_t i = 0; i + 2 < e.size(); i += 3) index.emplace(e[i], ArchiveLoc{dat, e[i + 1], e[i + 2]});
+    }
+    return index;
+}
+
+bool ArchiveHas(const std::string& dat, uint32_t hash) {   // does that game archive carry the file?
+    static std::unordered_map<std::string, std::unordered_map<uint32_t, bool>> sets;
+    const std::string key = Upper(dat);
+    auto it = sets.find(key);
+    if (it == sets.end()) {
+        auto& set = sets[key];
+        const std::vector<uint32_t> e = ArchiveEntries(dat);
+        for (size_t i = 0; i + 2 < e.size(); i += 3) set[e[i]] = true;
+        it = sets.find(key);
+    }
+    return it->second.count(hash) != 0;
+}
+
+// The file as the level will see it: true if the game finds it anyway (level archive, catalog, chardata, a mod) or it
+// was copied now. data = its bytes when wanted (models: their textures and .DYN are read from them).
+bool BorrowLevelFile(const std::string& name, const std::string& levelDat, std::string* data, int& copied) {
+    const std::string key = Upper(name);
+    if (auto f = g_files.find(key); f != g_files.end()) return data ? ReadAll(f->second.path, *data) : true;
+    const uint32_t hash = ArchiveHash(name);
+    const auto& index = GameArchiveIndex();
+    auto loc = index.find(hash);
+    if (loc == index.end()) return false;
+    const bool present = ArchiveHas(levelDat, hash) || ArchiveHas("catalog.dat", hash) || ArchiveHas("chardata.dat", hash);
+    if (present && !data) return true;
+    std::string bytes;
+    HANDLE f = CreateFileA((GameDir() + "\\" + loc->second.dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return present;
+    bytes.resize(loc->second.size);
+    DWORD got = 0;
+    SetFilePointer(f, static_cast<LONG>(loc->second.offset), nullptr, FILE_BEGIN);
+    const bool ok = ReadFile(f, bytes.data(), loc->second.size, &got, nullptr) && got == loc->second.size;
+    CloseHandle(f);
+    if (!ok) return present;
+    // [PSE asset store] dev test of the store's global fallback (assetstore.cpp, Dev\PseNoBorrow): no copy - the store
+    // serves the other level's file. The bytes are still handed back (their textures / .DYN names are followed).
+    if (!present && features::AssetStoreServesBorrows()) {
+        if (data) data->swap(bytes);
+        return true;
+    }
+    if (!present) {
+        const std::string path = GameDataDir() + "\\" + name;
+        if (!WriteAll(path, bytes)) return false;
+        g_files[key] = {path, -1};
+        ++copied;
+    }
+    if (data) data->swap(bytes);
+    return true;
+}
+
+bool LooksLikeName(const std::string& t) {
+    if (t.empty() || !isalpha(static_cast<unsigned char>(t[0])) || _stricmp(t.c_str(), "dummy") == 0 || t.size() > 60)
+        return false;
+    for (char c : t)
+        if (!isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') return false;
+    return true;
+}
+
+std::vector<std::string> TexlNames(const std::string& evo) {   // texture names of every TEXL list in a model
+    std::vector<std::string> out;
+    for (size_t p = evo.find("TEXL"); p != std::string::npos; p = evo.find("TEXL", p + 4)) {
+        uint32_t n = 0;
+        if (p + 8 > evo.size()) break;
+        memcpy(&n, evo.data() + p + 4, 4);
+        if (n > 64 || p + 8 + n * 68 > evo.size()) continue;
+        for (uint32_t i = 0; i < n; ++i) {
+            const char* name = evo.c_str() + p + 8 + i * 68 + 4;
+            const std::string t(name, strnlen(name, 64));
+            if (!t.empty() && _stricmp(t.c_str(), "Default") && std::find(out.begin(), out.end(), t) == out.end())
+                out.push_back(t);
+        }
+    }
+    return out;
+}
+
+// FeatMods off: the Mods folder isn't read (no index, report, tables, .weapon / .skin files) - only what other features
+// need from this file is built: the kit weapons' sound banks (loadout swaps) and, through the resolver, the level sound
+// caches with the squad's other-accent voices (voices.cpp).
 void BuildAll() {
+    if (!features::ModsFolderEnabled()) {
+        BorrowKitBanks();
+        return;
+    }
     BeginReport(GameDir() + "\\Mods");
     BuildIndex();
     BuildReferences();
     BuildWeapons();
     BuildSkins();
+    BuildGear();
+    BuildVehicles();
+    BuildUnits();
     MergeTables();
+    CheckUnitTables();
+    CheckVehicleTables();
     BorrowKitBanks();
 }
 
 void ResetState() {
     g_files.clear();
+    g_largestFile = 0;
+    g_largestName.clear();
     g_mods.clear();
     g_tables.clear();
     g_tableReplace.clear();
@@ -1850,7 +2969,18 @@ void ResetState() {
     g_skinFiles.clear();
     g_skinVariants.clear();
     g_weaponFiles.clear();
+    g_gearFiles.clear();
+    g_pouchFiles.clear();
+    g_modGear.clear();
+    g_modPouchSets.clear();
+    g_vehicleFiles.clear();
+    g_unitFiles.clear();
+    g_modUnits.clear();
+    g_modVehicles.clear();
+    g_vehicleHandling.clear();
+    g_vehicleData.clear();
     g_bankPacks.clear();
+    g_storeBanks.clear();
     g_levelSounds.clear();
     g_streams.clear();
     g_soundCaches.clear();
@@ -1866,6 +2996,7 @@ void ResetState() {
     g_usesFiles.clear();
     g_envPatches.clear();
     g_rmdPatches.clear();
+    g_dllPatches.clear();
 }
 
 // The game's start-up tables (FUN_00411740: file -> parser(text, size[, a, b])), in its order - names before the skins
@@ -1938,6 +3069,7 @@ int features::ModsGeneration() { return g_generation; }
 // rows, so the game's weapons keep their indices. Files resolved at a level load (models, textures, animations,
 // sound caches) simply follow the new index. Front-end only.
 bool features::ReloadMods() {
+    if (!features::ModsFolderEnabled()) return false;   // (no MODS menu then)
     std::vector<std::string> tables;
     for (auto& [key, parts] : g_tables) tables.push_back(key);
     ResetState();
@@ -2001,7 +3133,7 @@ int __fastcall TextureLoad(uint8_t* tex) {
 // open 0x561250 fopens the path itself (no resolver), skips the 8-byte header and the reader stops at +0x14. Each
 // file is a whole mix (music, effects, speech), stereo 44.1 kHz, 16-byte ADPCM blocks interleaved L / R. The load is
 // wrapped: a mod's file for that language (or for all) takes the path, and its length the size.
-constexpr uint32_t kStreamLoad = 0x5610E0, kStreamLoadCont = 0x5610E7;
+constexpr uint32_t kStreamLoad = 0x5610E0;
 constexpr uint8_t kStreamLoadEntry[] = {0x83, 0xEC, 0x0C, 0x8D, 0x44, 0x24, 0x00};  // sub esp,0xC; lea eax,[esp]
 using StreamLoadFn = char(__thiscall*)(void*, void*);
 StreamLoadFn g_streamLoad = nullptr;
@@ -2069,10 +3201,32 @@ int __fastcall LoadLevelTexts(void* self, void*, const char* name) {
     return reinterpret_cast<Fn>(kLoadLoc)(self, name);
 }
 
+// "+level <name>" (the world editor's Play): the mission lives in a Mods folder - read it even with FeatMods off.
+bool features::ModsFolderEnabled() {
+    static const bool on = [] {
+        if (settings::Get().featMods) return true;
+        const char* cmd = GetCommandLineA();
+        return cmd && strstr(cmd, "+level ") != nullptr;
+    }();
+    return on;
+}
+
 void features::ApplyMods() {
     static bool done = false;
     if (done) return;
     done = true;
+    if (!features::ModsFolderEnabled()) {
+        // Only the resolver + disk open stay: level sound caches with voices / kit weapon banks (merged into %TEMP%).
+        BuildAll();
+        if (!patch::Matches(kResolve, kResolveEntry, sizeof kResolveEntry) || !patch::Matches(kOpen, kOpenEntry, sizeof kOpenEntry)) {
+            dslog::Write("[fail] Mods: unexpected game code - level sound caches (voices, kit weapon banks) not merged");
+            return;
+        }
+        if (HookResolveAndOpen())
+            dslog::Write("[off]  Mods: Mods folder ignored (FeatMods) - level sound caches only");
+        return;
+    }
+    if (!settings::Get().featMods) dslog::Write("Mods: FeatMods off, but +level on the command line - Mods folder read");
     if (!patch::HookCall(kLoadLocCall, reinterpret_cast<const void*>(&LoadLevelTexts), kLoadLoc))
         features::ModLog("[fail] Mods: mission text load at 0x%08X not recognised - [M01] text sections apply nowhere",
                          kLoadLocCall);
@@ -2086,25 +3240,18 @@ void features::ApplyMods() {
         features::ModLog("[fail] Mods: unexpected game code - mods not loaded");
         return;
     }
-    if (patch::Matches(kStreamLoad, kStreamLoadEntry, sizeof kStreamLoadEntry) &&
-        (g_streamLoad = reinterpret_cast<StreamLoadFn>(Trampoline(kStreamLoadEntry, sizeof kStreamLoadEntry, kStreamLoadCont))))
-        patch::WriteJump(kStreamLoad, reinterpret_cast<const void*>(&StreamLoad));
-    else
+    if (!HookEntry(kStreamLoad, reinterpret_cast<const void*>(&StreamLoad), g_streamLoad, kStreamLoadEntry,
+                   sizeof kStreamLoadEntry))
         features::ModLog("[fail] Mods: stream load at 0x%08X not recognised - cutscene sounds can't be replaced", kStreamLoad);
 #ifndef DS_DIST
     patch::HookCall(0x561269, reinterpret_cast<const void*>(&StreamOpen), 0x56732D);
 #endif
-    g_resolve = reinterpret_cast<ResolveFn>(Trampoline(kResolveEntry, sizeof kResolveEntry, kResolveCont));
-    g_open = reinterpret_cast<OpenFn>(Trampoline(kOpenEntry, sizeof kOpenEntry, kOpenCont));
-    if (!g_resolve || !g_open) return;
-    const uint8_t existsJump[] = {0xE9, 0xD2, 0xE6, 0xFF, 0xFF};   // jmp 0x4BE360
-    if (!patch::Matches(kArchiveExistsJump, existsJump, sizeof existsJump) ||
-        !patch::WriteJump(kArchiveExistsJump, reinterpret_cast<const void*>(&ArchiveExists)))
+    const uint8_t existsJump[] = {0xE9, 0xD2, 0xE6, 0xFF, 0xFF};   // jmp 0x4BE360 (a tail jump, redirected)
+    if (!patch::WriteJump(kArchiveExistsJump, reinterpret_cast<const void*>(&ArchiveExists), sizeof existsJump, existsJump))
         features::ModLog("[fail] Mods: exists check at 0x%08X not recognised - files only a mod has (vehicle .dyn) are skipped",
                          kArchiveExistsJump);
-    if (patch::WriteJump(kResolve, reinterpret_cast<const void*>(&Resolve)) &&
-        patch::WriteJump(kOpen, reinterpret_cast<const void*>(&Open)))
-        features::ModLog("Mods: %zu mods, %zu files", g_mods.size(), g_files.size());
+    if (HookResolveAndOpen())
+        features::ModLog("[ok]   Mods: %zu mods, %zu files", g_mods.size(), g_files.size());
 }
 
 int features::ModCount() { return static_cast<int>(g_mods.size()); }
@@ -2129,6 +3276,19 @@ void features::ModLog(const char* fmt, ...) {
 
 const std::vector<std::string>& features::LoadedMods() { return g_mods; }
 
+std::vector<features::ModLevel> features::ModLevels() {
+    std::vector<ModLevel> out;
+    for (const auto& [key, f] : g_files) {
+        const bool dll = key.size() > 4 && key.compare(key.size() - 4, 4, ".DLL") == 0;
+        const bool lua = key.size() > 4 && key.compare(key.size() - 4, 4, ".LUA") == 0;
+        if (!dll && !lua) continue;
+        const bool built = !g_mergedRoot.empty() && _strnicmp(f.path.c_str(), g_mergedRoot.c_str(), g_mergedRoot.size()) == 0;
+        const std::string name = f.path.substr(f.path.find_last_of("\\/") + 1);
+        out.push_back({name, f.mod >= 0 && f.mod < static_cast<int>(g_mods.size()) ? g_mods[f.mod] : std::string(), built});
+    }
+    return out;
+}
+
 // A game table as the game sees it: the merged / mod copy if there is one, else the archive's.
 bool features::ReadGameTable(const char* name, std::string& out) {
     auto it = g_files.find(Upper(name));
@@ -2136,7 +3296,198 @@ bool features::ReadGameTable(const char* name, std::string& out) {
     return ReadGameFile(name, out);
 }
 
+const std::vector<features::ModVehicle>& features::ModVehicles() { return g_modVehicles; }
+
+// A level's render pools come from "<level>.FAS" (loader FUN_004fb880 at 0x40C1B1: "Loading Bar" n, then the pool
+// sizes "EnvInstances" / "EnvObjects" / "VertexBuffer" / "VBufferObject", default 2000 each), measured for the level's
+// own scene. Objects made past a full pool lose parts silently - a vehicle swapped in with more parts than the scene's
+// own (Mission 9: an Abrams or a Humvee for the Bradley) had no ground under it and fell through the map, and the
+// loadout screen's preview vehicles weren't made at all. The level gets a copy with `extra` more of each.
+void features::PadLevelPools(const char* level, int extra) {
+    std::string base = level ? level : "";
+    if (base.size() > 4) base.resize(base.size() - 4);
+    const std::string name = base + ".FAS", key = Upper(name);
+    std::string text;
+    if (const ModFile* own = Find(name.c_str()); own && !StartsWith(own->path.c_str(), g_mergedRoot)) {
+        if (!ReadAll(own->path, text)) return;   // a mod's own copy
+    } else if (!ReadGameFile(name, text)) {
+        return;
+    }
+    std::string out;
+    int pools = 0;
+    for (const std::string& line : SplitLines(text)) {
+        const size_t q = line.find('"', line.find('"') + 1);
+        if (q == std::string::npos || line.find("Loading Bar") != std::string::npos) {
+            out += line + "\r\n";
+            continue;
+        }
+        const int n = atoi(line.c_str() + q + 1);
+        out += line.substr(0, q + 1) + " " + std::to_string(std::max(n, 2000) + extra) + "\r\n";
+        ++pools;
+    }
+    if (!pools) return;
+    const std::string path = GameDataDir() + "\\" + name;
+    if (WriteAll(path, out)) {
+        g_files[key] = {path, -1};
+        dslog::Write("Vehicles: %s - %d render pools +%d", name.c_str(), pools, extra);
+    }
+}
+
+// A vehicle the game can build: its model and its guns' models (VEHWPNS.TXT -> WEAPS.TXT column 2) are in a mod or in
+// one of the game's archives. VEHICLE.TXT has rows whose models were never shipped (M1A1abrahms needs
+// VHAbrams_M1A1_MG, UK_VEH_SAS_LandRover_MG needs SAS_LandRover_With_50cal) - picked, they fail to load.
+bool features::VehicleDataComplete(const std::string& unit) {
+    static std::unordered_map<std::string, bool> cache;
+    static int generation = -1;
+    if (generation != g_generation) cache.clear(), generation = g_generation;
+    const std::string key = Upper(unit);
+    if (auto it = cache.find(key); it != cache.end()) return it->second;
+    auto exists = [](const std::string& model) {
+        if (model.empty() || model == "-1") return true;
+        return Find((model + ".EVO").c_str()) != nullptr || GameArchiveIndex().count(ArchiveHash(model + ".EVO")) != 0;
+    };
+    const auto vehicles = TableRows("VEHICLE.TXT"), guns = TableRows("VEHWPNS.TXT"), weapons = TableRows("WEAPS.TXT");
+    const std::vector<std::string>* row = FindRow(vehicles, unit);
+    bool ok = row && row->size() > 1 && exists((*row)[1]);
+    for (const auto& g : guns)
+        if (ok && g.size() > 1 && _stricmp(g[0].c_str(), unit.c_str()) == 0)
+            if (const auto* w = FindRow(weapons, g[1]); w && w->size() > 1) ok = exists((*w)[1]);
+    if (!ok) features::ModLog("Vehicles: %s left out - its model or a gun's model isn't in the game's data", unit.c_str());
+    return cache[key] = ok;
+}
+
+// Every model (+ its TEXL textures, its .DYN and the models named there) or animation named in `names` that the level's
+// archive lacks: copied from another game archive (BorrowLevelFile). Names that aren't files are skipped.
+void BorrowNamedFiles(std::vector<std::string> names, const std::string& levelDat, int& copied, int& missing) {
+    std::vector<std::string> done;
+    for (size_t i = 0; i < names.size(); ++i) {   // (grows: names found in .DYN files)
+        const std::string n = names[i];
+        if (!LooksLikeName(n) || std::find(done.begin(), done.end(), Upper(n)) != done.end()) continue;
+        done.push_back(Upper(n));
+        std::string evo;
+        if (BorrowLevelFile(n + ".EVO", levelDat, &evo, copied)) {
+            for (const std::string& t : TexlNames(evo)) {
+                if (t.find('.') != std::string::npos) {
+                    if (!BorrowLevelFile(t, levelDat, nullptr, copied)) ++missing;
+                } else if (!BorrowLevelFile(t + ".DDS", levelDat, nullptr, copied) &&
+                           !BorrowLevelFile(t + ".TGA", levelDat, nullptr, copied)) {
+                    ++missing;
+                }
+            }
+            std::string dyn;
+            if (BorrowLevelFile(n + ".DYN", levelDat, &dyn, copied)) {
+                std::string word;
+                for (char c : dyn + " ") {
+                    if (isspace(static_cast<unsigned char>(c)) || c == '"' || c == ',') {
+                        if (LooksLikeName(word)) names.push_back(word);
+                        word.clear();
+                    } else {
+                        word += c;
+                    }
+                }
+            }
+            continue;
+        }
+        BorrowLevelFile(n + ".PRB", levelDat, nullptr, copied);   // crew / gunner / weapon animations
+    }
+}
+
+// .unit soldier types in any level: their model and their kit's files (Weaps.txt / Inven.txt row names: models,
+// muzzle flashes, animations) and the weapons' sound banks, copied in like a swapped-in vehicle's. Called at level init
+// (scripthost.cpp, next to VehiclesLevelStart) - before the level's archive and sound cache are read.
+void features::BorrowUnitData(const char* level) {
+    if (g_modUnits.empty() || !level) return;
+    std::string base = level;
+    if (base.size() > 4) base.resize(base.size() - 4);
+    const std::string levelDat = base + ".dat";
+    const auto weapons = TableRows("WEAPS.TXT"), inventory = TableRows("INVEN.TXT");
+    bool newBanks = false;
+    for (const ModUnit& u : g_modUnits) {
+        const std::string key = "UNIT " + Upper(u.id) + "|" + Upper(levelDat);
+        if (g_vehicleData.count(key)) continue;
+        g_vehicleData[key] = true;
+        std::vector<std::string> names = {u.model}, banks;
+        for (const std::string& item : u.items) {
+            if (const auto* w = FindRow(weapons, item)) {
+                names.insert(names.end(), w->begin() + 1, w->end());
+                if (w->size() > 63) banks.push_back((*w)[63]);
+            } else if (const auto* inv = FindRow(inventory, item)) {
+                names.insert(names.end(), inv->begin() + 1, inv->end());
+                if (inv->size() > 12) banks.push_back((*inv)[12]);
+            }
+        }
+        int copied = 0, missing = 0;
+        const bool store = features::AssetStoreServesBorrows();   // the asset store serves other levels' files
+        if (!store) BorrowNamedFiles(names, levelDat, copied, missing);
+        for (const std::string& b : banks)
+            if (LooksLikeName(b) && _stricmp(b.c_str(), "None")) newBanks |= BorrowBank(b);
+        if (store)
+            features::ModLog("Units: %s for %s - files of other levels served by the asset store", u.id.c_str(), base.c_str());
+        else if (copied || missing)
+            features::ModLog("Units: %s for %s - %d file(s) copied from other levels%s", u.id.c_str(), base.c_str(), copied,
+                             missing ? ", some textures not found" : "");
+    }
+    if (newBanks) {   // the level's sound cache is built again with the new packs
+        const std::string prefix = Upper(base) + ".SCH|";
+        for (auto it = g_soundCaches.begin(); it != g_soundCaches.end();)
+            it = it->first.compare(0, prefix.size(), prefix) == 0 ? g_soundCaches.erase(it) : std::next(it);
+    }
+}
+
+void features::BorrowVehicleData(const char* level, const std::vector<std::string>& units) {
+    std::string base = level ? level : "";
+    if (base.size() > 4) base.resize(base.size() - 4);   // the game's own rule: "Mission9.dll" -> mission9.dat / .sch
+    const std::string levelDat = base + ".dat";
+    const auto vehicles = TableRows("VEHICLE.TXT"), stats = TableRows("VSTAT.TXT"), guns = TableRows("VEHWPNS.TXT"),
+               weapons = TableRows("WEAPS.TXT");
+    bool newBanks = false;
+    for (const std::string& unit : units) {
+        const std::string key = Upper(unit) + "|" + Upper(levelDat);
+        if (g_vehicleData.count(key)) continue;
+        g_vehicleData[key] = true;
+        const std::vector<std::string>* row = FindRow(vehicles, unit);
+        if (!row || row->size() < 5) {
+            features::ModLog("[fail] Vehicles: %s isn't in VEHICLE.TXT", unit.c_str());
+            continue;
+        }
+        std::vector<std::string> names(row->begin() + 1, row->end()), banks;
+        if (const auto* st = FindRow(stats, (*row)[4]); st && st->size() > 12) banks.push_back((*st)[12]);
+        for (const auto& g : guns)
+            if (g.size() > 1 && _stricmp(g[0].c_str(), unit.c_str()) == 0)
+                if (const auto* w = FindRow(weapons, g[1])) {
+                    names.insert(names.end(), w->begin() + 1, w->end());
+                    if (w->size() > 63) banks.push_back((*w)[63]);
+                }
+        int copied = 0, missing = 0;
+        const bool store = features::AssetStoreServesBorrows();   // the asset store serves other levels' files
+        if (!store) BorrowNamedFiles(names, levelDat, copied, missing);
+        bool noBanks = false;   // dev A/B: Dev\VehicleNoBanks = 1 borrows no sound banks
+#ifndef DS_DIST
+        {
+            DWORD v = 0, size = sizeof v;
+            noBanks = RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "VehicleNoBanks", RRF_RT_REG_DWORD,
+                                   nullptr, &v, &size) == ERROR_SUCCESS && v;
+        }
+#endif
+        for (const std::string& b : banks)
+            if (!noBanks && LooksLikeName(b) && _stricmp(b.c_str(), "None")) newBanks |= BorrowBank(b);
+        features::ModLog("Vehicles: %s for %s - %d file(s) copied from other levels%s%s", unit.c_str(), base.c_str(), copied,
+                         missing ? ", some textures not found" : "", store ? " (served by the asset store)" : "");
+    }
+    if (newBanks) {   // the level's sound cache is built again with the new packs
+        const std::string prefix = Upper(base) + ".SCH|";
+        for (auto it = g_soundCaches.begin(); it != g_soundCaches.end();)
+            it = it->first.compare(0, prefix.size(), prefix) == 0 ? g_soundCaches.erase(it) : std::next(it);
+    }
+}
+
+const std::vector<features::VehicleHandling>& features::ModVehicleHandling() { return g_vehicleHandling; }
 bool features::ModHasFile(const char* name) { return Find(name) != nullptr; }
+uint32_t features::LargestModFile(std::string* name) {
+    if (name) *name = g_largestName;
+    return g_largestFile;
+}
+
 std::string features::ModFilePath(const char* name) {
     const ModFile* f = Find(name);
     return f ? f->path : std::string();

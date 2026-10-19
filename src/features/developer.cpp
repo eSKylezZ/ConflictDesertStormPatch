@@ -8,6 +8,8 @@
 // COMPLETE MISSION = "Successful completion of mission" (0x444DC0: script message 0x11), RESURRECT ALL = "Resurrect
 // people" (0x444B60). Screen: Options sub-screen class with a copied vtable (like versus.cpp's MATCH SETUP), option
 // rows (FUN_004e5090 choices, draw callback 0x45DCD0), served by coop.cpp's state -> screen hook.
+// DEBUG KEYS: Pivotal's debug key map itself (73 bindings, tools/env/debugkeys.py) - always registered at start-up
+// (patch_defs DEBUG_KEYS), the per-frame dispatcher FUN_004473b0 asks for flag M at 0x4473B5 -> this row (or flag M).
 #include <windows.h>
 
 #include <cmath>
@@ -15,7 +17,9 @@
 #include <cstring>
 
 #include "core/log.h"
+#include "core/patch.h"
 #include "features/features.h"
+#include "generated/patch_tables.h"
 
 namespace {
 constexpr uint32_t kSetState = 0x47EF20, kBackPressed = 0x478380, kListSelected = 0x4E5D80;
@@ -37,16 +41,18 @@ constexpr uint32_t kDispatchMode = 0x60EC8C, kLevelName = 0x606880;
 
 enum : uint32_t {
     kTextTitle = 0xC00D0001, kTextRoutes, kTextQuad, kTextRouting, kTextSenses, kTextHealth, kTextStats, kTextWire,
-    kTextTime, kTextComplete, kTextResurrect, kTextT025, kTextT05, kTextT1, kTextT2, kTextT4, kTextEnd
+    kTextDebugKeys, kTextTime, kTextComplete, kTextResurrect, kTextT025, kTextT05, kTextT1, kTextT2, kTextT4, kTextEnd
 };
 const char* const kTexts[kTextEnd - kTextTitle] = {
     "DEVELOPER", "ROUTE MARKERS", "NAVIGATION MAP", "ROUTING DEBUG", "AI SENSES", "HEALTH BARS", "ENGINE STATS",
-    "WIREFRAME", "TIME SPEED", "COMPLETE MISSION", "RESURRECT ALL", "0.25x", "0.5x", "1x", "2x", "4x"};
+    "WIREFRAME", "DEBUG KEYS", "TIME SPEED", "COMPLETE MISSION", "RESURRECT ALL", "0.25x", "0.5x", "1x", "2x", "4x"};
 constexpr uint32_t kYesNo[] = {0x0001F3F3, 0x017E33D4};  // NO, YES
 constexpr uint32_t kTimeTexts[] = {kTextT025, kTextT05, kTextT1, kTextT2, kTextT4};
 constexpr float kTimeValues[] = {0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
 
-enum Row { kRoutes, kQuad, kRouting, kSenses, kHealth, kStats, kWire, kTime, kComplete, kResurrectRow, kRows };
+enum Row { kRoutes, kQuad, kRouting, kSenses, kHealth, kStats, kWire, kDebugKeysRow, kTime, kComplete, kResurrectRow, kRows };
+constexpr uint32_t kDispatchFlagCall = 0x4473B5, kStartFlag = 0x4B9CD0;  // debug key dispatcher: call FUN_004b9cd0('M')
+bool g_debugKeys = false;
 constexpr uint16_t kFirstId = 0x870;
 
 uint8_t g_screen[0x20];
@@ -94,6 +100,7 @@ int Value(int row) {
         case kHealth: return Global<int>(kHealthBars) != 0;
         case kStats: return Global<int>(kStatBars) != 0;
         case kWire: return World() && (At<uint32_t>(World(), 0x19DC) & 0x40) != 0;
+        case kDebugKeysRow: return g_debugKeys;
         case kTime: return TimeChoice();
     }
     return 0;
@@ -109,6 +116,7 @@ void Set(int row, int v) {
         case kHealth: Global<int>(kHealthBars) = v; break;
         case kStats: reinterpret_cast<void(__cdecl*)()>(kStatBarsToggle)(); break;
         case kWire: if (World()) reinterpret_cast<void(__cdecl*)()>(kWireframeToggle)(); break;
+        case kDebugKeysRow: g_debugKeys = v != 0; break;
         case kTime: Global<float>(kTimeScale) = kTimeValues[v]; break;
     }
     dslog::Write("Developer: %s -> %d", kTexts[kTextRoutes - kTextTitle + row], v);
@@ -138,7 +146,8 @@ bool __fastcall Create(void* screen, void*) {
     At<void*>(screen, 8) = list;
     if (!reinterpret_cast<int(__thiscall*)(void*, int)>(kListReserve)(list, kRows)) return false;
     for (int i = 0; i < kRows; ++i) {
-        void* item = reinterpret_cast<Alloc>(kAlloc)(0x24, 0x1E);
+        // 0x68 = choice-item size: SetOptionRow's option list (0x4E5090) writes up to +0x48
+        void* item = reinterpret_cast<Alloc>(kAlloc)(0x68, 0x1E);
         if (item) reinterpret_cast<void*(__thiscall*)(void*)>(kItemCtor)(item);
         reinterpret_cast<void(__thiscall*)(void*, void*)>(kListAddToPool)(list, item);
     }
@@ -151,7 +160,7 @@ void __fastcall Setup(void* screen, void*) {
     using Callbacks = void(__thiscall*)(void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, int, int, int, int, int);
     reinterpret_cast<Callbacks>(kListCallbacks)(list, 0x478440, 0x478480, 0x478530, 0x4785E0, 0x478690, 0, 0, 0, 0, 0);
     At<void*>(list, 0x90) = screen;
-    for (int r = kRoutes; r <= kWire; ++r)
+    for (int r = kRoutes; r <= kDebugKeysRow; ++r)
         SetOptionRow(ItemAt(list, r), static_cast<uint16_t>(kFirstId + r), kTextRoutes + r, kYesNo, 2, Value(r));
     SetOptionRow(ItemAt(list, kTime), kFirstId + kTime, kTextTime, kTimeTexts, 5, Value(kTime));
     SetButtonRow(ItemAt(list, kComplete), kFirstId + kComplete, kTextComplete);
@@ -204,13 +213,30 @@ void Build() {
     g_built = Create(g_screen, nullptr);
     dslog::Write(g_built ? "Developer: screen built" : "[fail] Developer: screen not built");
 }
+
+int __cdecl DebugKeysFlag(int letter) {
+    return g_debugKeys || reinterpret_cast<int(__cdecl*)(int)>(kStartFlag)(letter);
+}
 }  // namespace
 
+void features::ApplyDebugKeys() {
+    static bool done = false;
+    if (done || !features::CheatsEnabled()) return;
+    done = true;
+    if (patch::ApplyGroup("Developer: debug key bindings", gen::kDebugKeys) &&
+        patch::HookCall(kDispatchFlagCall, reinterpret_cast<const void*>(&DebugKeysFlag), kStartFlag))
+        dslog::Write("[ok]   Developer: debug keys available (CHEATS > DEVELOPER > DEBUG KEYS)");
+    else
+        dslog::Write("[fail] Developer: debug keys not available (unexpected game code)");
+}
+
 void* features::DeveloperScreen() {
+    if (!features::CheatsEnabled()) return nullptr;   // FeatCheats off: no DEVELOPER page (state 0x46 unknown)
     if (!g_built && Global<void*>(kMainMenuScreen)) Build();
     return g_built ? g_screen : nullptr;
 }
 
 const char* features::DeveloperText(uint32_t hash) {
+    if (!features::CheatsEnabled()) return nullptr;
     return hash >= kTextTitle && hash < kTextEnd ? kTexts[hash - kTextTitle] : nullptr;
 }

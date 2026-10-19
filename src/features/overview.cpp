@@ -14,6 +14,8 @@
 //   per script). MovieEnd's message 0x12 is held back meanwhile (`push 0x12; call [ecx+8]` at 0x486FDE -> our stub),
 //   and the hour the builder's SetTOD calls change is put back afterwards. Esc / Enter / Cross / Circle skip it: the
 //   queue is cleared and the end chain's calls are made here.
+// Part of the loadout feature (settings featLoadout, taken when a level starts like customise.cpp): off = the overview
+// plays after the game's briefing as shipped (no automatic skip; the replay only exists on the screen).
 #include <windows.h>
 
 #include <cstdint>
@@ -21,12 +23,14 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
 
 namespace {
 constexpr uint32_t kApi = 0x5ED238;   // script API table (cdecl functions)
 constexpr uint32_t kMovieStart = 0x486A00, kSoundManager = 0x63C9AC, kStopStream = 0x55F820;
 constexpr uint32_t kLevelName = 0x606880, kFrontEndState = 0x617C18, kGameState = 0x63C948, kHideFlag = 0x617DCC;
+constexpr uint32_t kScriptModule = 0x60F57C;  // HMODULE of the level's script DLL (FUN_00449260)
 constexpr uint32_t kEnvironment = 0x63C948, kAtmosphere = 0x1A58;
 constexpr uint32_t kMessage12 = 0x486FDE;   // push 0x12; call [ecx+8]  (5 bytes)
 constexpr uint8_t kMessage12Bytes[] = {0x6A, 0x12, 0xFF, 0x51, 0x08};
@@ -34,6 +38,7 @@ constexpr uint8_t kMessage12Bytes[] = {0x6A, 0x12, 0xFF, 0x51, 0x08};
 char g_level[32] = {};
 uint32_t g_builder = 0;      // the loaded script's overview builder (0 = none / not found)
 bool g_searched = false;
+bool g_on = true;            // settings featLoadout when the level started
 bool g_briefingSeen = false, g_skipPending = false, g_skipSawMovie = false;
 DWORD g_skipSince = 0;
 bool g_playing = false;
@@ -77,6 +82,11 @@ uint32_t FindBuilder() {
     if (char* dot = strchr(name, '.')) *dot = 0;
     strcat_s(name, ".dll");
     auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleA(name));
+    if (!base) {   // a mod's mission DLL under another name (MyOp.dll on Mission6.env): the script module the game loaded
+        const HMODULE loaded = *reinterpret_cast<HMODULE*>(kScriptModule);
+        char path[MAX_PATH];
+        if (loaded && GetModuleFileNameA(loaded, path, MAX_PATH)) base = reinterpret_cast<uint8_t*>(loaded);
+    }
     if (!base) return 0;
     auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS32*>(base + dos->e_lfanew);
@@ -177,14 +187,10 @@ void features::StartOverview() {
 }
 
 void features::ApplyOverview() {
-    if (!patch::Matches(kMessage12, kMessage12Bytes, sizeof kMessage12Bytes)) {
+    // `call Message12Stub` over `push 0x12; call [ecx+8]` (the stub does both): a call@ code group.
+    if (!patch::WriteCall(kMessage12, reinterpret_cast<const void*>(&Message12Stub), sizeof kMessage12Bytes,
+                          kMessage12Bytes))
         dslog::Write("[fail] Overview: MovieEnd message at 0x%08X not recognised - no replay", kMessage12);
-        return;
-    }
-    uint8_t call[5] = {0xE8};
-    const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&Message12Stub) - (kMessage12 + 5));
-    memcpy(call + 1, &rel, 4);
-    patch::Write(kMessage12, call, sizeof call);
 }
 
 void features::OnFrameOverview() {
@@ -194,8 +200,9 @@ void features::OnFrameOverview() {
         g_builder = 0, g_searched = false;
         g_briefingSeen = g_skipPending = g_skipSawMovie = false;
         g_playing = false, g_hold12 = 0;
+        g_on = settings::Get().featLoadout;
     }
-    if (!MissionLevel()) return;
+    if (!MissionLevel() || !g_on) return;
     const uint32_t state = *reinterpret_cast<uint32_t*>(kFrontEndState);
     // the automatic overview: skipped from the moment the briefing closes until it has started and ended
     if (state == 0x14) g_briefingSeen = true;

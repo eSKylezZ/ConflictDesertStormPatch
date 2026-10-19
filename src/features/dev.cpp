@@ -14,11 +14,13 @@
 #include <intrin.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
 #include "features/features.h"
 
 #ifndef DS_DIST
@@ -99,6 +101,8 @@ void __cdecl TextProbe(uint32_t caller, const uint8_t* font, const char* text, i
                  sheet ? *reinterpret_cast<const float*>(sheet + 0x24) : 0.0f, x, y, text ? text : "(null)");
 }
 
+void* g_textDrawNext = nullptr;  // entry hook chain (patch::HookFunction)
+
 __declspec(naked) void TextDrawStub() {
     __asm {
         pushad
@@ -110,14 +114,82 @@ __declspec(naked) void TextDrawStub() {
         call TextProbe
         add esp, 20
         popad
-        mov eax, dword ptr ds:[0x5FCCAC]
-        push kTextDrawCont
-        ret
+        jmp dword ptr [g_textDrawNext]
     }
 }
 
+// GoreLog (DWORD 1): logs the gore calls - blood pool FUN_0041b200 (from 0x41B104), large blood pool FUN_0041b310
+// (0x42BFF7, death), body to gibs FUN_00418c80 (0x42BF60, death), single giblet FUN_00418930 (0x43F4C1, 0x4A4462).
+const char* const kGoreNames[] = {"blood pool", "large blood pool", "gibs", "giblet (hit)", "giblet (weapon)"};
+int g_goreCount[5];
+
+void __cdecl GoreNote(int which) {
+    if (++g_goreCount[which] <= 5 || g_goreCount[which] % 25 == 0)
+        dslog::Write("[dev]  gore: %s #%d", kGoreNames[which], g_goreCount[which]);
+}
+
+#define GORE_STUB(name, index, target)          \
+    __declspec(naked) void name() {             \
+        __asm pushad                            \
+        __asm push index                        \
+        __asm call GoreNote                     \
+        __asm add esp, 4                        \
+        __asm popad                             \
+        __asm push target                       \
+        __asm ret                               \
+    }
+GORE_STUB(GorePool, 0, 0x41B200)
+GORE_STUB(GoreLargePool, 1, 0x41B310)
+GORE_STUB(GoreGibs, 2, 0x418C80)
+GORE_STUB(GoreGiblet1, 3, 0x418930)
+GORE_STUB(GoreGiblet2, 4, 0x418930)
+#undef GORE_STUB
+
+void ApplyGoreLog() {
+    const bool ok = patch::HookCall(0x41B104, &GorePool, 0x41B200) && patch::HookCall(0x42BFF7, &GoreLargePool, 0x41B310) &&
+                    patch::HookCall(0x42BF60, &GoreGibs, 0x418C80) && patch::HookCall(0x43F4C1, &GoreGiblet1, 0x418930) &&
+                    patch::HookCall(0x4A4462, &GoreGiblet2, 0x418930);
+    dslog::Write(ok ? "[dev]  gore logging on" : "[dev]  gore logging: a call site didn't match");
+}
+
+// GlobalFocusAudio (DWORD 1): the game's sound buffers are created with DSBCAPS_GLOBALFOCUS, so the game is audible
+// while its window isn't in front (background tests normally run silent: DirectSound mutes a non-focus buffer when its
+// window loses focus) - for recordings (tools/hover/showcase_record.py). DirectSoundCreate8 import slot 0x5D8030 ->
+// wrapper; the device's CreateSoundBuffer (vtable 3, DSBUFFERDESC dwFlags at +4) ORs in 0x8000.
+using DsCreate8 = HRESULT(WINAPI*)(const GUID*, void**, void*);
+using DsCreateBuffer = HRESULT(__stdcall*)(void*, uint32_t*, void**, void*);
+DsCreate8 g_realDsCreate = nullptr;
+DsCreateBuffer g_realCreateBuffer = nullptr;
+
+HRESULT __stdcall GlobalFocusBuffer(void* ds, uint32_t* desc, void** out, void* outer) {
+    if (desc && !(desc[1] & 1)) desc[1] |= 0x8000;   // DSBCAPS_GLOBALFOCUS - not on the primary buffer (DSBCAPS_PRIMARYBUFFER 1:
+                                                     // invalid there, the sound manager failed and the game quit)
+    return g_realCreateBuffer(ds, desc, out, outer);
+}
+
+HRESULT WINAPI GlobalFocusCreate(const GUID* guid, void** out, void* outer) {
+    const HRESULT hr = g_realDsCreate(guid, out, outer);
+    if (SUCCEEDED(hr) && out && *out && !g_realCreateBuffer) {
+        void** vtbl = *reinterpret_cast<void***>(*out);
+        // A pointer hook on the device's vtable slot (g_realCreateBuffer = its next), owned by the dev plugin.
+        patch::OwnerScope owner(pse_host::Find("dsfix.dev"));
+        patch::HookSlot(reinterpret_cast<uint32_t>(&vtbl[3]), reinterpret_cast<const void*>(&GlobalFocusBuffer),
+                        reinterpret_cast<void**>(&g_realCreateBuffer));
+        dslog::Write("[dev]  sound buffers get global focus (audible in the background)");
+    }
+    return hr;
+}
+
+void ApplyGlobalFocus() {
+    // DirectSoundCreate8 IAT slot: a pointer hook (g_realDsCreate = its next).
+    patch::HookSlot(0x5D8030, reinterpret_cast<const void*>(&GlobalFocusCreate), reinterpret_cast<void**>(&g_realDsCreate));
+}
+
 void ApplyDtClamp() {
-    if (DevDword("TextProbe", 0)) patch::WriteJump(kTextDraw, reinterpret_cast<const void*>(&TextDrawStub));
+    if (DevDword("GlobalFocusAudio", 0)) ApplyGlobalFocus();
+    if (DevDword("GoreLog", 0)) ApplyGoreLog();
+    if (DevDword("TextProbe", 0))
+        patch::HookFunction(kTextDraw, reinterpret_cast<const void*>(&TextDrawStub), &g_textDrawNext);
     if (DevDword("MoverLog", 0))
         for (uint32_t site : kMoverCalls) patch::HookCall(site, &LoggedMover, kMover);
     const DWORD lo = DevDword("DtClampLo", 0), hi = std::min<DWORD>(DevDword("DtClampHi", 0), std::size(kDtSites));
@@ -230,7 +302,7 @@ void features::ApplyDevHooks() {
     }
     if (g_playLog) {
         static const uint8_t entry[] = {0x8B, 0x44, 0x24, 0x04, 0xC7, 0x81, 0xD8, 0x00, 0x00, 0x00};
-        if (patch::Matches(0x4BA4E0, entry, sizeof entry)) patch::WriteJump(0x4BA4E0, reinterpret_cast<const void*>(&SetTimeScale));
+        patch::HookFunction(0x4BA4E0, reinterpret_cast<const void*>(&SetTimeScale), nullptr, entry, sizeof entry);
         dslog::Write("[dev]  play-test logging on");
     }
     // BuildOctree (DWORD 1): level init takes the start-up flag 'c' branch at 0x40C633 – FUN_004e3560(level, 1)
@@ -358,7 +430,8 @@ bool features::DevBackground() { return g_background; }
 // Background mode: no sound - the game's own audio session (DirectSound, the movie .wavs through PlaySound) is muted in
 // the Windows mixer, so the PC's other sound is untouched. Re-applied every second on a worker thread: the session is
 // the process's default one, which exists before the game opens its first stream (and the mute sticks to it).
-DWORD WINAPI MuteThread(void*) {
+DWORD WINAPI MuteThread(void* unmute) {   // unmute != null: Dev\BackgroundSound - the opposite (Windows remembers
+                                           // the per-app mute of earlier background runs)
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     bool logged = false;
     for (;;) {
@@ -374,8 +447,8 @@ DWORD WINAPI MuteThread(void*) {
                     if (SUCCEEDED(mgr->GetSimpleAudioVolume(nullptr, FALSE, &vol))) {
                         BOOL muted = FALSE;
                         vol->GetMute(&muted);
-                        if (!muted) vol->SetMute(TRUE, nullptr);
-                        if (!logged) dslog::Write("[dev]  background mode: game audio muted");
+                        if (!muted != !unmute) vol->SetMute(unmute ? FALSE : TRUE, nullptr);
+                        if (!logged) dslog::Write(unmute ? "[dev]  background mode: game audio unmuted" : "[dev]  background mode: game audio muted");
                         logged = true;
                         vol->Release();
                     }
@@ -399,7 +472,11 @@ bool features::GameFocused() {
 }
 
 bool features::KeyHeld(int vk) {
-    if (GetForegroundWindow() == *reinterpret_cast<HWND*>(0x606A60) && (GetAsyncKeyState(vk) & 0x8000)) return true;
+    if (features::ConsoleOpen()) return false;   // typing in the developer console
+    if (features::UiKeyboardCaptured()) return false;   // a plugin has the keyboard (pse.ui)
+    // In front: the real keyboard only. The game's key table (below) can keep a key "held" after the press that ended
+    // one of its screens (PRESS ANY KEY / briefing) - the loadout screen then missed the next Enter.
+    if (GetForegroundWindow() == *reinterpret_cast<HWND*>(0x606A60)) return (GetAsyncKeyState(vk) & 0x8000) != 0;
     // The table is indexed by DirectInput codes: extended keys (arrows ...) are scan | 0x80 there (a window message
     // with the extended flag lands at 0x100 + scan - checked too).
     const UINT scan = MapVirtualKeyA(static_cast<UINT>(vk), MAPVK_VK_TO_VSC);
@@ -427,17 +504,141 @@ void features::ApplyDevBackground() {
     patch::HookIndirectCall(0x44B4E1, reinterpret_cast<const void*>(&NoSetCursorPos), 0x5D8268);  // mounted gun re-centre
     patch::HookIndirectCall(0x538363, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
     patch::HookIndirectCall(0x55E08A, reinterpret_cast<const void*>(&NoSetCapture), 0x5D8214);
-    CloseHandle(CreateThread(nullptr, 0, MuteThread, nullptr, 0, nullptr));
-    dslog::Write("[dev]  running in the background (no pause without focus, no cursor clip / move / capture, muted, "
-                 "windows off-screen and never activated)");
+    const bool sound = DevDword("BackgroundSound", 0) != 0;   // recordings (tools/hover/showcase_record.py) keep the sound
+    CloseHandle(CreateThread(nullptr, 0, MuteThread, sound ? reinterpret_cast<void*>(1) : nullptr, 0, nullptr));
+    dslog::Write("[dev]  running in the background (no pause without focus, no cursor clip / move / capture, %s, "
+                 "windows off-screen and never activated)", sound ? "sound on (Dev\\BackgroundSound)" : "muted");
 #endif
 }
 
 // Dev: F9 in a mission shows a test message in the pop-up bar (FUN_004d33a0 on the view controller [0x63c98c]: text,
 // duration ms) - the bar used for picked-up items and warnings.
+#ifndef DS_DIST
+namespace {
+// GoreKill (DWORD seconds): after that much plain play in a mission, take the 6 nearest soldiers of other teams, put
+// them in a row 4.5-7.5 m in front (to the left) of player 1's camera (the game's teleport FUN_0049ce70, as the panic teleport), and
+// 1.5 s later kill them - alternately with the debug command's call (vtable +0x3C TakeDamage(10 x health, no
+// attacker), as "Kill the selected Grunt" 0x444D80) and as an explosion (vtable +0x10 = 0x42BE40: gibs + large blood
+// pool). With GoreLog, a scripted check (and screenshots) of the death gore.
+void GoreKillTick() {
+    static DWORD seconds = DevDword("GoreKill", 0), playStart = 0, placedAt = 0;
+    static const bool byPlayer = DevDword("GoreKiller", 0) != 0;   // plain kills credited to player 1's soldier
+    static const void* doneFor = nullptr;
+    static uint8_t* victims[6];
+    static int count = 0;
+    if (!seconds) return;
+    const auto* world = *reinterpret_cast<const uint8_t* const*>(0x63C948);
+    auto* mgr = *reinterpret_cast<uint8_t* const*>(0x63C9A0);
+    auto* player = *reinterpret_cast<uint8_t* const*>(0x60F5B8 + 0x310);
+    if (*reinterpret_cast<uint32_t*>(0x617C18) != 0xE || *reinterpret_cast<uint32_t*>(0x60EC8C) != 0 || !world ||
+        (world[0x1B8C] & 1) || !mgr || !player || features::CustomiseOpen()) {
+        playStart = 0;
+        return;
+    }
+    if (placedAt) {   // phase 2: kill
+        if (GetTickCount() - placedAt < 1500) return;
+        placedAt = 0;
+        for (int i = 0; i < count; ++i) {
+            uint8_t* s = victims[i];
+            if (*reinterpret_cast<float*>(s + 0x54) <= 0) continue;
+            const float damage = *reinterpret_cast<float*>(s + 0x54) * 10.0f;
+            void** vtable = *reinterpret_cast<void***>(s);
+            if (i & 1)
+                reinterpret_cast<int(__thiscall*)(void*, float, float*, void*)>(vtable[0x10 / 4])(
+                    s, damage, reinterpret_cast<float*>(s + 0x30), nullptr);
+            else
+                reinterpret_cast<void(__thiscall*)(void*, float, void*)>(vtable[0x3C / 4])(s, damage, byPlayer ? player : nullptr);
+            dslog::Write("[dev]  GoreKill: killed soldier %p, %s damage %.0f", s, i & 1 ? "explosion" : "plain", damage);
+        }
+        return;
+    }
+    if (!playStart) playStart = GetTickCount();
+    if (doneFor == world || GetTickCount() - playStart < seconds * 1000) return;
+    doneFor = world;
+    // phase 1: pick and place
+    const uint8_t squad = *reinterpret_cast<const uint8_t*>(0x5F9B94);
+    auto lists = *reinterpret_cast<uintptr_t* const*>(mgr + 4);
+    const float* p = reinterpret_cast<const float*>(player + 0x30);
+    struct Victim { uint8_t* s; float d; } found[64];
+    int n = 0;
+    for (int team = 0; team < mgr[0x10] && lists; ++team) {
+        if (team == squad) continue;
+        for (uintptr_t s = lists[team * mgr[0x11] + 1]; s && n < 64; s = *reinterpret_cast<uintptr_t*>(s + 0x14)) {
+            auto* soldier = reinterpret_cast<uint8_t*>(s);
+            if (*reinterpret_cast<float*>(soldier + 0x54) <= 0 || *reinterpret_cast<void**>(soldier + 0x267C)) continue;
+            const float* q = reinterpret_cast<const float*>(soldier + 0x30);
+            const float dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
+            found[n++] = {soldier, dx * dx + dy * dy + dz * dz};
+        }
+    }
+    std::sort(found, found + n, [](const Victim& a, const Victim& b) { return a.d < b.d; });
+    // forward = from view 0's camera eye towards player 1 (x/z), camera manager [0x63C9D8]: id +0xEC0C, cameras +8 x 0x1D8
+    float fx = 0, fz = 1;
+    if (const uint8_t* cams = *reinterpret_cast<const uint8_t* const*>(0x63C9D8)) {
+        const int id = *reinterpret_cast<const int*>(cams + 0xEC0C);
+        const float* eye = reinterpret_cast<const float*>(cams + 8 + id * 0x1D8 + 0x68);
+        const float ex = p[0] - eye[0], ez = p[2] - eye[2], len = std::sqrt(ex * ex + ez * ez);
+        if (len > 1.0f) fx = ex / len, fz = ez / len;
+    }
+    count = 0;
+    for (int i = 0; i < n && i < 6; ++i) {
+        const float along = 450.0f + i * 60.0f, side = -(120.0f + i * 90.0f);   // a row to the left, 4.5-7.5 m out
+        float pos[3] = {p[0] + fx * along + fz * side, p[1] + 100.0f, p[2] + fz * along - fx * side};
+        reinterpret_cast<void(__thiscall*)(void*, float*, int, int, float, int)>(0x49CE70)(found[i].s, pos, 1, 0, 0.0f, 0);
+        victims[count++] = found[i].s;
+        dslog::Write("[dev]  GoreKill: soldier %p moved from %.0f m to %.1f m in front", found[i].s,
+                     std::sqrt(found[i].d) / 100.0f, along / 100.0f);
+    }
+    placedAt = GetTickCount();
+}
+// KillSquadmate (DWORD seconds): after that much plain play in a mission, the nearest living squad soldier other than
+// player 1's (within 20 m) is killed through TakeDamage (vtable +0x3C) - the "man down" speech check runs for him.
+void KillSquadmateTick() {
+    static DWORD seconds = DevDword("KillSquadmate", 0), playStart = 0;
+    static const void* doneFor = nullptr;
+    if (!seconds) return;
+    const auto* world = *reinterpret_cast<const uint8_t* const*>(0x63C948);
+    auto* mgr = *reinterpret_cast<uint8_t* const*>(0x63C9A0);
+    auto* player = *reinterpret_cast<uint8_t* const*>(0x60F5B8 + 0x310);
+    if (*reinterpret_cast<uint32_t*>(0x617C18) != 0xE || *reinterpret_cast<uint32_t*>(0x60EC8C) != 0 || !world ||
+        (world[0x1B8C] & 1) || !mgr || !player || features::CustomiseOpen()) {
+        playStart = 0;
+        return;
+    }
+    if (!playStart) playStart = GetTickCount();
+    if (doneFor == world || GetTickCount() - playStart < seconds * 1000) return;
+    doneFor = world;
+    const uint8_t squad = *reinterpret_cast<const uint8_t*>(0x5F9B94);
+    auto lists = *reinterpret_cast<uintptr_t* const*>(mgr + 4);
+    const float* p = reinterpret_cast<const float*>(player + 0x30);
+    uint8_t* best = nullptr;
+    float bestD = 2000.0f * 2000.0f;
+    for (uintptr_t s = lists ? lists[squad * mgr[0x11] + 1] : 0; s; s = *reinterpret_cast<uintptr_t*>(s + 0x14)) {
+        auto* soldier = reinterpret_cast<uint8_t*>(s);
+        if (soldier == player || *reinterpret_cast<float*>(soldier + 0x54) <= 0 ||
+            *reinterpret_cast<void**>(soldier + 0x267C))
+            continue;
+        const float* q = reinterpret_cast<const float*>(soldier + 0x30);
+        const float dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2], d = dx * dx + dy * dy + dz * dz;
+        if (d < bestD) best = soldier, bestD = d;
+    }
+    if (!best) {
+        dslog::Write("[dev]  KillSquadmate: no squad soldier within 20 m");
+        return;
+    }
+    void** vtable = *reinterpret_cast<void***>(best);
+    reinterpret_cast<void(__thiscall*)(void*, float, void*)>(vtable[0x3C / 4])(
+        best, *reinterpret_cast<float*>(best + 0x54) * 10.0f, nullptr);
+    dslog::Write("[dev]  KillSquadmate: killed squad soldier %p, %.1f m away", best, std::sqrt(bestD) / 100.0f);
+}
+}  // namespace
+#endif
+
 void features::OnFrameDev() {
 #ifndef DS_DIST
     WatchTick();
+    GoreKillTick();
+    KillSquadmateTick();
     RouteProbeTick();
     if (g_playLog) WatchPlayers();
     {
@@ -446,6 +647,22 @@ void features::OnFrameDev() {
         if (v != last) {
             dslog::Write("[dev]  mouse acceleration global = %u (front-end state 0x%X)", v, *reinterpret_cast<uint32_t*>(0x617C18));
             last = v;
+        }
+    }
+    {   // Dev\SetAimMode = mode + 1 (1 player, 2 aim): player 1's block control mode once (FUN_004500b0), then cleared
+        static DWORD checked = 0;
+        if (GetTickCount() - checked > 250) {
+            checked = GetTickCount();
+            DWORD v = 0, size = sizeof v;
+            if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "SetAimMode", RRF_RT_REG_DWORD, nullptr, &v,
+                             &size) == ERROR_SUCCESS && v) {
+                RegSetKeyValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "SetAimMode", REG_DWORD, "\0\0\0\0", 4);
+                auto* block = reinterpret_cast<uint8_t*>(0x60F5B8);
+                if (*reinterpret_cast<void**>(block + 0x310))
+                    reinterpret_cast<void(__thiscall*)(void*, int)>(0x4500B0)(block, static_cast<int>(v) - 1);
+                dslog::Write("[dev] SetAimMode: player 1 mode %d -> now %d", static_cast<int>(v) - 1,
+                             *reinterpret_cast<int*>(block + 0x318));
+            }
         }
     }
     static bool down = false;

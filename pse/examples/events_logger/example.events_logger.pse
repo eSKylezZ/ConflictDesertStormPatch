@@ -1,0 +1,3 @@
+# example.events_logger - logs the game layer's core events / messages and keeps a co-save chunk
+# (docs/sdk/reference/messaging.md). Needs only the game layer, not DesertStormFix.
+name = example.events_logger

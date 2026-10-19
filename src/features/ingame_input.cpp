@@ -349,9 +349,14 @@ const char* __fastcall Lookup(void* table, void* /*edx*/, uint32_t hash) {
     if (const char* own = features::ScriptText(hash)) return own;
     if (const char* own = features::ModsMenuText(hash)) return own;
     if (const char* own = features::CoopText(hash)) return own;
+    if (const char* own = features::DifficultyText(hash)) return own;
     if (const char* own = features::ControlsText(hash)) return own;
     if (const char* own = features::CheatsText(hash)) return own;
     if (const char* own = features::DeveloperText(hash)) return own;
+    if (const char* own = features::FixMenuText(hash)) return own;
+    if (const char* own = features::VideoMenuText(hash)) return own;
+    if (const char* own = features::OnlineText(hash)) return own;
+    if (const char* own = features::PhotoText(hash)) return own;
     if (const char* own = features::ModText(hash)) return own;
     const char* text = GameLookup(table, hash);
     if (!text) return text;
@@ -467,11 +472,10 @@ void features::ApplyInGameInput() {
         dslog::Write("[fail] In-game pad prompts / cursor: unexpected bytes - different exe version?");
         return;
     }
-    uint8_t call[5] = {0xE8};
-    int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&CursorFlag) - (kCursorFlagSite + 5));
-    memcpy(call + 1, &rel, 4);
-    patch::Write(kCursorFlagSite, call, sizeof call);
-    patch::WriteJump(kLookup, reinterpret_cast<const void*>(&Lookup));
+    // `call CursorFlag` over `mov eax, [0x5e6cb4]` (a call@ code group); the string lookup is replaced by Lookup (an
+    // entry hook that never runs the original - Lookup is a faithful copy).
+    patch::WriteCall(kCursorFlagSite, reinterpret_cast<const void*>(&CursorFlag), sizeof cursorSite, cursorSite);
+    patch::HookFunction(kLookup, reinterpret_cast<const void*>(&Lookup), nullptr, lookupHead, sizeof lookupHead);
     if (overlay::Install()) {
         patch::HookCall(kTutorialBindingCall, reinterpret_cast<const void*>(&BindingName), kBindingName);
         static const uint8_t listCheck[] = {0xC1, 0xE8, 0x10, 0x83, 0xF8, 0x01, 0x74, 0x05, 0x83, 0xF8, 0x02,

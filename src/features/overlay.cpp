@@ -30,6 +30,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
 #include "features/features.h"
 
 namespace {
@@ -113,7 +114,7 @@ bool CreateTextures(void* dev) {
 
 // ---- icon glyphs ----
 constexpr uint32_t kSmallFont = 0x60EDB4, kLargeFont = 0x60EDB8;
-constexpr uint32_t kImageDraw = 0x53C9E0, kImageDrawCont = 0x53C9E6;  // entry: sub esp, 0x94 (6 bytes)
+constexpr uint32_t kImageDraw = 0x53C9E0;  // entry: sub esp, 0x94 (6 bytes)
 constexpr uint32_t kAllocArray = 0x4B8450;  // cdecl (size, tag) - what the sheet loader uses for these arrays
 constexpr uint8_t kCodes[] = {1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28,
                               29, 30, 31};
@@ -206,6 +207,7 @@ void __cdecl DrawIconGlyph(const uint8_t* sheet, uint32_t image, int x, int y) {
 const void* g_drawSheet = nullptr;  // the image being drawn (for the page texture bind inside the draw)
 int g_drawImage = -1;
 void* g_imageProbe = nullptr;  // dev: stdcall(caller, sheet, image, x, y) for every image draw (splitscreen.cpp probe)
+void* g_imageDrawNext = nullptr;  // entry hook chain (patch::HookFunction): next subscriber / broker trampoline
 
 __declspec(naked) void ImageDrawStub() {
     __asm {
@@ -237,9 +239,7 @@ __declspec(naked) void ImageDrawStub() {
         mov eax, [esp + 4]
         mov g_drawImage, eax
         mov g_drawSheet, ecx
-        sub esp, 0x94
-        push kImageDrawCont
-        ret
+        jmp dword ptr [g_imageDrawNext]
     }
 }
 }  // namespace
@@ -247,16 +247,15 @@ __declspec(naked) void ImageDrawStub() {
 void overlay::SetImageProbe(void* probe) { g_imageProbe = probe; }
 
 bool overlay::Install() {
+    patch::OwnerScope owner(pse_host::Find("dsfix.overlay"));  // lazy hooks: owned by this feature's PSE plugin
     static const uint8_t entry[] = {0x81, 0xEC, 0x94, 0x00, 0x00, 0x00};
     static bool done = false;
     if (done) return true;
-    if (!patch::Matches(kImageDraw, entry, sizeof entry)) {
-        dslog::Write("[fail] Overlay: unexpected image draw code - icons in text disabled");
-        return false;
-    }
-    const uint8_t nop = 0x90;
-    done = patch::WriteJump(kImageDraw, reinterpret_cast<const void*>(&ImageDrawStub)) &&
-           patch::Write(kImageDraw + 5, &nop, 1);
+    // Entry hook at priority 100: runs before other subscribers (splitscreen.cpp's dev HUD probe), so they don't see
+    // our icon glyphs. The broker checks the original entry bytes (also when the probe hooked it first).
+    done = patch::HookFunction(kImageDraw, reinterpret_cast<const void*>(&ImageDrawStub), &g_imageDrawNext, entry,
+                               sizeof entry, 0, 100);
+    if (!done) dslog::Write("[fail] Overlay: unexpected image draw code - icons in text disabled");
     return done;
 }
 
@@ -486,6 +485,17 @@ void* overlay::LoadTextureFile(const char* path, int& w, int& h, int& texW, int&
     return tex;
 }
 
+void* overlay::LoadTextureBytes(const void* bytes, size_t size, int& w, int& h, int& texW, int& texH, const char* what) {
+    w = h = texW = texH = 0;
+    UINT iw = 0, ih = 0;
+    void* tex = TextureFromImage(bytes, size, 0, 0, iw, ih, what ? what : "(memory)");
+    if (!tex) return nullptr;
+    w = static_cast<int>(iw), h = static_cast<int>(ih);
+    for (texW = 1; texW < w; texW *= 2) {}
+    for (texH = 1; texH < h; texH *= 2) {}
+    return tex;
+}
+
 void* overlay::CurrentDevice() { return *reinterpret_cast<void**>(0x755050); }
 
 void* overlay::CreateTexture(int texW, int texH) {
@@ -587,7 +597,8 @@ private:
 
 namespace {
 overlay::LateDraw g_lateDraw = nullptr;
-overlay::LateDraw g_lateDraws[4] = {};  // AddLateDraw: drawn every frame after g_lateDraw
+overlay::LateDraw g_lateDraws[8] = {};  // AddLateDraw: drawn every frame after g_lateDraw
+overlay::LateDraw g_topDraw = nullptr;   // SetTopDraw: after everything (developer console)
 
 void DrawQueue(void* dev) {
     if (g_queue.empty()) return;
@@ -612,6 +623,7 @@ void DrawQueue(void* dev) {
 }  // namespace
 
 void overlay::SetLateDraw(LateDraw fn) { g_lateDraw = fn; }
+void overlay::SetTopDraw(LateDraw fn) { g_topDraw = fn; }
 
 void overlay::AddLateDraw(LateDraw fn) {
     for (LateDraw& slot : g_lateDraws)
@@ -625,7 +637,14 @@ void overlay::AddLateDraw(LateDraw fn) {
 
 // Queued shapes first; then the late draw (text with the game's own font code, drawn right away on top), then what
 // that text queued (icon glyphs inside it).
+static void* g_renderDevice = nullptr;   // the device Render draws on (Flush during a late draw)
+
+void overlay::Flush() {
+    if (g_renderDevice) DrawQueue(g_renderDevice);
+}
+
 void overlay::Render(void* dev) {
+    g_renderDevice = dev;
     DrawQueue(dev);
     if (g_lateDraw) {
         g_lateDraw();
@@ -636,6 +655,10 @@ void overlay::Render(void* dev) {
             fn();
             DrawQueue(dev);
         }
+    if (g_topDraw) {
+        g_topDraw();
+        DrawQueue(dev);
+    }
 }
 
 void overlay::FillRects(const float (*rects)[4], int count, uint32_t argb) {

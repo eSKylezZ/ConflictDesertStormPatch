@@ -1,0 +1,3 @@
+# example.ui_demo - pse.ui + automatic settings pages (docs/sdk/reference/ui.md).
+# pse.ui is served by DesertStormFix; without it the plugin loads and only draws nothing - so no "requires".
+name = example.ui_demo

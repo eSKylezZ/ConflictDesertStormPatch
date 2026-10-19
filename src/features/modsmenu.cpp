@@ -367,6 +367,20 @@ void __fastcall MainMenuDraw(void* screen, void*) {
     const float k = sheet ? *reinterpret_cast<const float*>(sheet + 0x24) : 1.0f;
     char line1[64], line2[128];
     snprintf(line1, sizeof line1, "DESERTSTORMFIX %s INSTALLED", DS_VERSION);
+    const int left = static_cast<int>(50.0f * k), lineH = static_cast<int>(16.0f * k);  // bottom left, under the prompt
+    const int y2 = static_cast<int>(H * 0.972f), y1 = y2 - lineH;  // below the menu panel
+    // without the 4 GB flag (DesertStormFix-Patcher.exe) the game has 2 GB of address space - big mods can run out;
+    // bottom right (the prompt line sits above the left-hand lines)
+    if (!features::LargeAddressAware()) {
+        const int W = *reinterpret_cast<const int*>(r + 0x40688);
+        const char* const a = "2 GB MEMORY MODE", * const b = "RUN DESERTSTORMFIX-PATCHER.EXE FOR 4 GB";
+        overlay::DrawLabel(font, a, W - left - overlay::TextWidth(font, a), y1, 0xFFE09040);
+        overlay::DrawLabel(font, b, W - left - overlay::TextWidth(font, b), y2, 0xFFC8C8C8);
+    }
+    if (!features::ModsFolderEnabled()) {   // FeatMods off: only the version line (in the mod line's place)
+        overlay::DrawLabel(font, line1, left, y2, 0xFFE0D878);
+        return;
+    }
     const int installed = InstalledMods(), active = features::ModCount(), problems = features::ModProblems();
     // problems: "[fail]" lines in Mods\DesertStormFix-report.txt (release builds have no other log)
     if (problems > 0)
@@ -374,8 +388,6 @@ void __fastcall MainMenuDraw(void* screen, void*) {
                  installed, installed == 1 ? "" : "S", active, problems, problems == 1 ? "" : "S");
     else
         snprintf(line2, sizeof line2, "%d MOD%s INSTALLED (%d ACTIVE)", installed, installed == 1 ? "" : "S", active);
-    const int left = static_cast<int>(50.0f * k), lineH = static_cast<int>(16.0f * k);  // bottom left, under the prompt
-    const int y2 = static_cast<int>(H * 0.972f), y1 = y2 - lineH;  // below the menu panel
     overlay::DrawLabel(font, line1, left, y1, 0xFFE0D878);
     overlay::DrawLabel(font, line2, left, y2, 0xFFC8C8C8);
 }
@@ -394,7 +406,7 @@ void Build() {
 }
 }  // namespace
 
-void* features::ModsMenuScreen() { return g_built ? g_screen : nullptr; }
+void* features::ModsMenuScreen() { return g_built && features::ModsFolderEnabled() ? g_screen : nullptr; }
 
 uint32_t features::ModsMenuItemText() { return kTextItem; }
 
@@ -421,14 +433,17 @@ const char* features::ModsMenuText(uint32_t hash) {
 
 void features::ApplyModsMenu() {
     if (g_mainMenuDraw) return;
-    g_mainMenuDraw = *reinterpret_cast<DrawFn*>(kMainMenuDrawSlot);
-    const uint32_t ours = reinterpret_cast<uint32_t>(&MainMenuDraw);
-    if (!patch::WriteValue(kMainMenuDrawSlot, ours)) g_mainMenuDraw = nullptr;
+    // Pointer hook on the main menu's draw slot; g_mainMenuDraw = the chain's next.
+    if (!patch::HookSlot(kMainMenuDrawSlot, reinterpret_cast<const void*>(&MainMenuDraw),
+                         reinterpret_cast<void**>(&g_mainMenuDraw)))
+        g_mainMenuDraw = nullptr;
+    dslog::Write(features::ModsFolderEnabled() ? "[ok]   Mods menu: MODS item + main menu mod count"
+                                               : "[off]  Mods menu: no MODS item (FeatMods), version line only");
 }
 
 void features::OnFrameModsMenu() {
     static bool tried = false;
-    if (!tried && *reinterpret_cast<void**>(kMainMenuScreen)) {
+    if (!tried && features::ModsFolderEnabled() && *reinterpret_cast<void**>(kMainMenuScreen)) {
         tried = true;
         Build();
     }

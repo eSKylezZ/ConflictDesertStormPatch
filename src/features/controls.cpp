@@ -11,7 +11,7 @@
 // by the front-end's state -> screen lookup (coop.cpp's hook asks ControlsScreen for states >= 0x3F).
 //
 // PROFILES (state 0x41, third item of KEYBOARD & MOUSE): four local slots holding a copy of the keyboard and mouse
-// entries of binding set 0 (registry Enhancements\KeyProfile<n>, int32[80][3], pad entries -1). Load writes one back
+// entries of binding set 0 (settings key KeyProfile<n>, int32[80][3], pad entries -1). Load writes one back
 // into set 0 and saves it like KEY ASSIGNMENT does (FUN_00445BE0 -> current.key); co-op keyboard players can pick
 // one on the join screen (applied to their set at every level load, ApplyCoopKeyProfiles).
 //
@@ -54,7 +54,6 @@ constexpr uint32_t kStateControls = 0x1E, kStateMouse = 0x1F, kStateKeys = 0x20,
 constexpr uint16_t kItemKeys = 0x817, kItemMouse = 0x818, kItemProfiles = 0x819, kItemProfile0 = 0x830;
 constexpr uint32_t kBindingTable = 0x60687C, kSaveKeys = 0x445BE0;  // table {sets, slots, actions, data}; save set 0
 constexpr int kProfiles = 4, kActions = 80, kBindSlots = 3;
-constexpr char kKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 constexpr uint32_t kHashKeys = 0xE443B70B, kHashMouse = 0xAC4ABB64, kHashCtrlOptions = 0xEB9A212D, kHashCtrl = 0xB89EBF3E;
 constexpr int kVtableEntries = 21;
 
@@ -152,20 +151,14 @@ bool IsKeyOrMouse(int32_t e) { return e >= 0 && ((e >> 16) == 0 || (e >> 16) == 
 bool ReadProfile(int n, KeyProfile& p) {
     char name[32];
     snprintf(name, sizeof name, "KeyProfile%d", n + 1);
-    DWORD size = sizeof p;
-    return RegGetValueA(HKEY_LOCAL_MACHINE, kKey, name, RRF_RT_REG_BINARY, nullptr, &p, &size) == ERROR_SUCCESS &&
-           size == sizeof p;
+    return settings::ReadBinary(name, &p, sizeof p);
 }
 
 void WriteProfile(int n, const KeyProfile* p) {
-    HKEY key = nullptr;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
     char name[32];
     snprintf(name, sizeof name, "KeyProfile%d", n + 1);
-    if (p) RegSetValueExA(key, name, 0, REG_BINARY, reinterpret_cast<const BYTE*>(p), sizeof *p);
-    else RegDeleteValueA(key, name);
-    RegCloseKey(key);
+    if (p) settings::WriteBinary(name, p, sizeof *p);
+    else settings::DeleteValue(name);
 }
 
 // Keyboard / mouse entries of a profile into a binding set, keeping the set's pad entries.
@@ -572,11 +565,14 @@ void __fastcall CtlDraw(void* screen, void*) {
         rowWidth[r - 1] += (rowCount[r - 1] ? gap : 0) + tw;
         rows[r - 1][rowCount[r - 1]++] = i;
     }
-    // 4:3 needs a 4th row (above the callouts, which start at 0.285 of the height).
+    // Rows from just under the title; on 4:3 screens (3-4 rows) the picture and callouts move down to make room - at
+    // 800x600 the rows otherwise ran into the title (there is spare space above the prompts).
     const int rowPitch = static_cast<int>(h * (nRows > 3 ? 0.03f : nRows > 2 ? 0.034f : 0.042f));
+    const float calloutY = h * (0.285f + (nRows > 3 ? 0.05f : nRows > 2 ? 0.025f : 0.0f));
+    const float first = h * (nRows > 2 ? 0.17f : 0.19f) + cap;
     for (int r = 0; r < nRows; ++r) {
         int x = (w - rowWidth[r]) / 2;
-        const int y = static_cast<int>(h * (nRows > 3 ? 0.16f : nRows > 2 ? 0.175f : 0.19f)) + r * rowPitch;
+        const int y = static_cast<int>(first) + r * rowPitch;
         for (int k = 0; k < rowCount[r]; ++k) {
             const int i = rows[r][k];
             const int tw = overlay::TextWidth(font, labels[i]);
@@ -619,7 +615,7 @@ void __fastcall CtlDraw(void* screen, void*) {
     const float nominalH = h * 0.40f, aspect = static_cast<float>(art.width) / art.height;
     const float pw = std::max(w * 0.25f, std::min(nominalH * aspect, w * 0.90f - 2 * column));
     const float ph = pw / aspect;
-    const float px = (w - pw) / 2, py = h * 0.285f + (nominalH - ph) / 2;
+    const float px = (w - pw) / 2, py = calloutY + (nominalH - ph) / 2;
     void* tex = overlay::LoadTexture(xbox ? gen::kXboxArtResource : gen::kPs5ArtResource, gen::kControllerTexW,
                                      gen::kControllerTexH);
     overlay::QueueImage(tex, px, py, pw, ph, static_cast<float>(art.width) / gen::kControllerTexW,
@@ -632,7 +628,7 @@ void __fastcall CtlDraw(void* screen, void*) {
             return ya < yb;
         });
         // The column keeps the full-size picture's height even when the picture shrank.
-        const float top = h * 0.285f - nominalH * 0.02f, bottom = h * 0.285f + nominalH * 1.08f;
+        const float top = calloutY - nominalH * 0.02f, bottom = calloutY + nominalH * 1.08f;
         const float pitch = list.size() > 1 ? std::min(iconSize * 1.6f, (bottom - top) / (list.size() - 1)) : 0.0f;
         const float colX = s == 0 ? px - w * 0.02f : px + pw + w * 0.02f;
         for (size_t i = 0; i < list.size(); ++i) {
@@ -688,7 +684,8 @@ void __fastcall CtlDraw(void* screen, void*) {
         DrawPrompt(x, y, PadIcon(1, xbox), "Back", ps);
     }
     snprintf(text, sizeof text, "Controller art: Zacksly (CC BY 3.0)");
-    overlay::DrawLabel(font, text, static_cast<int>(w * 0.93f) - overlay::TextWidth(font, text), static_cast<int>(h * 0.80f),
+    overlay::DrawLabel(font, text, static_cast<int>(w * 0.93f) - overlay::TextWidth(font, text),
+                       static_cast<int>(std::max(h * 0.80f, calloutY + h * 0.40f * 1.08f + cap * 2.5f)),
                        0x90FFFFFF);
 }
 

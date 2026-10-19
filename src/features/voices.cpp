@@ -7,6 +7,8 @@
 // SoundCache) and the .skin voices' banks; while playing, every squad soldier is pointed at the bank he should use,
 // looked up among the loaded banks only (FUN_0055e2b0(hash) - FUN_0055dd20 would make an empty bank for a missing
 // name and try to load it from a file).
+// Optional (settings featVoices), live: off = every squad soldier is pointed back at his own bank (UNITS.TXT's) and
+// the loadout screen hides the VOICE row.
 #include <windows.h>
 
 #include <cstdint>
@@ -17,14 +19,15 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/settings.h"
 #include "features/features.h"
+#include "generated/patch_tables.h"
 
 namespace {
 constexpr uint32_t kSoundManager = 0x63C9AC, kFindBank = 0x55E2B0;
 constexpr uint32_t kCharacters = 0x63C9A0, kSquadTeam = 0x5F9B94;
 constexpr uint32_t kSkinTable = 0x619848, kSkinCount = 0x6193A8, kSkinEntrySize = 0x5C;
 constexpr uint32_t kLevelName = 0x606880, kDispatchMode = 0x60EC8C, kSplitFlag = 0x606410;
-constexpr char kRegKey[] = "SOFTWARE\\Pivotal Games\\Conflict Desert Storm\\Enhancements";
 const char* const kHeroes[4] = {"Bradley", "Ramirez", "Jones", "Foley"};
 const char* const kLabels[features::kVoiceCount] = {"AUTO", "SAS", "DELTA", "OWN (MOD)"};
 
@@ -46,9 +49,8 @@ void Load() {
     if (g_loaded[m]) return;
     g_loaded[m] = true;
     for (int r = 0; r < 4; ++r) {
-        DWORD v = 0, size = sizeof v;
-        if (RegGetValueA(HKEY_LOCAL_MACHINE, kRegKey, ValueName(r).c_str(), RRF_RT_REG_DWORD, nullptr, &v, &size) ==
-                ERROR_SUCCESS && v < features::kVoiceCount)
+        uint32_t v = 0;
+        if (settings::ReadDword(false, ValueName(r).c_str(), v) && v < static_cast<uint32_t>(features::kVoiceCount))
             g_choice[m][r] = static_cast<int>(v);
     }
 }
@@ -68,9 +70,65 @@ uint32_t ElfHash(const char* s) {   // FUN_004b9bf0, the sound bank key
 void* volatile g_watchBank = nullptr;
 volatile LONG g_watchHits = 0;
 volatile uint32_t g_watchId = 0;
-const uint32_t g_playCont = 0x55DE27;
+void* g_playNext = nullptr;  // entry hook chains (patch::HookFunction): next subscriber / broker trampoline
+// Dev SpeechLog = 1: every speech request FUN_004366d0 (thiscall(soldier, sample, quiet sample, AI only, not when dead,
+// at a position, …) ret 0x18) for player 1's soldier is logged with its caller, and whether it reached the sound play
+// (call at 0x4367E8, returns to 0x4367ED).
+DWORD DevDword(const char* name, DWORD fallback) {
+    DWORD v = fallback, size = sizeof v;
+    RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", name, RRF_RT_REG_DWORD, nullptr, &v, &size);
+    return v;
+}
+volatile LONG g_speechPlays = 0;
+volatile uint32_t g_speechLastId = 0;
+volatile LONG g_playerPlays = 0;   // of them by player 1's soldier (esi = soldier at the play call)
+bool g_speechLog = false;
+void __cdecl NoteSpeech(uint8_t* soldier, const uint32_t* stack) {
+    auto* player = *reinterpret_cast<uint8_t* const*>(0x60F5B8 + 0x310);
+    if (soldier != player) return;
+    dslog::Write("[dev] Speech: player soldier asked to say %X / %X (AI only %u, not dead %u, a5 %u a6 %u) from %08X; "
+                 "%ld played so far", stack[1], stack[2], stack[3], stack[4], stack[5], stack[6], stack[0] - 5,
+                 g_speechPlays);
+}
+void* g_speechNext = nullptr;
+// FUN_00408680 (soldier's target tracking, from the combat update 0x407B60): calls for player 1's soldier
+volatile LONG g_trackCalls = 0;
+void* g_trackNext = nullptr;
+__declspec(naked) void TrackStub() {
+    __asm {
+        mov eax, ds:[0x60F5B8 + 0x310]
+        cmp eax, ecx
+        jne other
+        lock inc g_trackCalls
+    other:
+        jmp dword ptr [g_trackNext]
+    }
+}
+__declspec(naked) void SpeechStub() {
+    __asm {
+        pushad
+        lea eax, [esp + 32]
+        push eax
+        push ecx
+        call NoteSpeech
+        add esp, 8
+        popad
+        jmp dword ptr [g_speechNext]
+    }
+}
+
 __declspec(naked) void PlayStub() {
     __asm {
+        cmp dword ptr [esp], 0x4367ED
+        jne notSpeech
+        lock inc g_speechPlays
+        mov eax, [esp + 8]
+        mov g_speechLastId, eax
+        mov eax, ds:[0x60F5B8 + 0x310]
+        cmp eax, esi
+        jne notSpeech
+        lock inc g_playerPlays
+    notSpeech:
         mov eax, [esp + 4]
         cmp eax, g_watchBank
         jne skip
@@ -78,10 +136,7 @@ __declspec(naked) void PlayStub() {
         mov eax, [esp + 8]
         mov g_watchId, eax
     skip:
-        push esi
-        mov esi, ecx
-        mov ecx, [esp + 8]
-        jmp g_playCont
+        jmp dword ptr [g_playNext]
     }
 }
 #endif
@@ -112,6 +167,8 @@ std::string WantedBank(uint8_t* soldier, int role, const char* own) {
     for (const char* h : kHeroes)
         if (_stricmp(own, (std::string(h) + ".sbk").c_str()) == 0) hero = h;
     if (hero.empty()) return "";
+    const features::HostSettings* host = features::HostSync();   // online: the host's settings on every PC
+    if (!(host ? host->voices : settings::Get().featVoices)) return hero + ".sbk";   // off: his own bank (undoes an earlier assignment)
     auto* entry = *reinterpret_cast<uint8_t**>(soldier + 0x2A68);
     const std::string custom = entry ? features::SkinVoice(reinterpret_cast<const char*>(entry + 4)) : "";
     const int choice = features::VoiceChoice(role);
@@ -156,19 +213,29 @@ const char* features::VoiceLabel(int v) { return kLabels[v]; }
 
 int features::VoiceChoice(int role) {
     Load();
-    return role >= 0 && role < 4 ? g_choice[Mode()][role] : 0;
+    if (role < 0 || role > 3) return 0;
+    if (const features::HostSettings* host = features::HostSync()) return host->voice[role];   // online: the host's
+    return g_choice[Mode()][role];
+}
+
+int features::CoopVoiceChoice(int role) {   // what this PC would send as host (co-op choices, whatever the mode now)
+    const int m = Mode();
+    if (m == 1) {
+        Load();
+        return role >= 0 && role < 4 ? g_choice[1][role] : 0;
+    }
+    char name[32];
+    snprintf(name, sizeof name, "VoiceCoop%d", role);
+    uint32_t v = 0;
+    if (!settings::ReadDword(false, name, v)) return 0;
+    return v < static_cast<uint32_t>(kVoiceCount) ? static_cast<int>(v) : 0;
 }
 
 void features::SetVoiceChoice(int role, int v) {
     Load();
     if (role < 0 || role > 3) return;
     g_choice[Mode()][role] = v;
-    HKEY key;
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    const DWORD d = v;
-    RegSetValueExA(key, ValueName(role).c_str(), 0, REG_DWORD, reinterpret_cast<const BYTE*>(&d), sizeof d);
-    RegCloseKey(key);
+    settings::WriteDword(false, ValueName(role).c_str(), static_cast<uint32_t>(v));
 }
 
 // What the VOICE row shows for a soldier: the choice, and for AUTO what it comes to.
@@ -186,7 +253,20 @@ bool features::SoldierHasOwnVoice(uint8_t* soldier) {
     return entry && !SkinVoice(reinterpret_cast<const char*>(entry + 4)).empty();
 }
 
+// FeatPlayerVoice (live): patch_defs PLAYER_VOICE applied / reverted as the setting changes.
+static void SyncPlayerVoice() {
+    static int state = -1;
+    const bool on = settings::Get().featPlayerVoice;
+    if (state == static_cast<int>(on)) return;
+    state = on;
+    const bool ok = on ? patch::ApplyGroup("Voices: player soldier talks", gen::kPlayerVoice)
+                       : patch::RevertGroup("Voices: player soldier talks", gen::kPlayerVoice);
+    dslog::Write(!ok ? "[fail] Voices: player soldier speech patch (unexpected game code)"
+                 : on ? "[ok]   Voices: the soldier you control talks too" : "[off]  Voices: the game's speech rules");
+}
+
 void features::OnFrameVoices() {
+    SyncPlayerVoice();
     const char* level = reinterpret_cast<const char*>(kLevelName);
     if (strncmp(level, g_level, sizeof g_level - 1) != 0) {   // a new level loads its own banks
         strncpy_s(g_level, level, sizeof g_level - 1);
@@ -201,7 +281,30 @@ void features::OnFrameVoices() {
         logged = g_watchHits;
         dslog::Write("[dev] Voices: %ld plays from the assigned voice bank (last id %08X)", logged, g_watchId);
     }
+    if (g_speechLog) {
+        static LONG tracked = -1;
+        static void* lastTarget = nullptr;
+        auto* player = *reinterpret_cast<uint8_t* const*>(0x60F5B8 + 0x310);
+        void* target = player ? *reinterpret_cast<void**>(player + 0x255C) : nullptr;
+        if (g_trackCalls != tracked || target != lastTarget) {
+            if ((g_trackCalls == 0) != (tracked <= 0) || target != lastTarget)
+                dslog::Write("[dev] Speech: player target tracking calls %ld, target %p", g_trackCalls, target);
+            tracked = g_trackCalls;
+            lastTarget = target;
+        }
+    }
+    static LONG spoken = 0;
+    if (g_speechLog && g_speechPlays != spoken) {
+        spoken = g_speechPlays;
+        dslog::Write("[dev] Speech: %ld speech plays, %ld by the player soldier (last sample %X)", spoken, g_playerPlays,
+                     g_speechLastId);
+    }
 #endif
+    static int loggedOn = -1;
+    if (loggedOn != static_cast<int>(settings::Get().featVoices)) {
+        loggedOn = settings::Get().featVoices;
+        dslog::Write(loggedOn ? "[ok]   Voices: squad accents / skin voices" : "[off]  Voices: the soldiers' own speech banks");
+    }
     __try {
         UpdateSquad();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -212,6 +315,13 @@ void features::OnFrameVoices() {
 void features::ApplyVoices() {
 #ifndef DS_DIST
     static const uint8_t entry[] = {0x56, 0x8B, 0xF1, 0x8B, 0x4C, 0x24, 0x08};
-    if (patch::Matches(0x55DE20, entry, sizeof entry)) patch::WriteJump(0x55DE20, reinterpret_cast<const void*>(&PlayStub));
+    patch::HookFunction(0x55DE20, reinterpret_cast<const void*>(&PlayStub), &g_playNext, entry, sizeof entry);
+    g_speechLog = DevDword("SpeechLog", 0) != 0;
+    static const uint8_t speech[] = {0x83, 0xEC, 0x0C, 0x53, 0x55};
+    if (g_speechLog)
+        patch::HookFunction(0x4366D0, reinterpret_cast<const void*>(&SpeechStub), &g_speechNext, speech, sizeof speech);
+    static const uint8_t track[] = {0x53, 0x55, 0x56, 0x8B, 0xF1};
+    if (g_speechLog)
+        patch::HookFunction(0x408680, reinterpret_cast<const void*>(&TrackStub), &g_trackNext, track, sizeof track);
 #endif
 }

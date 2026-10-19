@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #include "generated/game_icons.h"
@@ -32,6 +33,8 @@ void QueueLine(float x0, float y0, float x1, float y1, float width, uint32_t arg
 void* LoadTexture(int resource, int texW, int texH);
 // An image file (PNG, DDS ...) as a managed A8R8G8B8 texture, sized up to powers of two (image at the top-left).
 void* LoadTextureFile(const char* path, int& w, int& h, int& texW, int& texH);
+// The same from an encoded image in memory (`what` names it in the log).
+void* LoadTextureBytes(const void* bytes, size_t size, int& w, int& h, int& texW, int& texH, const char* what);
 // The image FUN_0053c9e0 is drawing right now (sheet, image number) - for its page texture bind (fontsharp.cpp).
 const void* DrawingSheet();
 int DrawingImage();
@@ -45,10 +48,14 @@ float MenuAlpha();
 // A function drawn at the very end of the frame, after the queue (game-font text over our shapes); null = none.
 using LateDraw = void (*)();
 void SetLateDraw(LateDraw fn);
-// Another late draw that stays registered (up to 4; the function itself decides each frame whether to draw).
+// Another late draw that stays registered (up to 8; the function itself decides each frame whether to draw).
 void AddLateDraw(LateDraw fn);
+// Drawn after all of the above, on top of everything (the developer console); null = none.
+void SetTopDraw(LateDraw fn);
 // Draws the queued icons (called before the game's EndScene) and empties the queue.
 void Render(void* device);
+// Inside a late draw: draws what is queued so far right now (so text drawn next lies on top of it).
+void Flush();
 // Draws solid rectangles {x, y, w, h} (back-buffer pixels) right now, over whatever is drawn so far this frame.
 void FillRects(const float (*rects)[4], int count, uint32_t argb);
 

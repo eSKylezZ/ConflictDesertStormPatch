@@ -1,0 +1,5 @@
+# DesertStormFix (docs/sdk/layout.md): the host plugin with every dsfix.<feature> sub-plugin. Must be on the DS1 game
+# layer's host list to get pse.host; loads before every other plugin.
+name     = dsfix
+host     = true
+requires = pse.game.ds1 >= 1.0

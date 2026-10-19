@@ -1,4 +1,5 @@
-// Free camera (needs the cheats unlocked, cheats.cpp): F6 or L3 + R3 in a mission.
+// Free camera (needs the cheats unlocked, cheats.cpp): F6 or L3 + R3 in a mission. Photo mode (photomode.cpp) uses it
+// without cheats through FreeCamPhoto.
 //
 // The game's own debug camera: the debug key "Toggle Camera State" (0x444870, start flag M only) puts player 1 in
 // camera mode 3 (FUN_00472b30; player [FUN_0040a280(0)] +8 = mode, 1 = normal) and back. In mode 3 the per-frame camera
@@ -18,7 +19,8 @@
 // behind / edge-on and only the start zone was drawn. While flying, that call draws every zone instead, each once with
 // the whole view frustum (FUN_004d0440 thiscall (zone; 1, frustum, 1, 1) ret 0x10 - its octree still culls): the zones
 // reachable through the portal graph (zone data +0x20C: portal list +0x1C, next +4, zone behind +0x21C) plus the
-// world list's top-level zones ([world+0x1A48], next +0xB0, parent +0xBC = 0, zone data set) - collected per flight.
+// world list's zone roots ([world+0x1A48], next +0xB0, FUN_004ce0a0) - collected per flight, only zones that have an
+// octree (zone data +0; FUN_004d0850 walks it unchecked - a null one crashed at 0x50C359, see CollectZones).
 #include "features.h"
 
 #include "../core/log.h"
@@ -37,10 +39,12 @@ namespace {
 
 constexpr uint32_t kToggle = 0x444870, kPlayer = 0x40A280, kCameraObject = 0x63C940;
 constexpr uint32_t kVelocity = 0x6069C4, kMouse = 0x754C24;
-constexpr uint32_t kDispatchMode = 0x60EC8C, kLevelName = 0x606880, kFrontEndState = 0x617C18, kGameWindow = 0x606A60;
+constexpr uint32_t kDispatchMode = 0x60EC8C, kLevelName = 0x606880, kFrontEndState = 0x617C18;
 constexpr uint32_t kBlock0Joystick = 0x60F5B8 + 0x3C8;
 constexpr int kInGame = 0xE;
 constexpr uint32_t kZoneDrawCall = 0x4DDEB0, kZoneDraw = 0x4CDA70, kZoneDrawOne = 0x4D0440, kWorld = 0x63C948;
+constexpr uint32_t kIsZoneRoot = 0x4CE0A0;
+constexpr uint32_t kTimeMultiplier = 0x5F7E64;
 
 template <class T>
 T& Global(uint32_t va) {
@@ -58,8 +62,9 @@ bool InMission() {
     return Global<int>(kDispatchMode) == 0 && level[0] && _strnicmp(level, "frontend", 8) != 0;
 }
 
-bool Focused() { return GetForegroundWindow() == Global<HWND>(kGameWindow); }
-bool Key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+// The game window in front (dev background mode: always) and keys from it - also posted ones (scripted tests).
+bool Focused() { return features::GameFocused(); }
+bool Key(int vk) { return features::KeyHeld(vk); }
 
 const float* Vector(uint32_t offset) {
     auto cam = Global<uint8_t*>(kCameraObject);
@@ -68,8 +73,12 @@ const float* Vector(uint32_t offset) {
 
 bool g_wasDown = false;
 bool g_flying = false;     // we switched player 1's input block off
+// Mode 3 that our toggle set. The game also uses mode 3 itself while player 1 has no squad soldier (Mission 5A's
+// start: soldier null, squad slot -1) - flying then (input block off, every zone drawn) crashed the level load.
+bool g_ours = false;
 bool g_zonesDirty = true;  // collect the zones again (each flight: the world object outlives a level)
 int g_savedJoystick = 0;   // its joystick index, restored when the camera ends
+bool g_photo = false;      // photo mode drives the camera (FreeCamPhoto)
 
 void Detach(bool on) {
     int& joystick = Global<int>(kBlock0Joystick);
@@ -95,8 +104,10 @@ uint8_t* ZoneData(uint8_t* zone) { return zone ? *reinterpret_cast<uint8_t**>(zo
 void CollectZones(uint8_t* start) {
     g_zones.clear();
     std::unordered_set<uint8_t*> seen;
+    // Only zones with an octree (zone data +0): the zone draw walks it without a null check (crash at 0x50C359, ecx 0 -
+    // the first F6 crash). Mission 1 has one such zone behind a portal; the game's own portal walk never reaches it.
     auto add = [&](uint8_t* z) {
-        if (z && ZoneData(z) && seen.insert(z).second) g_zones.push_back(z);
+        if (z && ZoneData(z) && *reinterpret_cast<void**>(ZoneData(z)) && seen.insert(z).second) g_zones.push_back(z);
     };
     add(start);
     for (size_t i = 0; i < g_zones.size(); ++i) {   // breadth-first over the portals (closed ones too: doors)
@@ -105,9 +116,20 @@ void CollectZones(uint8_t* start) {
             add(*reinterpret_cast<uint8_t**>(portal + 0x21C));
         if (g_zones.size() > 4096) break;
     }
-    if (auto world = Global<uint8_t*>(kWorld))   // zones no portal leads to
-        for (uint8_t* o = *reinterpret_cast<uint8_t**>(world + 0x1A48); o; o = *reinterpret_cast<uint8_t**>(o + 0xB0))
-            if (!*reinterpret_cast<void**>(o + 0xBC)) add(o);
+    // Zones no portal leads to: the world list holds every scene object, so only zone roots by the game's own test
+    // (FUN_004ce0a0, as the octree builder uses it: no parent +0xBC / +0xC0, type +8 a world piece 5 / 11-13) - parent
+    // 0 + "+0x20C set" alone could take another root object whose +0x20C isn't zone data (none seen in Missions 1 / 3).
+    using IsZoneRoot = int(__thiscall*)(uint8_t*);
+    if (auto world = Global<uint8_t*>(kWorld))
+        for (uint8_t* o = *reinterpret_cast<uint8_t**>(world + 0x1A48); o; o = *reinterpret_cast<uint8_t**>(o + 0xB0)) {
+            const bool root = reinterpret_cast<IsZoneRoot>(kIsZoneRoot)(o) != 0;
+#ifndef DS_DIST
+            if (!*reinterpret_cast<void**>(o + 0xBC) && ZoneData(o) && !root)
+                dslog::Write("[dev] free camera: skipped root object %p type %d +0xC0 %p +0x20C %p", o,
+                             *reinterpret_cast<int*>(o + 8), *reinterpret_cast<void**>(o + 0xC0), ZoneData(o));
+#endif
+            if (root) add(o);
+        }
     dslog::Write("Free camera: %u zones to draw", static_cast<unsigned>(g_zones.size()));
 }
 
@@ -120,45 +142,88 @@ void __fastcall DrawZones(uint8_t* zone, void*, void* frustum, int flag) {
     for (uint8_t* z : g_zones) reinterpret_cast<DrawOne>(kZoneDrawOne)(z, 1, frustum, 1, 1);
 }
 
+void Fly(float scale);
+
 }  // namespace
 
 void features::ApplyFreeCam() {
     static bool done = false;
     if (done) return;
     done = true;
+    // The zone hook is needed by photo mode too (it only acts while flying); F6 only with FeatCheats.
     if (!patch::HookCall(kZoneDrawCall, reinterpret_cast<const void*>(&DrawZones), kZoneDraw))
         dslog::Write("[fail] Free camera: zone draw call at 0x%08X not recognised - far zones stay hidden", kZoneDrawCall);
+    if (!features::CheatsEnabled()) dslog::Write("[off]  Free camera: F6 off (FeatCheats) - photo mode still flies");
 }
 
 bool features::FreeCamActive() { return g_flying; }
-bool features::HudHidden() { return g_flying || CustomiseHidesHud(); }
+
+// Photo mode (photomode.cpp) drives the camera: no cheats needed, its own keys open / close it, and the movement is
+// scaled up by 1 / the time multiplier (the mode 3 code moves by the gameplay dt, which the frozen world shrinks).
+bool features::FreeCamPhoto(bool on) {
+    if (on) {
+        if (g_photo) return true;
+        if (Mode() == 1) {
+            Toggle();
+            g_ours = Mode() == 3;
+        }
+        if (Mode() != 3 || !g_ours) return false;
+        g_photo = true;
+        g_wasDown = true;
+        Detach(true);
+        return true;
+    }
+    if (!g_photo) return false;
+    g_photo = false;
+    if (g_ours && Mode() == 3) Toggle();
+    g_ours = false;
+    g_wasDown = true;
+    Detach(false);
+    return true;
+}
+bool features::HudHidden() { return g_flying || CustomiseHidesHud() || ScriptHidesHud(); }
 
 void features::OnFrameFreeCam() {
-    if (g_flying && (!InMission() || Mode() != 3)) Detach(false);   // level ended / camera switched back elsewhere
+    if (!features::CheatsEnabled() && !g_photo) return;
+    if (!InMission() || Mode() != 3) g_ours = false;   // level ended / camera switched back elsewhere
+    if (g_flying && !g_ours) Detach(false);
+    if (g_photo) {   // photo mode opens / closes it; only the flying here
+        if (!g_ours || !InMission() || Global<int>(kFrontEndState) != kInGame || !Focused()) return;
+        const float mult = Global<float>(kTimeMultiplier);
+        Fly(mult > 0.00001f && mult < 1.0f ? 1.0f / mult : 1.0f);
+        return;
+    }
     if (!CheatsUnlocked() || !InMission() || Global<int>(kFrontEndState) != kInGame || !Focused()) {
         g_wasDown = true;   // the toggle needs a fresh press once play resumes
         return;
     }
     const int mode = Mode();
-    padio::JoyState pad{};
     const int joystick = g_flying ? g_savedJoystick : Global<int>(kBlock0Joystick);
-    const bool havePad = joystick >= 0 && padio::Fill(joystick, pad);
     const uint32_t buttons = joystick >= 0 ? ReadJoystick(joystick) : 0;
     // Esc / Start leave the camera too (the pause key can't reach the game while its input block is off).
     const bool down = Key(VK_F6) || ((buttons & (1u << 9)) && (buttons & (1u << 10))) ||
                       (g_flying && (Key(VK_ESCAPE) || (buttons & (1u << 11))));
-    if (down && !g_wasDown && (mode == 1 || mode == 3)) {
+    if (down && !g_wasDown && (mode == 1 || (mode == 3 && g_ours))) {   // (not the game's own mode 3)
         dslog::Write("Free camera: toggle (F6 %d, joystick %d buttons 0x%X)", Key(VK_F6), joystick, buttons);
         Toggle();
+        g_ours = mode == 1 && Mode() == 3;
     }
     g_wasDown = down;
-    if (Mode() != 3) {
+    if (Mode() != 3 || !g_ours) {
+        g_ours = false;
         Detach(false);
         return;
     }
     Detach(true);
+    Fly(1.0f);
+}
 
-    // Movement: forward / back, sideways, up / down in the camera's own directions.
+namespace {
+// Movement: forward / back, sideways, up / down in the camera's own directions; scale: photo mode's frozen time.
+void Fly(float scale) {
+    const int joystick = g_savedJoystick;
+    padio::JoyState pad{};
+    const bool havePad = joystick >= 0 && padio::Fill(joystick, pad);
     float fwd = 0, side = 0, up = 0;
     if (Key('W')) fwd += 1;
     if (Key('S')) fwd -= 1;
@@ -177,7 +242,7 @@ void features::OnFrameFreeCam() {
         Global<LONG>(kMouse) += static_cast<LONG>(pad.z / 10);
         Global<LONG>(kMouse + 4) += static_cast<LONG>(pad.rz / 10);
     }
-    const float speed = fast ? 2.0f : 0.5f;   // per ms (x 1000 per second): 5 m/s, 20 m/s with Shift / L1
+    const float speed = (fast ? 2.0f : 0.5f) * scale;   // per ms (x 1000 per second): 5 m/s, 20 m/s with Shift / L1
     const float* f = Vector(0x128);
     const float* s = Vector(0x134);
     const float* u = Vector(0x140);
@@ -185,3 +250,4 @@ void features::OnFrameFreeCam() {
     float* vel = reinterpret_cast<float*>(kVelocity);
     for (int i = 0; i < 3; ++i) vel[i] = (f[i] * fwd + s[i] * side + u[i] * up) * speed;
 }
+}  // namespace

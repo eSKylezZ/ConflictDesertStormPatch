@@ -69,7 +69,9 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/net.h"
 #include "core/settings.h"
+#include "render/d3d8to9.h"
 #include "features/features.h"
 #include "features/overlay.h"
 #include "features/padio.h"
@@ -246,6 +248,7 @@ void __fastcall AssignPlayers(uintptr_t block0) {
         }
     }
     features::VersusAssignPlayers();  // versus: MP soldiers instead of squad members (versus.cpp)
+    features::LockstepFixBlocks();    // online: the player set-up re-runs after every cutscene - keep the blocks uniform
     dslog::Write("Split screen: %u players assigned", players);
 }
 
@@ -273,6 +276,27 @@ float GyroLook(int player, int joystick, int action, bool aiming) {
 }
 
 float __fastcall AxisValue(uint8_t* block, void*, int action, int opposite) {
+    float synced;
+    if (features::LockstepAxis(block, action, opposite, synced)) {   // online: the players' sent inputs
+#ifndef DS_DIST
+        features::LockstepAxisTrace(block, action, synced, true);
+#endif
+        return synced;
+    }
+#ifndef DS_DIST
+    features::LockstepAxisTrace(block, action, 0.0f, false);
+    {   // dev: Dev\PitchInject = signed percent (DWORD) = player 1's AIM_PITCH / HEAD_PITCH stick, for scripted look tests
+        static DWORD checked = 0;
+        static int inject = 0;
+        if (GetTickCount() - checked > 100) {
+            checked = GetTickCount();
+            DWORD v = 0, size = sizeof v;
+            inject = RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "PitchInject", RRF_RT_REG_DWORD, nullptr,
+                                  &v, &size) == ERROR_SUCCESS ? static_cast<int>(v) : 0;
+        }
+        if (inject && (action == 0xF || action == 0x16) && block == reinterpret_cast<uint8_t*>(0x60F5B8)) return inject / 100.0f;
+    }
+#endif
     const int joystick = *reinterpret_cast<int32_t*>(block + 0x3C8);
     if (joystick == -1) return 0.0f;
     auto* table = *reinterpret_cast<uint8_t**>(kBindingTable);
@@ -325,14 +349,58 @@ float __fastcall AxisValue(uint8_t* block, void*, int action, int opposite) {
     return value;
 }
 
+}  // namespace
+
+// Online lockstep: one action's parts from this PC's devices, as AxisValue reads them (pad axis = the first bound axis
+// that isn't 0, key = a bound key held, gyro = the look addition), for the inputs this PC sends.
+void features::AxisParts(uint8_t* block, int action, float& pad, bool& touched, bool& key, float& gyro) {
+    pad = 0.0f, touched = false, key = false, gyro = 0.0f;
+    const int joystick = *reinterpret_cast<int32_t*>(block + 0x3C8);
+    if (joystick == -1) return;
+    auto* table = *reinterpret_cast<uint8_t**>(kBindingTable);
+    const int set = *reinterpret_cast<int32_t*>(block + 0x3C0);
+    const uint32_t slots = *reinterpret_cast<uint32_t*>(table + 4);
+    const uint32_t devices = *reinterpret_cast<uint32_t*>(block + 0x38);
+    using Lookup = uint32_t(__thiscall*)(void*, int, int, int);
+    for (uint32_t slot = 0; slot < slots; ++slot) {
+        const uint32_t code = reinterpret_cast<Lookup>(kBindingLookup)(table, set, slot, action);
+        if (code == 0xFFFFFFFF) continue;
+        if ((devices & 2) && (code & 0xFFFF0000) == 0x10000) {
+            pad = reinterpret_cast<const float*>(kAxisTable)[(code & 0xFFFF) + joystick * 0x54];   // (the last one wins)
+            if (pad != 0.0f) touched = true;   // AxisValue then clears block +0x458
+        }
+        if ((devices & 1) && (code & 0xFFFF0000) == 0 && reinterpret_cast<int(__cdecl*)(uint32_t)>(kKeyHeld)(code & 0xFFFF))
+            key = true;
+    }
+    const bool look = action == 0xA || action == 0xB || action == 0xE || action == 0xF || action == 0x15 || action == 0x16;
+    const int player = static_cast<int>((block - reinterpret_cast<uint8_t*>(0x60F5B8)) / 0x478);
+    if (look && (devices & 2)) gyro = GyroLook(player, joystick, action, *reinterpret_cast<int32_t*>(block + 0x318) == 1);
+}
+
+float features::LookScale(int player) { return padlayout::LookSensitivity(player) / 100.0f; }
+
+namespace {
+
 // Mouse look: the smoothed mouse movement (FUN_00538080 on the mouse smoother 0x754BEC, thiscall (&dx, &dy) ret 8) is
 // read for turning / aiming at 0x44B396 and 0x44F8D7 with esi = the player's input block, again without its device
 // check - the mouse turned every player. A block without keyboard & mouse (+0x38 bit 0) now gets no movement.
 constexpr uint32_t kMouseDelta = 0x538080;
 constexpr uint32_t kMouseDeltaSites[] = {0x44B396, 0x44F8D7};
 
+int __stdcall LockstepMouseDelta(uint8_t* block, float* dx, float* dy) { return features::LockstepMouse(block, dx, dy); }
+
 __declspec(naked) void MouseDeltaStub() {
     __asm {
+        push ecx                    // (the smoother, for the original call)
+        push dword ptr [esp + 12]   // dy
+        push dword ptr [esp + 12]   // dx
+        push esi
+        call LockstepMouseDelta     // online: the player's sent mouse movement
+        pop ecx
+        test eax, eax
+        jz own
+        ret 8
+    own:
         test byte ptr [esi + 0x38], 1
         jnz read
         mov eax, [esp + 4]
@@ -471,6 +539,11 @@ float CaveK(uint32_t w, uint32_t h) {
     return std::max(1.0f, k);
 }
 
+// The HUD scale inside a split view: like the cave's, but it may go below 1 - a 640x480 screen split top / bottom
+// (640x240 views) drew the 800x600-sized HUD into a view 240 high, the panels outside it (user screenshots
+// 2026-10-15: no HUD at all). Not below 0.6 (text).
+float ViewK(uint32_t w, uint32_t h) { return std::max(0.6f, std::min(w / 800.0f, h / 600.0f)); }
+
 // HUD anchors (table 0x619A30, float[variant][9][2], fractions of the view; filled by the game with constants):
 // - the weapon display (anchor 1: icon + ammo + rank, drawn from the anchor to 113 art px right of it) mirrors the
 //   soldier panel (anchor 0, whose frame starts 4.5 art px left of it): the art scales with the screen height, the
@@ -512,7 +585,7 @@ void PlaceHud(bool split) {
     const uint32_t size[4][2] = {{W, H}, {W, H / 2}, {W / 2, H}, {W / 2, H / 2}};  // view size per variant
     for (int v = 1; v <= 3; ++v) {
         const float vw = static_cast<float>(size[v][0]), vh = static_cast<float>(size[v][1]);
-        const float r = scaling ? CaveK(size[v][0], size[v][1]) / CaveK(W, H) : 1.0f;
+        const float r = scaling ? ViewK(size[v][0], size[v][1]) / CaveK(W, H) : 1.0f;
         const float k = kFull * r;
         const float panelLeft = orig[v][kAnchorCompass][0] * vw - kCompassRadius * k;
         anchors[v][kAnchorPanel][0] = (panelLeft + kPanelFrame * k) / vw;
@@ -533,7 +606,7 @@ bool BeginHud(D3DViewport* view = nullptr) {
     g_hud = HudPass{true, static_cast<float>(view->x), static_cast<float>(view->y), renderer, view, W, H,
                     view->x, view->y};
     if (settings::Get().hudScaling) {
-        const float r = CaveK(view->w, view->h) / CaveK(W, H);
+        const float r = ViewK(view->w, view->h) / CaveK(W, H);
         g_hud.scale = r;
         for (size_t i = 0; i < std::size(kScaledSheets); ++i) {
             auto sheet = *reinterpret_cast<uintptr_t*>(kScaledSheets[i]);
@@ -601,10 +674,9 @@ void __fastcall InventoryDraw(uintptr_t block) {
     if (pass) EndHud();
 }
 
-// The originals minus their first 7 bytes (run here), called like the originals: thiscall (block, open), ret 4.
-__declspec(naked) void OpenInventoryOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x4515F7 __asm ret } }
-__declspec(naked) void OpenOrdersOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x451807 __asm ret } }
-__declspec(naked) void OpenGiveOriginal() { __asm { mov eax, [esp + 4] __asm sub esp, 0x10 __asm push 0x451A37 __asm ret } }
+// Entry hooks (patch::HookFunction): the broker's trampolines / next subscribers, called like the originals:
+// thiscall (block, open), ret 4.
+void* g_menuOpenNext[3] = {};
 
 // The inventory list (block +0x3fc; list +0x38 row pitch, +0x3c top, +0x40 area height, +0x42 visible rows, int16)
 // shows 4 rows at the scaled HUD size: up to 3 more while it stays in the upper three quarters of the (view) screen.
@@ -624,23 +696,24 @@ void MoreInventoryRows(uintptr_t block) {
     rows = static_cast<int16_t>(rows + extra);
 }
 
-template <void (*Original)()>
+template <int Menu>
 void __fastcall OpenMenuInView(uintptr_t block, void*, int open) {
     D3DViewport* view = ViewOfBlock(block);
     const bool pass = view && BeginHud(view);
-    reinterpret_cast<void(__thiscall*)(uintptr_t, int)>(Original)(block, open);
-    if (open && Original == &OpenInventoryOriginal) MoreInventoryRows(block);
+    reinterpret_cast<void(__thiscall*)(uintptr_t, int)>(g_menuOpenNext[Menu])(block, open);
+    if (open && Menu == 0) MoreInventoryRows(block);  // 0 = inventory
     if (pass) EndHud();
 }
 
 bool HookMenuOpen() {
     for (uint32_t va : kMenuOpen)
         if (!patch::Matches(va, kMenuOpenEntry, sizeof kMenuOpenEntry)) return false;
-    const void* hooks[3] = {reinterpret_cast<const void*>(&OpenMenuInView<&OpenInventoryOriginal>),
-                            reinterpret_cast<const void*>(&OpenMenuInView<&OpenOrdersOriginal>),
-                            reinterpret_cast<const void*>(&OpenMenuInView<&OpenGiveOriginal>)};
+    const void* hooks[3] = {reinterpret_cast<const void*>(&OpenMenuInView<0>),
+                            reinterpret_cast<const void*>(&OpenMenuInView<1>),
+                            reinterpret_cast<const void*>(&OpenMenuInView<2>)};
     bool ok = true;
-    for (int i = 0; i < 3; ++i) ok = patch::WriteJump(kMenuOpen[i], hooks[i]) && ok;
+    for (int i = 0; i < 3; ++i)
+        ok = patch::HookFunction(kMenuOpen[i], hooks[i], &g_menuOpenNext[i], kMenuOpenEntry, sizeof kMenuOpenEntry) && ok;
     return ok;
 }
 
@@ -653,6 +726,8 @@ void __fastcall FlushView(uintptr_t viewController) {
 #ifndef DS_DIST
 void ProbePanel(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uintptr_t item);
 #endif
+void* g_panelCallbackNext = reinterpret_cast<void*>(kPanelCallback);  // pointer hook on the push's imm32
+
 int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f, uintptr_t item) {
     if (features::HudHidden()) return 0;
 #ifndef DS_DIST
@@ -681,7 +756,7 @@ int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32
     int16_t* row = list ? reinterpret_cast<int16_t*>(list + kListRowHeight) : nullptr;
     const int16_t fullRow = row ? *row : 0;
     if (row && g_hud.active) *row = static_cast<int16_t>(fullRow * g_hud.scale + 0.5f);
-    int result = reinterpret_cast<Callback>(kPanelCallback)(a, b, c, d, e, f, item);
+    int result = reinterpret_cast<Callback>(g_panelCallbackNext)(a, b, c, d, e, f, item);
     if (row) *row = fullRow;
     if (pos) pos[0] = static_cast<int16_t>(pos[0] + dx), pos[1] = static_cast<int16_t>(pos[1] + dy);
     if (pass) EndHud();
@@ -689,6 +764,7 @@ int __cdecl PanelCallback(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32
 }
 
 uint32_t __cdecl Reticle(uintptr_t block) {
+    render::NoteHudStart();   // the view's HUD starts here: the renderer's scene copy for HDR / bloom (any HUD state)
     if (features::HudHidden()) return 0;
     const bool pass = BeginHud();
 #ifndef DS_DIST
@@ -844,6 +920,8 @@ void ProbePanel(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uintptr_t item) 
                  item ? reinterpret_cast<int16_t*>(item + kItemPos)[1] : 0, g_hud.active, g_hud.ox, g_hud.oy);
 }
 
+void* g_drawImageNext = nullptr;  // entry hook on FUN_0053c9e0 (shared with overlay.cpp's icon glyph hook)
+
 __declspec(naked) void DrawImageProbe() {
     __asm {
         pushad
@@ -854,9 +932,7 @@ __declspec(naked) void DrawImageProbe() {
         push dword ptr [esp + 48]  // caller
         call ProbeImage
         popad
-        sub esp, 0x94              // the overwritten first instruction
-        push 0x53C9E6
-        ret
+        jmp dword ptr [g_drawImageNext]
     }
 }
 
@@ -865,14 +941,11 @@ void InstallProbe() {
     if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "HudProbe", RRF_RT_REG_DWORD, nullptr, &v,
                      &size) != ERROR_SUCCESS || !v)
         return;
+    // An entry hook - chained with overlay.cpp's (priority 100, it runs first and leaves its icon glyphs out).
     static const uint8_t head[] = {0x81, 0xEC, 0x94, 0x00, 0x00, 0x00};
-    if (patch::Matches(kDrawImage, head, sizeof head)) {
-        patch::WriteJump(kDrawImage, reinterpret_cast<const void*>(&DrawImageProbe));
-        static const uint8_t nop = 0x90;
-        patch::Write(kDrawImage + 5, &nop, 1);
-    } else {
-        overlay::SetImageProbe(reinterpret_cast<void*>(&ProbeImage));  // the overlay owns the entry
-    }
+    if (!patch::HookFunction(kDrawImage, reinterpret_cast<const void*>(&DrawImageProbe), &g_drawImageNext, head,
+                             sizeof head))
+        overlay::SetImageProbe(reinterpret_cast<void*>(&ProbeImage));  // the overlay calls it then
     g_probeLeft = 120;
     if (v > 1) g_probeDelay = v * 1000;
     dslog::Write("[dev]  HUD probe on");
@@ -903,10 +976,42 @@ int features::SplitScreenPlayers() { return g_builtPlayers; }
 namespace {
 constexpr uint32_t kProjection = 0x54FB80;
 constexpr uint32_t kProjectionCalls[] = {0x40F1F6, 0x4105CD, 0x4D6715, 0x4ECD02, 0x4EF98D, 0x54F941};
+// The player whose view is being drawn: the viewport set last is the renderer's view i (= player i, block +0x474);
+// -1 = the full-screen viewport while split (cutscenes, loadout screen).
+int ViewPlayer(const uint8_t* r, const uint8_t* vp) {
+    if (g_builtPlayers <= 1) return 0;
+    const uintptr_t first = reinterpret_cast<uintptr_t>(r) + 0x24, at = reinterpret_cast<uintptr_t>(vp);
+    if (at < first || (at - first) % 0x18) return -1;
+    const int i = static_cast<int>((at - first) / 0x18);
+    return i < g_builtPlayers ? i : -1;
+}
+
+// The player's own field of view (settings Fov<n>, OPTIONS > DESERTSTORMFIX): the game asks for 70 deg vertical; the
+// half-angle's tangent is scaled so scope zoom (smaller angles asked for) keeps its ratio. Online every view uses
+// player 1's setting of this PC - each player sees all views with their own preference. Not in cutscenes (their
+// shots are framed by Pivotal), the front end or the loadout screen.
+float PlayerFov(float fov, int player) {
+    if (player < 0) return fov;
+    float want = features::PhotoFov();   // photo mode's zoom (only outside cutscenes / menus / the loadout screen)
+    if (want <= 0.0f) {
+        if (features::CustomiseOpen()) return fov;
+        const auto world = *reinterpret_cast<const uint8_t* const*>(0x63C948);
+        if (world && (*reinterpret_cast<const uint32_t*>(world + 0x1B8C) & 1)) return fov;  // cinematic bit
+        const char* scene = reinterpret_cast<const char*>(0x606880);
+        if (IsMenuLevel(scene[0] ? scene : nullptr)) return fov;
+        want = static_cast<float>(settings::Get().fov[net::LocalPlayer() > 0 ? 0 : std::min(player, 3)]);
+        if (want == 70.0f) return fov;
+    }
+    constexpr float kRad = 0.017453292f;
+    const float scale = std::tan(want * 0.5f * kRad) / std::tan(35.0f * kRad);
+    return 2.0f * std::atan(std::tan(fov * 0.5f * kRad) * scale) / kRad;
+}
+
 int __fastcall Projection(void* camera, void*, float fov, float zNear, float zFar) {
+    const uint8_t* r = *reinterpret_cast<const uint8_t* const*>(0x63C924);  // renderer: the view being drawn
+    const uint8_t* vp = r ? *reinterpret_cast<const uint8_t* const*>(r + kCurrentViewport) : nullptr;
+    if (r && vp && fov > 1.0f && fov < 170.0f) fov = PlayerFov(fov, ViewPlayer(r, vp));
     if (g_builtPlayers > 1 && fov > 1.0f && fov < 170.0f) {
-        const uint8_t* r = *reinterpret_cast<const uint8_t* const*>(0x63C924);  // renderer: the view being drawn
-        const uint8_t* vp = r ? *reinterpret_cast<const uint8_t* const*>(r + kCurrentViewport) : nullptr;
         const uint32_t w = vp ? *reinterpret_cast<const uint32_t*>(vp + 8) : 0;
         const uint32_t h = vp ? *reinterpret_cast<const uint32_t*>(vp + 0xC) : 0;
         if (w && h && w * 3 < h * 4) {
@@ -914,6 +1019,15 @@ int __fastcall Projection(void* camera, void*, float fov, float zNear, float zFa
             fov = 2.0f * std::atan(std::tan(half) * (4.0f / 3.0f) * static_cast<float>(h) / static_cast<float>(w)) /
                   0.017453292f;
             fov = std::min(fov, 120.0f);
+        } else if (w && h && w * 9 > h * 16) {
+            // a top / bottom half wider than 16:9 (640x480 -> 640x240, 2.7:1) saw ~124 deg across - stretched at the
+            // edges (user screenshots 2026-10-15). Keeping 16:9's horizontal angle went too far the other way (user:
+            // "really zoomed in" - a 16:9 screen's halves are 32:9 -> 39 deg vertical): the vertical half-angle's
+            // tangent shrinks by sqrt(16:9 / aspect), halfway between Hor+ and a fixed width (32:9: 52 deg vertical /
+            // 120 across, 640x240: 60 / 114)
+            const float half = fov * 0.5f * 0.017453292f;
+            const float squeeze = std::sqrt((16.0f / 9.0f) * static_cast<float>(h) / static_cast<float>(w));
+            fov = 2.0f * std::atan(std::tan(half) * squeeze) / 0.017453292f;
         }
     }
     return reinterpret_cast<int(__thiscall*)(void*, float, float, float)>(kProjection)(camera, fov, zNear, zFar);
@@ -944,27 +1058,21 @@ void features::ApplySplitScreen() {
         if (!patch::HookCall(site, reinterpret_cast<const void*>(&MouseDeltaStub), kMouseDelta))
             dslog::Write("[fail] Split screen: mouse read at 0x%08X not recognised - the mouse turns every player", site);
     {
-        uint8_t jump[5] = {0xE9};
+        uint8_t jump[5] = {0xE9};   // the tail jump to FUN_00443d00, redirected (a code group, checked)
         const int32_t rel = static_cast<int32_t>(kSlowDown - (kSlowDownJump + 5));
         memcpy(jump + 1, &rel, 4);
-        if (patch::Matches(kSlowDownJump, jump, sizeof jump))
-            patch::WriteJump(kSlowDownJump, reinterpret_cast<const void*>(&SlowDownStub));
-        else
+        if (!patch::WriteJump(kSlowDownJump, reinterpret_cast<const void*>(&SlowDownStub), sizeof jump, jump))
             dslog::Write("[fail] Split screen: downed-soldier slow motion not recognised at 0x%08X", kSlowDownJump);
     }
     {
+        // `call PanelWalkEndStub` over `mov byte [esp+0x10], 0` (the stub replays it): a call@ code group.
         static const uint8_t walkEnd[] = {0xC6, 0x44, 0x24, 0x10, 0x00};
-        uint8_t call[5] = {0xE8};
-        const int32_t rel = static_cast<int32_t>(reinterpret_cast<uint32_t>(&PanelWalkEndStub) - (kPanelWalkEnd + 5));
-        memcpy(call + 1, &rel, 4);
-        if (patch::Matches(kPanelWalkEnd, walkEnd, sizeof walkEnd)) patch::Write(kPanelWalkEnd, call, sizeof call);
-        else if (!patch::Matches(kPanelWalkEnd, call, sizeof call))
+        if (!patch::WriteCall(kPanelWalkEnd, reinterpret_cast<const void*>(&PanelWalkEndStub), sizeof walkEnd, walkEnd))
             dslog::Write("[fail] Split screen: soldier panel set-up not recognised at 0x%08X", kPanelWalkEnd);
     }
+    // FUN_00450920 replaced (an entry hook that never runs the original).
     static const uint8_t axisEntry[] = {0x51, 0x53, 0x55, 0x56, 0x8B, 0xF1};  // push ecx/ebx/ebp/esi; mov esi, ecx
-    if (patch::Matches(kAxisValue, axisEntry, sizeof axisEntry))
-        patch::WriteJump(kAxisValue, reinterpret_cast<const void*>(&AxisValue));
-    else
+    if (!patch::HookFunction(kAxisValue, reinterpret_cast<const void*>(&AxisValue), nullptr, axisEntry, sizeof axisEntry))
         dslog::Write("[fail] Split screen: analog input function not recognised - keyboard moves every player");
     if (!hooked) {
         dslog::Write("[fail] Split screen: unexpected code at 0x%08X", kPickSoldierSite);
@@ -982,14 +1090,12 @@ void features::ApplySplitScreen() {
                patch::HookCall(kInventoryDrawSite, reinterpret_cast<const void*>(&InventoryDraw), kInventoryDraw) &&
                HookMenuOpen();
     const bool dividers = patch::HookCall(kSetFullViewportSite, reinterpret_cast<const void*>(&SetFullViewport), kSetViewport);
-    uint8_t push[5] = {0x68};  // push kPanelCallback
-    memcpy(push + 1, &kPanelCallback, 4);
-    if (patch::Matches(kPanelCallbackPush, push, sizeof push)) {
-        auto fn = reinterpret_cast<uint32_t>(&PanelCallback);
-        patch::Write(kPanelCallbackPush + 1, &fn, 4);
-    } else {
+    // push kPanelCallback: a pointer hook on the imm32.
+    static const uint8_t pushOp = 0x68;
+    if (!patch::Matches(kPanelCallbackPush, &pushOp, 1) ||
+        !patch::HookSlot(kPanelCallbackPush + 1, reinterpret_cast<const void*>(&PanelCallback), &g_panelCallbackNext,
+                         kPanelCallback))
         hud = false;
-    }
     if (!patch::HookCall(kMatchClockCall, reinterpret_cast<const void*>(&MatchClock), kMatchClock))
         dslog::Write("[fail] Split screen: MP match clock call not recognised at 0x%08X", kMatchClockCall);
     for (uint32_t site : kDrawFanCallers)
@@ -1025,8 +1131,8 @@ void features::OnFrameSplitScreen() {
     PlaceHud(g_builtPlayers > 1);
     RebuildPanelsOnSquadChange();
     // Mid-level: only restore what something else reset (device reset after Alt+Tab), or a new orientation.
-    // (the customise screen shows one full-screen view while it is up - customise.cpp puts the views back)
-    if (g_builtPlayers > 1 && !features::CustomiseOpen() &&
+    // (the customise screen and photo mode show one full-screen view while up - they put the views back)
+    if (g_builtPlayers > 1 && !features::CustomiseOpen() && !features::PhotoModeOpen() &&
         (count != static_cast<uint32_t>(g_builtPlayers) || layout != g_builtLayout))
         Build(renderer, g_builtPlayers, layout);
 }

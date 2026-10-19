@@ -346,4 +346,145 @@ inline constexpr uint8_t kAudio_n0[] = {0xEB,0x0A};
 inline constexpr BytePatch kAudio[] = {
     {DS_PATCH_NAME("Audio: own gunshots stay positional while aiming"), 0x004A1D71, kAudio_o0, kAudio_n0, 2, false},
 };
+inline constexpr uint8_t kSceneMessages_o0[] = {0x8B,0xCB,0x50,0xE8,0x13,0x7E,0xFD,0xFF,0x50};
+inline constexpr uint8_t kSceneMessages_n0[] = {0x50,0x8D,0x8C,0xE4,0xE8,0x04,0x00,0x00,0x51};
+inline constexpr BytePatch kSceneMessages[] = {
+    {DS_PATCH_NAME("Scene loader: object name in the missing-parent message"), 0x004F9485, kSceneMessages_o0, kSceneMessages_n0, 9, false},
+};
+inline constexpr uint8_t kCommandeer_o0[] = {0x0F,0x85,0xE1,0x00,0x00,0x00};
+inline constexpr uint8_t kCommandeer_n0[] = {0x90,0x90,0x90,0x90,0x90,0x90};
+inline constexpr uint8_t kCommandeer_o1[] = {0x74,0x1C};
+inline constexpr uint8_t kCommandeer_n1[] = {0x90,0x90};
+inline constexpr uint8_t kCommandeer_o2[] = {0x74,0x1B};
+inline constexpr uint8_t kCommandeer_n2[] = {0x90,0x90};
+inline constexpr uint8_t kCommandeer_o3[] = {0x74,0x1B};
+inline constexpr uint8_t kCommandeer_n3[] = {0x90,0x90};
+inline constexpr BytePatch kCommandeer[] = {
+    {DS_PATCH_NAME("Cheats: board vehicles with enemy crew"), 0x0043D039, kCommandeer_o0, kCommandeer_n0, 6, false},
+    {DS_PATCH_NAME("Cheats: every vehicle's sound bank"), 0x00438598, kCommandeer_o1, kCommandeer_n1, 2, false},
+    {DS_PATCH_NAME("Cheats: every vehicle's physics body (1)"), 0x00438DE5, kCommandeer_o2, kCommandeer_n2, 2, false},
+    {DS_PATCH_NAME("Cheats: every vehicle's physics body (2)"), 0x00439385, kCommandeer_o3, kCommandeer_n3, 2, false},
+};
+inline constexpr uint8_t kPlayerVoice_o0[] = {0x85,0xC0};
+inline constexpr uint8_t kPlayerVoice_n0[] = {0x31,0xC0};
+inline constexpr uint8_t kPlayerVoice_o1[] = {0x85,0xC0};
+inline constexpr uint8_t kPlayerVoice_n1[] = {0x31,0xC0};
+inline constexpr uint8_t kPlayerVoice_o2[] = {0x0F,0x84,0x99,0x00,0x00,0x00};
+inline constexpr uint8_t kPlayerVoice_n2[] = {0x90,0x90,0x90,0x90,0x90,0x90};
+inline constexpr uint8_t kPlayerVoice_o3[] = {0x75,0x73};
+inline constexpr uint8_t kPlayerVoice_n3[] = {0x90,0x90};
+inline constexpr BytePatch kPlayerVoice[] = {
+    {DS_PATCH_NAME("Voices: the soldier you control talks"), 0x00436731, kPlayerVoice_o0, kPlayerVoice_n0, 2, false},
+    {DS_PATCH_NAME("Voices: the soldier you control calls out enemies"), 0x00407FFB, kPlayerVoice_o1, kPlayerVoice_n1, 2, false},
+    {DS_PATCH_NAME("Voices: the soldier you control shouts incoming grenade"), 0x00404FBF, kPlayerVoice_o2, kPlayerVoice_n2, 6, false},
+    {DS_PATCH_NAME("Voices: the soldier you control says man down"), 0x00423FFD, kPlayerVoice_o3, kPlayerVoice_n3, 2, false},
+};
+inline constexpr uint8_t kDebugKeys_o0[] = {0x75,0x01};
+inline constexpr uint8_t kDebugKeys_n0[] = {0xEB,0x01};
+inline constexpr BytePatch kDebugKeys[] = {
+    {DS_PATCH_NAME("Developer: debug key bindings registered"), 0x0044715C, kDebugKeys_o0, kDebugKeys_n0, 2, false},
+};
+inline constexpr uint8_t kLimits_o0[] = {0xF4,0x01,0x00,0x00};
+inline constexpr uint8_t kLimits_n0[] = {0x00,0x20,0x00,0x00};
+inline constexpr uint8_t kLimits_o1[] = {0xC8,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_n1[] = {0x00,0x08,0x00,0x00};
+inline constexpr uint8_t kLimits_o2[] = {0x90,0x01,0x00,0x00};
+inline constexpr uint8_t kLimits_n2[] = {0x00,0x10,0x00,0x00};
+inline constexpr uint8_t kLimits_o3[] = {0x90,0x01,0x00,0x00};
+inline constexpr uint8_t kLimits_n3[] = {0x00,0x40,0x00,0x00};
+inline constexpr uint8_t kLimits_o4[] = {0x90,0x01,0x00,0x00};
+inline constexpr uint8_t kLimits_n4[] = {0x00,0x10,0x00,0x00};
+inline constexpr uint8_t kLimits_o5[] = {0x50,0xC3,0x00,0x00};
+inline constexpr uint8_t kLimits_n5[] = {0x80,0x1A,0x06,0x00};
+inline constexpr uint8_t kLimits_o6[] = {0xC8,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_n6[] = {0x00,0x08,0x00,0x00};
+inline constexpr uint8_t kLimits_o7[] = {0x00,0x00,0x01,0x00};
+inline constexpr uint8_t kLimits_n7[] = {0x00,0x00,0x10,0x00};
+inline constexpr uint8_t kLimits_o8[] = {0xE8,0x03,0x00,0x00};
+inline constexpr uint8_t kLimits_n8[] = {0xFE,0xFF,0x00,0x00};
+inline constexpr uint8_t kLimits_o9[] = {0x04,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n9[] = {0x04,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o10[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n10[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o11[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n11[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o12[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n12[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o13[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n13[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o14[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n14[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o15[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n15[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o16[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n16[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o17[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n17[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o18[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n18[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o19[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n19[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o20[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n20[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o21[] = {0x00,0x4B,0x00,0x00};
+inline constexpr uint8_t kLimits_n21[] = {0x00,0x00,0x04,0x00};
+inline constexpr uint8_t kLimits_o22[] = {0x53,0xAF,0x02,0x00};
+inline constexpr uint8_t kLimits_n22[] = {0x53,0xAF,0x42,0x00};
+inline constexpr uint8_t kLimits_o23[] = {0x02};
+inline constexpr uint8_t kLimits_n23[] = {0x20};
+inline constexpr uint8_t kLimits_o24[] = {0x02,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_n24[] = {0x20,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_o25[] = {0x03,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_n25[] = {0x0C,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_o26[] = {0x06,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_n26[] = {0x20,0x00,0x00,0x00};
+inline constexpr uint8_t kLimits_o27[] = {0x00,0x00,0x02,0x00};
+inline constexpr uint8_t kLimits_n27[] = {0x00,0x00,0x08,0x00};
+inline constexpr BytePatch kLimits[] = {
+    {DS_PATCH_NAME("Limits: Karma constraints 500 -> 8192"), 0x004FDFCE, kLimits_o0, kLimits_n0, 4, false},
+    {DS_PATCH_NAME("Limits: Karma bodies 200 -> 2048"), 0x004FDFD6, kLimits_o1, kLimits_n1, 4, false},
+    {DS_PATCH_NAME("Limits: collision models 400 -> 4096"), 0x004FE098, kLimits_o2, kLimits_n2, 4, false},
+    {DS_PATCH_NAME("Limits: collision pairs 400 -> 16384"), 0x004FE0B9, kLimits_o3, kLimits_n3, 4, false},
+    {DS_PATCH_NAME("Limits: collision space objects 400 -> 4096"), 0x004FE0BE, kLimits_o4, kLimits_n4, 4, false},
+    {DS_PATCH_NAME("Limits: particle budget 50000 -> 400000 bytes"), 0x004104E6, kLimits_o5, kLimits_n5, 4, false},
+    {DS_PATCH_NAME("Limits: event queue 200 -> 2048"), 0x00410528, kLimits_o6, kLimits_n6, 4, false},
+    {DS_PATCH_NAME("Limits: render command arena 64 KB -> 1 MB"), 0x004CB2D6, kLimits_o7, kLimits_n7, 4, false},
+    {DS_PATCH_NAME("Limits: script-id table up to id 65534"), 0x004CA4FB, kLimits_o8, kLimits_n8, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint table 600 -> 8192 (allocation)"), 0x004102BD, kLimits_o9, kLimits_n9, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x401CAC"), 0x00401CAE, kLimits_o10, kLimits_n10, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x401DDF"), 0x00401DE1, kLimits_o11, kLimits_n11, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x40DA3F"), 0x0040DA41, kLimits_o12, kLimits_n12, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x413B4D"), 0x00413B4F, kLimits_o13, kLimits_n13, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D13D2"), 0x004D13D4, kLimits_o14, kLimits_n14, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D14C0"), 0x004D14C2, kLimits_o15, kLimits_n15, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D14F7"), 0x004D14F9, kLimits_o16, kLimits_n16, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D1517"), 0x004D1519, kLimits_o17, kLimits_n17, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D1534"), 0x004D1536, kLimits_o18, kLimits_n18, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D1546"), 0x004D1548, kLimits_o19, kLimits_n19, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D1557"), 0x004D1559, kLimits_o20, kLimits_n20, 4, false},
+    {DS_PATCH_NAME("Limits: waypoint count field 0x4D155E"), 0x004D1560, kLimits_o21, kLimits_n21, 4, false},
+    {DS_PATCH_NAME("Limits: save buffer + 4 MB"), 0x004154A7, kLimits_o22, kLimits_n22, 4, false},
+    {DS_PATCH_NAME("Limits: AI think budget clamp 2 -> 32 (compare)"), 0x004016BC, kLimits_o23, kLimits_n23, 1, false},
+    {DS_PATCH_NAME("Limits: AI think budget clamp 2 -> 32 (store)"), 0x004016C2, kLimits_o24, kLimits_n24, 4, false},
+    {DS_PATCH_NAME("Limits: A* searches per frame 3 -> 12"), 0x00509ACB, kLimits_o25, kLimits_n25, 4, false},
+    {DS_PATCH_NAME("Limits: positional sound voices 6 -> 32"), 0x0055F22B, kLimits_o26, kLimits_n26, 4, false},
+    {DS_PATCH_NAME("Limits: decal store 128 KB -> 512 KB"), 0x00521BDD, kLimits_o27, kLimits_n27, 4, false},
+};
+struct PatchGroup {
+    const char* name;
+    const BytePatch* patches;
+    size_t count;
+};
+inline constexpr PatchGroup kAllGroups[] = {
+    {"kWidescreen", kWidescreen, sizeof(kWidescreen) / sizeof(kWidescreen[0])},
+    {"kHud", kHud, sizeof(kHud) / sizeof(kHud[0])},
+    {"kPad", kPad, sizeof(kPad) / sizeof(kPad[0])},
+    {"kTiming", kTiming, sizeof(kTiming) / sizeof(kTiming[0])},
+    {"kAudio", kAudio, sizeof(kAudio) / sizeof(kAudio[0])},
+    {"kSceneMessages", kSceneMessages, sizeof(kSceneMessages) / sizeof(kSceneMessages[0])},
+    {"kCommandeer", kCommandeer, sizeof(kCommandeer) / sizeof(kCommandeer[0])},
+    {"kPlayerVoice", kPlayerVoice, sizeof(kPlayerVoice) / sizeof(kPlayerVoice[0])},
+    {"kDebugKeys", kDebugKeys, sizeof(kDebugKeys) / sizeof(kDebugKeys[0])},
+    {"kLimits", kLimits, sizeof(kLimits) / sizeof(kLimits[0])},
+};
 }  // namespace gen

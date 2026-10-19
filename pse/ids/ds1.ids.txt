@@ -1,0 +1,970 @@
+# PSE ID database: Conflict: Desert Storm (game id ds1). Source of truth - compiled by scripts/gen_ids.py into
+# src/generated/pse_ids_ds1.h, pse/include/pse/pse_ids_ds1.h and docs/sdk/reference/ids-ds1.md.
+# Format + rules: docs/sdk/reference/ids.md. Ids listed in ds1.published.txt are frozen for ever: never removed,
+# renumbered, renamed or given another kind. New ids take the next free number (never a freed one).
+#
+#   game <id> <title>
+#   database <n>                                  (+1 by gen_ids.py --publish)
+#   build <name> <pe timestamp> <image size> <sha256 | -> <notes>
+#   [ids]                <id> <name> <kind> <description>      kind = function | site | global | vtable | data
+#   [addresses <build>]  <id> <va> <signature>
+#
+# signature: hex bytes expected at <va> ("??" = any byte), or "@0x<va2>:<hex>" = bytes at another address (globals
+# and IAT slots: a code window around an instruction that uses the address), "-" = not verified, "?" = to be filled
+# by `python scripts/gen_ids.py --fill-signatures ds1` (from the exe). 4..16 bytes.
+
+game ds1 Conflict: Desert Storm
+database 1
+
+# Steam and GOG DesertStorm.exe are byte-identical. sha256 = the file with the 4 GB (Large Address Aware) flag cleared.
+build steam-gog-1.0 594D0000 00403000 D712F5EC82C14DA66B098332B3CC9C99689091F46317112EA35DFD393DC3E164 Steam + GOG DesertStorm.exe (identical), 4 GB flag ignored
+
+[ids]
+
+# ---- Functions ----
+1     Main_MessageLoop              function message loop; calls the per-frame dispatcher while the app is active
+2     Main_FrameDispatch            function per-frame dispatcher (switch on Main_DispatchMode)
+3     Game_Update                   function one game update (dispatch mode 0): input, script update, world, render
+4     Level_LoadPending             function dispatch mode 1: unloads the current level and loads Level_NextName
+5     Level_Unload                  function unloads the current level
+6     Level_Init                    function cdecl(name): level init - archive, sound cache, script DLL / text manifest, scene, routes
+7     Level_SetupPlayers            function player set-up after level init: camera + soldier per viewport
+8     Script_LoadMissionDll         function stdcall(name) ret 4: LoadLibrary + LevelSetup(&Script_ApiTable) -> Script_Object
+9     Script_LoadTextLevel          function thiscall(loader [0x60ED9C], name): DDay text level manifest
+10    Render_Frame                  function render loop (per viewport: world, HUD, render lists)
+11    Render_PlayerView             function cdecl(player): world + HUD of one player's view
+12    Render_SplitActive            function cdecl() -> 0 while a cutscene renders full screen
+13    Window_Create                 function creates the game window (class ConflictDesertStorm)
+14    Window_Proc                   function game window procedure
+15    Window_ClipCursor             function clips the cursor to the window rect (Window_ClipRect)
+16    Window_ShowCursor             function cdecl(int show): hides / shows the Windows cursor
+17    Tables_LoadAll                function start-up: loads the catalog.dat CSV tables (Weaps, Inven, HStat, ...)
+18    Startup_OptionFlag            function cdecl(char letter) -> start-up option set ('d', 'c', 'M', 'u' ...)
+19    FrontEnd_SetState             function cdecl(state): switch the front-end state machine (ignored while FrontEnd_StateBusy)
+20    FrontEnd_EnterScreen          function cdecl(state): enter the new screen (screen vtable +0x18)
+21    FrontEnd_LeaveScreen          function leave the current screen (screen vtable +0x1C)
+22    FrontEnd_ScreenForState       function cdecl(state) -> screen object (states 1..0x3D, null for unknown)
+23    FrontEnd_Transition           function front-end screen transition (~330 ms zoom / fade)
+24    Menu_BackPressed              function cdecl(0) -> non-zero when the menu back action fired
+25    Menu_DrawPanel                function thiscall(screen, 6, 0): menu panel background
+26    Menu_DrawTitle                function thiscall(screen, title hash, 1): menu title (returns nothing)
+27    Menu_FontLineHeight           function cdecl(font) -> st0: fixed menu line height (19 large font, else 10)
+28    Menu_DrawChoiceRow            function thiscall(screen, id, x, y) ret 0xC: choice row (label + value)
+29    Menu_DrawItemText             function thiscall(screen, item, int rect[4], font, selected) ret 0x10
+30    Menu_DrawPrompts              function menu prompt line (select / back prompts)
+31    MainMenu_Ctor                 function main menu class constructor (also used for other list screens)
+32    MainMenu_Create               function main menu create (list + item objects)
+33    MainMenu_Setup                function main menu set-up: SINGLE PLAYER / MULTIPLAYER / OPTIONS / QUIT
+34    MainMenu_Select               function main menu selection (vtable +0x10)
+35    MainMenu_Enter                function main menu enter (vtable +0x18, runs set-up every time)
+36    MainMenu_ItemDraw             function main menu item draw callback
+37    SubScreen_Ctor                function Options sub-screen class constructor (CONTROLLER OPTIONS class)
+38    SubScreen_Setup               function Options sub-screen set-up
+39    SubScreen_Select              function Options sub-screen selection
+40    SubScreen_Draw                function Options sub-screen draw
+41    SpMenu_Update                 function SINGLE PLAYER menu update (TRAINING / CAMPAIGN / LOAD GAME)
+42    Difficulty_ScreenUpdate       function DIFFICULTY screen update (item id -> difficulty, next state)
+43    Difficulty_ScreenSetup        function DIFFICULTY screen set-up (items 0x803-0x805)
+44    Uniform_ScreenUpdate          function SELECT UNIFORM screen update
+45    MissionList_Update            function mission list update: pick -> next level
+46    MenuItem_Ctor                 function thiscall(): plain menu item constructor (0x24 bytes)
+47    MenuItem_Set                  function thiscall(id, text hash, 0, flags, 0, 0, draw cb, 0)
+48    MenuChoice_Ctor               function thiscall(): choice item constructor (0x68 bytes)
+49    MenuChoice_SetOptions         function choice item: set its option texts
+50    MenuList_Ctor                 function thiscall(font, sheet, 1): menu list constructor (vtable MenuList_Vtable)
+51    MenuList_Reserve              function thiscall(count) -> non-zero
+52    MenuList_AddToPool            function thiscall(item)
+53    MenuList_Input                function thiscall() -> activated item id (short); runs the list input once
+54    MenuList_FindItem             function cdecl/thiscall(list, id) -> item
+55    MenuList_ItemById             function list thiscall(id) -> item
+56    Cheats_Unlock                 function sets the cheats-unlocked flag + rebuilds the front-end screens
+57    Text_Lookup                   function thiscall(table Text_Strings, hash) ret 4 -> const char* (catalog text)
+58    Text_LoadLoc                  function loads a level's MnnStrs.loc into the text table
+59    Font_DrawText                 function thiscall(font, text, x, baseline y, 0)
+60    Font_TextWidth                function thiscall(font, text) -> width
+61    Font_SetColour                function thiscall(font, 0xAARRGGBB)
+62    Font_RawHeight                function thiscall(font) -> ax: font+0x18
+63    Font_LineStep                 function thiscall(font) -> ax: font+0x14
+64    Font_TextHeight               function thiscall(font, text) -> ax: tallest glyph (scaled)
+65    Sheet_Ctor                    function image sheet constructor (0x50 bytes)
+66    Sheet_DrawImage               function image / glyph draw (pre-transformed quads)
+67    Sheet_ImageRawWidth           function thiscall(sheet, image) -> ax: width in the sheet
+68    Sheet_ImageRawHeight          function thiscall(sheet, image) -> ax: height in the sheet
+69    Sheet_ImageWidth              function thiscall(sheet, image) -> st0: width x sheet scale
+70    Sheet_ImageHeight             function thiscall(sheet, image) -> st0: height x sheet scale
+71    Sheet_SetScale                function thiscall(sheet, sx, sy, flag) ret 0xC
+72    Sheet_SetScalePercent         function thiscall(sheet, percent) ret 4
+73    Renderer_CreateDevice         function creates the D3D8 device (present params at renderer +0x84)
+74    Renderer_CheckDevice          function thiscall(renderer): device lost / reset check
+75    Renderer_ResetViewports       function thiscall(renderer): one full-screen viewport
+76    Renderer_SetViewport          function thiscall(renderer, D3DVIEWPORT8*)
+77    Renderer_AddViewport          function thiscall(renderer, ...): adds a viewport
+78    Renderer_GetViewport          function thiscall(renderer, i)
+79    Renderer_BuildSplitViewports  function thiscall(renderer, table) ret 4: split-screen viewports
+80    Renderer_DrawFan              function thiscall(renderer, prims, verts, stride) ret 0xC: 2-D quads (FVF 0x144)
+81    Renderer_SetTexture           function thiscall(renderer, stage, texture): cached SetTexture
+82    Renderer_Projection           function projection matrix from FOV and the current viewport
+83    Renderer_SetView              function (view, pos, rot): view matrix, rot in degrees
+84    Texture_Register              function thiscall(texture manager, name, flags): registers a texture name
+85    Texture_LoadBatch             function thiscall(texture manager, progress cb): loads the registered textures
+86    Texture_Load                  function per-texture load
+87    Texture_LoadByName            function texture load by file name (through the resolver)
+88    File_ReadWhole                function cdecl(name, char** buf, int* size, heap, type) -> 1 ok
+89    File_Resolve                  function (name, paths, flags): resolves a file name (archive index, game dir, Data)
+90    File_Open                     function (name, flags): opens a game file
+91    File_Exists                   function exists check (archive mode: archive index lookup)
+92    File_Enumerate                function (pattern, callback, user): enumerates files
+93    Archive_Open                  function thiscall(file, path) ret 4: archive-aware opener
+94    Archive_Lookup                function archive index lookup by hash
+95    Hash_Name                     function archive / name hash (LFSR); WEAPONS.RFX = 0x4475E8D7
+96    Hash_TextureName              function texture-name hash (LFSR over the lower-cased name)
+97    Hash_Elf                      function ELF hash (sound banks)
+98    Mem_Alloc                     function cdecl(size, tag) -> memory (game allocator; retries while memory is short)
+99    Mem_AllocObject               function cdecl(size, tag) -> memory (object allocator)
+100   Mem_Free                      function cdecl(memory)
+101   Heap_Ctor                     function thiscall(size, name) ret 8: stack arena (Global Heap)
+102   Heap_CtorOnBuffer             function thiscall(buffer, size, name) ret 0xC
+103   Heap_Alloc                    function thiscall(size) ret 4 -> 0 if full
+104   Debug_Print                   function the game's debug print (a bare ret in the shipped exe)
+105   Debug_ErrorBox                function cdecl(fmt, ...): "Error" message box
+106   Debug_WarningBox              function cdecl(fmt, ...): "Warning" box
+107   DebugKeys_Register            function registers the debug key map (needs start-up flag M)
+108   DebugKeys_Dispatch            function per-frame debug key dispatcher
+109   Debug_ToggleCamera            function debug handler "Toggle Camera State" (player 1 mode 1 <-> 3)
+110   Debug_ToggleAi                function debug handler: enemy AI on / off
+111   Debug_CompleteMission         function debug handler: mission success (script message 0x11)
+112   Debug_ResurrectAll            function debug handler: resurrect all
+113   Clock_Ms                      function game clock in ms (QPC based)
+114   Timer_Ctor                    function timer object constructor
+115   Timer_Dt                      function gameplay dt getter (seconds)
+116   Timer_Timescale               function thiscall(timer) -> float timer+0x28
+117   Timer_Update                  function fastcall(timer): per-frame timer update
+118   Random_Seed                   function cdecl(seed): srand + the two random tables
+119   Random_Range                  function cdecl(min, max) -> float from the random table
+120   Launcher_LoadSettings         function reads the registry Device Settings
+121   Launcher_Defaults             function default device settings (800x600)
+122   Launcher_Ok                   function launcher OK: applies the device settings
+123   Launcher_ListModes            function fills the resolution list (4:3 filter)
+124   Launcher_Command              function shared WM_COMMAND handler of the launcher dialogs
+125   Launcher_MainProc             function launcher dialog 106 procedure
+126   Launcher_DetailProc           function Detail Settings dialog 108 procedure
+127   Player_Get                    function cdecl(i) -> player object (Players[i])
+128   Input_AddBlock                function adds an input block for a player
+129   Input_PickSoldier             function fastcall(block): hand the block its squad member
+130   Input_ButtonValue             function binding evaluation for buttons (checks the block's devices)
+131   Input_AxisValue               function (block, action, opposite) -> analog value
+132   Input_Mode                    function input mode: 1 keyboard / mouse, 2 joypad
+133   Input_SetControlMode          function (mode): block control mode +0x318 (0 player, 1 aim, 2 AI)
+134   Input_TakeSoldier             function a block takes control of a soldier
+135   Bindings_Lookup               function (table, set, slot, action) -> binding entry
+136   Bindings_Name                 function (code) -> binding display name
+137   Bindings_Load                 function (file, set): loads default.key / current.key
+138   Bindings_Save                 function saves binding set 0 to current.key
+139   Mouse_SmoothedDelta           function smoothed mouse delta
+140   Mouse_Poll                    function polls the DirectInput mouse
+141   Joystick_Poll                 function polls one joystick (DIJOYSTATE2)
+142   Joystick_PollAll              function polls all 8 joystick slots
+143   Joystick_Enumerate            function enumerates game controllers (once at start-up)
+144   Input_WaitAnyKey              function (timeout): PLEASE PRESS ANY KEY wait after a level load
+145   Rumble_Start                  function starts a force-feedback entry in Rumble_Table
+146   Rumble_Effect                 function (block, effect, strength): plays an effect row of Rumble_EffectTable
+147   Pause_Toggle                  function fastcall(block): toggles pause (front-end state 0xF)
+148   Objectives_Open               function opens the objectives screen (state 0xD)
+149   Hud_DrawPlayer                function cdecl(player): compass, texts
+150   Hud_DrawReticle               function cdecl(block): crosshair / target reticle
+151   Hud_DrawItemIcons             function thiscall(input manager): blinking item icons of all players
+152   Hud_DrawItemIcon              function thiscall(block): one player's blinking item icon
+153   Hud_DrawInventory             function inventory bar draw
+154   Hud_OpenInventory             function inventory open / layout
+155   Hud_DrawSoldierPanels         function soldier panels / weapon / ammo
+156   Hud_SoldierPanelCallback      function render-list callback for the soldier panels (this = 7th arg)
+157   Hud_SetupPanels               function HUD screen set-up: builds the soldier panels
+158   Hud_AnchorPosition            function (out, view, anchor): HUD anchor point of a view
+159   Hud_DrawObjectiveBar          function tutorial / objective bar
+160   Hud_ActionPrompt              function (block): context action prompt ("[X] MOUNT")
+161   InfoBar_Draw                  function info bar (item names, pick-ups) draw
+162   InfoBar_SetText               function thiscall(bar, text)
+163   PopupBar_Show                 function (text, ms): bottom pop-up bar
+164   PopupBar_Draw                 function pop-up bar draw (view controller)
+165   View_FlushRenderList          function thiscall(view controller): per-view render list + letterbox bars
+166   View_Flash                    function (view controller, ms, r, g, b): screen flash
+167   Soldier_TakeDamage            function thiscall(soldier, float amount, attacker) ret 8 (vtable slot 15)
+168   Soldier_Heal                  function thiscall(soldier, float) ret 4 (vtable slot 14)
+169   Soldier_Knockback             function thiscall ret 0xC: explosion push (vtable slot 3)
+170   Soldier_ExplosionDeath        function explosion death handler (vtable +0x10): gibs + blood pool
+171   Soldier_Brain                 function AI brain update
+172   Soldier_AiActions             function AI actions update
+173   Soldier_Move                  function soldier mover
+174   Soldier_PuppetMove            function network puppet mover (versus code)
+175   Soldier_ApplyNetState         function thiscall(soldier, 0, record) ret 8: versus state applier
+176   Soldier_BuildNetState         function versus state record builder
+177   Soldier_SetMoveState          function movement state
+178   Soldier_ClassQuery            function vtable +0x4C(n): class query (1 player-driven, 5 combat ...)
+179   Soldier_AddItem               function (soldier, item, a, b): add to inventory (stacks rounds)
+180   Soldier_TakeItem              function (soldier, item, 0, 0): remove from inventory
+181   Soldier_HoldItem              function (soldier, item, animated): hold an item
+182   Soldier_ApplySkin             function (soldier, skin entry)
+183   Soldier_AttachGear            function thiscall(soldier, role, faction) ret 8: hats / packs / pouches
+184   Soldier_NightVision           function (item): night vision goggles on / off
+185   Soldier_Mount                 function mount a vehicle seat
+186   Soldier_Dismount              function (0, 0): leave the vehicle
+187   Soldier_Speak                 function thiscall(sample, quiet sample, AI only, ...) ret 0x18
+188   Soldier_SetScriptAnim         function (anim, 3): script animation
+189   Soldier_Teleport              function (pos, 1, 0, 0, 0)
+190   Soldier_DrawSkin              function skinning + shadow volume of a soldier
+191   Character_Move                function character mover (position, fall speed, grounded)
+192   Soldier_RouteTo               function route-to (A* request + scan)
+193   Ai_UpdateDormancy             function unseen enemies sleep (+0x280)
+194   Weapon_Fire                   function fire path (shot sound, rumble, projectiles)
+195   Weapon_PullTrigger            function thiscall(weapon, shooter, 0, 0, 0) ret 0x10
+196   Weapon_Throw                  function thiscall(item, soldier): throw a grenade
+197   Weapon_SetRounds              function item rounds
+198   Weapon_SetFireMode            function fire mode
+199   Projectile_Spawn              function thiscall(manager, desc) ret 4
+200   Skins_Parse                   function (text, size, side, role): CSkins_*.txt
+201   Skins_Find                    function (key, uniform, role) -> skin entry
+202   Weapon_IconLookup             function HUD picture name -> image id
+203   Level_BindDefinitions         function binds definition resources for the level's objects
+204   Definition_BindObject         function cdecl(object): binds one object's definition resources
+205   Definition_Find               function cdecl(name, stat type) -> definition
+206   Scene_NewHlo                  function cdecl(record) -> object: scene object factory
+207   Object_BaseCtor               function (record, stat): scene object base constructor
+208   Object_ById                   function object by script id
+209   Object_GetRotation            function rotation in degrees
+210   Vehicle_Ctor                  function vehicle constructor (crew mounted, physics, engine bank)
+211   Vehicle_Update                function vehicle update (vtable slot 0)
+212   Vehicle_TakeDamage            function thiscall(vehicle, dir*, amount, attacker) ret 0xC
+213   Vehicle_SeatSoldier           function seat resolve / place a soldier
+214   Vehicle_FindEnterable         function enter search (nearby vehicles with free seats)
+215   World_Ray                     function thiscall(world; ignore, from, to, hit 0xC0, flags, 0) ret 0x18; hit point +0x28
+216   World_DrawSky                 function thiscall(world, a, b) ret 8
+217   World_DrawTransparents        function thiscall(world)
+218   World_AddDecal                function thiscall(world, params): decal add
+219   Decals_Clear                  function clears the decal ring
+220   Model_Find                    function (name) -> loaded model
+221   Model_Load                    function thiscall(world, type, name, cache, 0)
+222   Instance_FindConnector        function thiscall(instance, hash) -> index or -1
+223   Instance_SetConnectorModel    function thiscall(instance, index, model) ret 8
+224   Physics_Step                  function steps the Karma world once per frame
+225   Karma_WorldStep               function stdcall(world, dt)
+226   PhysicsList_Add               function adds an object to the physics list
+227   Atmosphere_Update             function fastcall(atmosphere): time of day, colour keys, sun
+228   Atmosphere_SetFog             function thiscall(atmosphere, start, stop)
+229   Portal_DrawZones              function (start zone, frustum, flag): portal renderer
+230   Shadow_BuildObject            function stencil shadow volume builder (objects)
+231   Shadow_BuildSoldier           function stencil shadow volume builder (soldiers)
+232   Camera_Position               function thiscall(camera manager, cam) -> float[3] (cm, y up)
+233   Camera_Rotation               function thiscall(camera manager, cam) -> float[3] pitch, yaw, roll
+234   Camera_ApplyView              function sets the view from the camera
+235   Router_FindPath               function thiscall(router, start, goal, mode) -> 0 found / 1 closest / 2 refused
+236   Routing_Load                  function (level): loads <level>.qtd + .rmd
+237   Routing_BuildFromScene        function builds quadtree + route markers from collision
+238   Sound_Play                    function thiscall(manager, bank, id, pos | null, min dist, x)
+239   Sound_LoadBank                function thiscall(manager, name, flag): .sbk
+240   Sound_FindBank                function thiscall(manager, ElfHash) -> loaded bank
+241   Sound_LoadCache               function thiscall(manager, path): level .sch
+242   Sound_SetListeners            function (count, pos, rot)
+243   Stream_Load                   function PSF stream load
+244   Movie_Start                   function script API MovieStart (sets the cinematic bit)
+245   Movie_End                     function script API MovieEnd
+246   Movie_CancelQuery             function script API movie cancel (fade, returns 1)
+247   Objective_Add                 function campaign: add an objective (index in al)
+248   Objective_Get                 function campaign: objective by index
+249   Campaign_SetBriefingText      function (hash, slot)
+250   Campaign_EndMission           function (result: 2 success, 1 failure)
+251   Campaign_SetNextLevel         function (name)
+252   Campaign_Reset                function resets the campaign for a new start
+253   Campaign_Start                function (1)
+254   Difficulty_Set                function thiscall(difficulty, level)
+255   Difficulty_Level              function thiscall(difficulty) -> level
+256   Difficulty_Multiplier         function thiscall(difficulty, which) -> multiplier
+257   Uniform_Set                   function (uniform): SAS / Delta + speech language
+258   Save_Game                     function writes a save
+259   Save_MakeName                 function save file name
+260   Save_SavesLeft                function saves left this mission
+
+# ---- Code sites ----
+261   Site_FrameDispatchCall        site     call Main_FrameDispatch in the message loop (frame hook)
+262   Site_WindowStyleCheck         site     message loop: forced window style every active frame
+263   Site_DeviceCheckCall          site     message loop: call Renderer_CheckDevice
+264   Site_RenderCall               site     Game_Update: call Render_Frame(1)
+265   Site_FrontEndUpdateCall       site     Game_Update: front-end screen update
+266   Site_AtmosphereUpdateCall     site     Game_Update: call Atmosphere_Update
+267   Site_SwayCall                 site     Game_Update: vegetation sway update
+268   Site_InputFrameCall           site     Game_Update: per-frame input poll
+269   Site_ScriptUpdateCall         site     Game_Update: script object update()
+270   Site_ActionPromptCall         site     call Hud_ActionPrompt after the per-view loop
+271   Site_CursorFlagRead           site     mov eax, [Menu_CursorFlag] (menu cursor draw)
+272   Site_ObjectiveBarCall         site     call Hud_DrawObjectiveBar
+273   Site_FullViewportCall         site     render loop: SetViewport(full) after the per-view loop
+274   Site_ViewFlushCall            site     render loop: call View_FlushRenderList per view
+275   Site_ReticleCall              site     call Hud_DrawReticle
+276   Site_ItemIconsCall            site     call Hud_DrawItemIcons
+277   Site_HudDrawCall              site     call Hud_DrawPlayer
+278   Site_SkyCall                  site     per view: call World_DrawSky
+279   Site_TransparentsCall         site     per view: call World_DrawTransparents
+280   Site_ListenerGather           site     render loop: listener position gather (Camera_Position)
+281   Site_LevelInitCall            site     call Level_Init
+282   Site_KeyWaitCall              site     call Input_WaitAnyKey after the level load
+283   Site_LevelArchiveCall         site     Level_Init: adds <level>.dat
+284   Site_LevelSoundCacheCall      site     Level_Init: Sound_LoadCache(<level>.sch)
+285   Site_LevelMusicBankCall       site     Level_Init: Sound_LoadBank(<level>Music.sbk)
+286   Site_TextLevelCall            site     Level_Init: call Script_LoadTextLevel
+287   Site_OctreeFlagCall           site     Level_Init: Startup_OptionFlag('c') before the octree build
+288   Site_BuildNavCall             site     Level_Init: call Routing_BuildFromScene
+289   Site_RoutingLoadCall          site     Level_Init: call Routing_Load
+290   Site_PickSoldierCall          site     Level_SetupPlayers: call Input_PickSoldier for player 1
+291   Site_PlaceWindowCall          site     call [SetWindowPos] after the launcher
+292   Site_CreateWindowCall         site     Window_Create: call [CreateWindowExA]
+293   Site_MissionDllLoadCall       site     Script_LoadMissionDll: call [LoadLibraryA]
+294   Site_GlobalHeapCreate         site     start-up: Heap_Ctor(1024000, "Global Heap")
+295   Site_GlyphBindCall            site     Sheet_DrawImage: call Renderer_SetTexture (page bind)
+296   Site_JoystickPollState        site     Joystick_Poll: cmp [0x754C6C], edi (state fix-up hook)
+297   Site_ScreenToClientLoad       site     Mouse_Poll: mov ebp, [ScreenToClient]
+298   Site_WorldStepCall            site     Physics_Step: call Karma_WorldStep
+299   Site_LandingCompare           site     Character_Move: fcomp [Const_LandThreshold]
+300   Site_MoverTimescaleCall       site     Character_Move: call Timer_Timescale
+301   Site_SetViewCall              site     Camera_ApplyView: call Renderer_SetView
+302   Site_AnimateCall              site     scene update: animation channel advance
+303   Site_ZoneDrawCall             site     scene draw: call Portal_DrawZones
+304   Site_DecalStoreCall           site     World_AddDecal: decal store
+305   Site_FootprintAddCall         site     footstep: call World_AddDecal
+306   Site_FootprintGate            site     footstep: squad-only footprint gate
+307   Site_AiTriggerCall            site     AI combat: call Weapon_PullTrigger
+308   Site_ThrowSpawnCall           site     Weapon_Throw: call Projectile_Spawn
+309   Site_FireSpawnCall            site     gun fire: call Projectile_Spawn
+310   Site_AimShotSound2d           site     Weapon_Fire: je (2-D shot sound while aiming)
+311   Site_SoldierBrainCall         site     soldier update: call Soldier_Brain
+312   Site_SoldierMoverCall         site     soldier update: call Soldier_Move
+313   Site_SoldierAiActionsCall     site     soldier update: call Soldier_AiActions
+314   Site_DormancyCall             site     AI turn: call Ai_UpdateDormancy
+315   Site_SaveSectionsCall         site     Save_Game: section counts
+316   Site_SaveWriteCall            site     Save_Game: fwrite of the save buffer
+317   Site_LoadLocCall              site     script API +0x58: call Text_LoadLoc
+318   Site_MovieEndMessage          site     Movie_End: push 0x12; call [ecx+8]
+319   Site_PanelCallbackPush        site     push Hud_SoldierPanelCallback
+320   Site_SoldierDrawCall          site     call Soldier_DrawSkin
+321   Site_DecalBindCall            site     decal part: call Renderer_SetTexture
+322   Imm_MainMenuCapacity          site     main menu create: push 4 (list capacity)
+323   Imm_MainMenuItemCount         site     main menu create: mov edi, 4 (item objects)
+324   Imm_BindingSets               site     push 1 (binding sets) at start-up
+325   Imm_LauncherFullscreen        site     Launcher_Ok: fullscreen flag immediate
+326   Imm_JoystickDeadzone          site     DIPROP_DEADZONE immediate (0-10000)
+327   Imm_JoystickCoopLevel         site     push 5 (DirectInput cooperative level)
+328   Imm_MouseAcceleration         site     block set-up: mouse acceleration 1
+329   Site_LauncherAspectFilter     site     Launcher_ListModes: 4:3 filter je
+
+# ---- Globals ----
+330   FrontEnd_State                global   u32: current front-end state (0xE in play, 0x14 briefing)
+331   FrontEnd_StateBusy            global   non-zero: FrontEnd_SetState ignores calls
+332   FrontEnd_MainMenuScreen       global   state 1's screen object
+333   FrontEnd_HudScreen            global   HUD screen object
+334   FrontEnd_MissionListScreen    global   state 8's screen object
+335   Main_DispatchMode             global   u32: 0 play, 1 level load, 3 other
+336   Level_SceneName               global   char[]: loaded scene ("Mission4.env")
+337   Level_NextName                global   char*: level the next load uses ("mission1.dll")
+338   Startup_Options               global   char*: built-in start-up option string ("-f -d")
+339   Startup_FirstBoot             global   1 = logo slideshow on the first front-end load
+340   Startup_PlayIntroFilm         global   1 = the front end opens with the intro film
+341   Level_ToMainMenu              global   1 = the next load goes to the main menu
+342   Renderer                      global   renderer object* (W +0x40688, H +0x4068C, device +0x40530)
+343   Renderer_Device               global   IDirect3DDevice8* (also renderer +0x40530)
+344   World                         global   world / environment object* (+0x1B8C bit 0 = cinematic)
+345   TextureManager                global   texture manager*
+346   ObjectManager                 global   object manager* (+0x30 object table)
+347   ProjectileManager             global   projectile manager*
+348   Router                        global   AI router* (A*)
+349   SoundManager                  global   sound manager*
+350   Routing_QuadTree              global   AI walkable quadtree root
+351   Routing_Markers               global   route marker set (+0 array, +4 count)
+352   Switches                      global   switch manager*
+353   CameraManager                 global   camera manager* (cameras at +8, 0x1D8 each)
+354   Difficulty                    global   difficulty object* (+4 level)
+355   Render_CurrentPlayer          global   view / player being rendered
+356   Timer_Anim                    global   animation timer* (+0x10 total ms)
+357   Timer_Game                    global   gameplay timer* (+0xA8 dt seconds)
+358   DecalManager                  global   decal manager* (+0x40 ring)
+359   Particles                     global   particle manager*
+360   EventQueue                    global   event queue* (script timers, queued calls)
+361   InfoBar                       global   info bar object*
+362   ViewController_Main           global   main view controller*
+363   ViewControllers               global   view controller* [4]
+364   PhysicsList                   global   physics object list*
+365   Karma_World                   global   MathEngine Karma world*
+366   GlobalHeap                    global   Global Heap stack arena*
+367   TimeMultiplier                global   float: global time multiplier
+368   Text_Strings                  global   text table* (catalog.dat, current language)
+369   Font_Sheet                    global   image sheet* of both fonts
+370   Font_Small                    global   small font*
+371   Font_Large                    global   large font*
+372   Sheet_Hud                     global   GWInt HUD sheet* (weapon pictures, panels)
+373   Sheet_HudArt                  global   menu / HUD art sheet* (8060.img / 6448.img)
+374   Sheet_Map                     global   map sheet*
+375   Sheet_Logo                    global   NewLogo sheet*
+376   Sheet_Effects                 global   effects sheet* (crosshair, zoom, cursor)
+377   App_Active                    global   1 while the game window is active
+378   Window_Handle                 global   HWND of the game window
+379   Window_ClipRect               global   RECT the game clips the cursor to
+380   Menu_CursorFlag               global   non-zero: the render loop draws the menu cursor
+381   Input_Blocks                  global   input blocks [4], 0x478 bytes each (+0x310 soldier)
+382   Input_BlockCount              global   number of input blocks
+383   Players                       global   player objects* [4]
+384   Bindings                      global   binding table* {sets, slots, actions, data}
+385   Split_Active                  global   local multiplayer (split screen) on
+386   Split_PlayerCount             global   local players (2-4)
+387   Split_HudLayout               global   HUD layout table*
+388   Hud_Anchors                   global   float[variant][9][2] HUD anchors (filled at run time)
+389   Campaign                      global   campaign object* (objectives, briefing, first level +0x37)
+390   Saver                         global   saver object*
+391   Uniform                       global   0 SAS, 1 US Delta
+392   Script_Object                 global   level script object* (6 callbacks)
+393   Script_Module                 global   HMODULE of the level's script DLL
+394   Pause_Allowed                 global   pause flag (script API +0x460)
+395   Cheats_Unlocked               global   cheats menu unlocked
+396   Mp_Game                       global   network multiplayer game mode
+397   Scheduler                     global   AI / vehicle scheduler*
+398   Debug_QuadTree                global   debug draw: quad tree
+399   Debug_HealthBars              global   debug draw: health bars
+400   Debug_OctreeNodes             global   debug draw: octree nodes
+401   Debug_RouteMarkers            global   debug draw: route markers
+402   Gear_Table                    global   CONNOBJS.TXT table [role*4 + faction][6]
+403   Skins_Table                   global   skin tables [uniform*4 + role]
+404   Random_FloatTable             global   float[2048] random table
+405   Render_FrameCounter           global   render frame counter
+406   Joysticks                     global   IDirectInputDevice8A* [8]
+407   Joystick_Count                global   number of joysticks
+408   Joystick_States               global   input states, 0x150 bytes per joystick
+409   Rumble_Table                  global   force-feedback entries, 0x1C bytes per joystick
+410   Mouse_X                       global   menu cursor x
+411   Mouse_Y                       global   menu cursor y
+412   Mouse_State                   global   DIMOUSESTATE
+413   Input_Window                  global   HWND used for the DirectInput cooperative level
+414   DirectInput                   global   the game's IDirectInput8*
+415   File_Flags                    global   bit 0 = archive mode
+416   File_ResolvedPath             global   File_Resolve's result buffer
+
+# ---- Vtables ----
+417   Soldier_Vtable                vtable   soldier class (CHLOCharacter)
+418   Vehicle_Vtable                vtable   vehicle class (CHLOVehicle)
+419   Weapon_Vtable                 vtable   weapon object
+420   Equipment_Vtable              vtable   equipment object
+421   MainMenu_Vtable               vtable   main menu screen class
+422   SubScreen_Vtable              vtable   Options sub-screen class
+423   Options_Vtable                vtable   OPTIONS screen
+424   SpMenu_Vtable                 vtable   SINGLE PLAYER menu
+425   MissionList_Vtable            vtable   mission list screen
+426   MpScreen_Vtable               vtable   network MULTIPLAYER screen
+427   Difficulty_Vtable             vtable   DIFFICULTY screen
+428   Cheats_Vtable                 vtable   CHEATS screen
+429   MenuList_Vtable               vtable   menu list
+430   PsfStream_Vtable              vtable   WaveDataSourcePsfStream
+431   TankController_Vtable         vtable   tank controller
+
+# ---- Data ----
+432   Soldier_TakeDamageSlot        data     soldier vtable slot 15 (Soldier_TakeDamage)
+433   Soldier_HealSlot              data     soldier vtable slot 14 (Soldier_Heal)
+434   Soldier_KnockbackSlot         data     soldier vtable slot 3 (Soldier_Knockback)
+435   Vehicle_TakeDamageSlot        data     vehicle vtable slot 3 (Vehicle_TakeDamage)
+436   MainMenu_SetupSlot            data     main menu vtable +0xC (MainMenu_Setup)
+437   Options_CreateSlot            data     OPTIONS vtable create slot
+438   Options_SetupSlot             data     OPTIONS vtable set-up slot
+439   SpMenu_SetupSlot              data     SINGLE PLAYER vtable set-up slot
+440   SpMenu_UpdateSlot             data     SINGLE PLAYER vtable update slot (SpMenu_Update)
+441   MissionList_UpdateSlot        data     mission list vtable +0x10
+442   Uniform_UpdateSlot            data     SELECT UNIFORM vtable +0x10
+443   Difficulty_SetupSlot          data     DIFFICULTY vtable set-up slot
+444   Difficulty_UpdateSlot         data     DIFFICULTY vtable update slot
+445   Script_ApiTable               data     script API table (566 cdecl functions, 0x8D8 bytes)
+446   Rumble_EffectTable            data     18 x 20-byte rumble effect rows
+447   Mission_Table                 data     12 x {level, mission, title hash}
+448   Level_Names                   data     char*[19] level DLL names (Training1 ... Outro)
+449   Bindings_ActionNames          data     {char*, id} x 80 action names
+450   Script_TextLevelCommands      data     text level manifest commands {id, name[16], handler}
+451   Split_HudTable1p              data     HUD layout table: 1 player
+452   Split_HudTable2pTop           data     HUD layout table: 2 players top / bottom
+453   Split_HudTable2pSide          data     HUD layout table: 2 players side by side
+454   Const_LandThreshold           data     float 0.05: landing check
+455   Const_Aspect4x3               data     float 1.3333: launcher aspect filter
+456   Const_ShadowLengthSoldier     data     float 9000: soldier shadow extrusion
+457   Const_ShadowLengthObject      data     float 9000: object shadow extrusion
+458   Iat_Direct3DCreate8           data     IAT slot d3d8!Direct3DCreate8
+459   Iat_CreateWindowExA           data     IAT slot USER32!CreateWindowExA
+460   Iat_TimeGetTime               data     IAT slot WINMM!timeGetTime
+461   Iat_GetTickCount              data     IAT slot KERNEL32!GetTickCount
+462   Iat_Sleep                     data     IAT slot KERNEL32!Sleep
+463   Iat_QueryPerformanceCounter   data     IAT slot KERNEL32!QueryPerformanceCounter
+464   Iat_QueryPerformanceFrequency data     IAT slot KERNEL32!QueryPerformanceFrequency
+465   Iat_LoadLibraryA              data     IAT slot KERNEL32!LoadLibraryA
+466   Iat_GetProcAddress            data     IAT slot KERNEL32!GetProcAddress
+467   Iat_DialogBoxParamA           data     IAT slot USER32!DialogBoxParamA
+468   Iat_ScreenToClient            data     IAT slot USER32!ScreenToClient
+
+[addresses steam-gog-1.0]
+1     0x004115B0 8B44240483EC1CC70540ED60
+2     0x0040DE00 0FBE058CEC600083E8007412
+3     0x0040F830 83EC14555657E845FEFFFFA1
+4     0x0040DE70 8B0D24C9630053555657E881
+5     0x0040D990 558BEC6AFF68C0855D0068A4
+6     0x0040C090 558BEC6AFF68B0855D0068A4
+7     0x0040BAE0 A124C96300535633F68B5820
+8     0x00449260 8B44240450FF1570805D0085
+9     0x00449190 8B54240481EC8C0000008D44
+10    0x0040EF70 A08CEC600083EC103C010F84
+11    0x0040E0F0 83EC4C8B0D48C963005556E8
+12    0x0040E080 A148C96300F6808C1B000001
+13    0x00411470 83EC38568B7424406A006A00
+14    0x00411310 83EC40568B74244C81FE0002
+15    0x004112B0 A1606A6000684469600050FF
+16    0x00411240 8B442404568B3590825D00A3
+17    0x00411740 81EC14010000A1287E5E008B
+18    0x004B9CD0 8A44240433C983E01F8A9060
+19    0x0047EF20 568B74240883FE0E750EA154
+20    0x0047EE50 566A01E83824F9FF8B74240C
+21    0x0047ED80 568B74240856E8A51B000083
+22    0x00480930 8B4424044883F83C0F87B700
+23    0x0047A100 83EC1453568B35187C61006A
+24    0x00478380 56E85A85FEFF83F801752250
+25    0x00456EB0 8A442404568BF1B119F6E98B
+26    0x00456F40 8B4424088B5110508B411C52
+27    0x004570D0 8B4424048B0DB8ED60003BC1
+28    0x00456040 83EC2C535556570FBF7C2440
+29    0x00456A70 83EC0C53568B7424188BD989
+30    0x0047A4A0 A1207C610083EC7485C00F85
+31    0x00415020 568BF1E8F8080400C706B886
+32    0x00415070 566878635E006A3C68E88C5E
+33    0x00415120 568BF1578B4E08E8B4070D00
+34    0x004152D0 8B490856E8A70A0D006A758B
+35    0x004153B0 566A008BF1E8F62103008B06
+36    0x004153E0 8B44240C8B4C24088B542404
+37    0x00409B90 568BF1E888BD0400C7061085
+38    0x00409C90 568BF1578B4E08E844BC0D00
+39    0x00409DF0 8B4908E888BF0D00663D1608
+40    0x00409E40 566A006A068BF1E864D00400
+41    0x0048CE40 8B490856E8378F05006A758B
+42    0x00413670 8B490856E807270D006A758B
+43    0x004134E0 568BF1578B4E08E8F4230D00
+44    0x0049BAF0 83EC1453568BF1578B4E08E8
+45    0x004595D0 568BF1578B4E08E8A4C70800
+46    0x004E4F90 568BF1C70638AC5D00E85200
+47    0x004E4FB0 668B4424048B542408668941
+48    0x004E5010 6AFF6838665D0064A1000000
+49    0x004E5090 8B4424048B5424088941288B
+50    0x004E5B10 8B44240C8B542404568BF18B
+51    0x004E56C0 566878635E0068E501000068
+52    0x004E58C0 0FBF41248B512C568B742408
+53    0x004E5D80 83EC085355568BF133ED33DB
+54    0x004E6EC0 8B512C668B492633C0566685
+55    0x004E6F80 8B512C668B492633C0566685
+56    0x00402EC0 A16863600085C0751EE8626B
+57    0x004F6730 568BF18B466085C07505E8C1
+58    0x004F56D0 8B4424046A0150E814000000
+59    0x0053A7B0 A1ACCC5F0083EC0C85C05657
+60    0x0053A0F0 51568B74240C578BF985F6C7
+61    0x00539F80 8B4424048B096A0050E8B21D
+62    0x0053A0C0 668B4118C390909090909090
+63    0x0053A0E0 668B4114C390909090909090
+64    0x0053A150 518B44240856D90544835D00
+65    0x0053BBC0 83EC108B5424188BC18B4C24
+66    0x0053C9E0 81EC94000000535556578BF1
+67    0x0053C690 8B4424048B49048D0440668B
+68    0x0053C6B0 8B4424048B49048D0440668B
+69    0x0053C6D0 8B412085C08B442404741D8B
+70    0x0053C710 8B412085C08B442404741D8B
+71    0x0053C890 D9442404D80D64845D00D959
+72    0x0053C850 D9442404D80D64845D00D951
+73    0x00542AC0 515355568BF1578B86E00000
+74    0x00548920 83EC7C568BF18B8630050400
+75    0x00542E50 83EC1453568BF15733DB8B86
+76    0x00542F40 83EC14568BF1578B7C24208B
+77    0x00547C00 8BC1568B742408578B48208D
+78    0x00547C30 8B4424048D04408D44C124C2
+79    0x00547B30 83EC185355568BF133ED33DB
+80    0x00547400 568BF18B8630050400508B08
+81    0x00544220 53568BF1578B866C0A040085
+82    0x0054FB80 D9442408D81D44835D008B44
+83    0x0054FDF0 83EC18538B5C24205556D903
+84    0x0054A0B0 64A1000000006AFF6854715D
+85    0x0054A3E0 5153558BE933DB56578B4D18
+86    0x00549A10 81EC24010000568BF1E83201
+87    0x00548EC0 8B442404568B74240C8BD62B
+88    0x004BFB90 53558B6C240C56576A0055E8
+89    0x004BE810 A160835F0053555633F6578B
+90    0x004BEBD0 8B4424088B0D30C563008B54
+91    0x004BFC80 F605C8B46300017405E9D2E6
+92    0x004BF130 81EC4C0300005355568BB424
+93    0x004BD8A0 8B44240481EC080200008D54
+94    0x004BE360 8B4424048D9424FCFEFFFF81
+95    0x004B9A10 83EC088B54240C578BFA83C9
+96    0x004B9AB0 5153568B742410578BFE83C9
+97    0x004B9BF0 8B4C24088B54240433C085C9
+98    0x004B8450 8B0D542A6200568B74240841
+99    0x004B83D0 8B0D542A6200568B74240841
+100   0x004B8590 8B15582A62008B4424044285
+101   0x004C01D0 558B6C240856578BF1687863
+102   0x004C0340 53568B7424108BD18BCE578B
+103   0x004C0460 8B41345356578B79308B5424
+104   0x004C0A80 C39090909090909090909090
+105   0x004B98D0 8B4C24048D44240850516800
+106   0x004B9890 8B4C24088D44240C50516800
+107   0x00447150 6A4DE8792B070083C40485C0
+108   0x004473B0 5556576A4DE81629070083C4
+109   0x00444870 6A00E8095AFCFF8B480883C4
+110   0x00443E40 8B0DA0ED60005333DB39590C
+111   0x00444DC0 A178F5600085C0740B6A006A
+112   0x00444B60 518B0DA0C963005332DB8A41
+113   0x004BA370 83EC088D44240050FF15F480
+114   0x004BA3A0 5668A03A62008BF1FF15F880
+115   0x004BA480 D981A8000000C39090909090
+116   0x004BA530 D94128C39090909090909090
+117   0x004BA5B0 83EC0853568BF1E8B4FDFFFF
+118   0x004B7D50 8B4424045650E804F70A0083
+119   0x004B7DF0 A1E4DF6100D90485E0BF6100
+120   0x00447CC0 83EC148B442418535556578B
+121   0x00447F50 83EC18558BE956578B554833
+122   0x00448570 83EC14568BF18B565485D20F
+123   0x004487F0 81EC240100005355568BF133
+124   0x004479D0 8B442408563D11010000578B
+125   0x004478C0 8B4424083D1001000075198B
+126   0x00447900 8B4424088B0D70F560003D10
+127   0x0040A280 8B4424048B0485686A6000C3
+128   0x00451430 568BF133C057668B86E01100
+129   0x0044ADA0 51A0949B5F00535556578BD9
+130   0x00450770 5355568BF15733FF83BEC803
+131   0x00450920 515355568BF157C744241000
+132   0x0044B0E0 F64424040174198B413824FD
+133   0x004500B0 568BF18B8E1003000085C974
+134   0x0044F260 568BF1578B7C240C39BE1003
+135   0x0040A110 8B41048B5424080FAF442404
+136   0x004722C0 8B4C240483F9FF75138B0DCC
+137   0x00472380 81EC040100008B8424080100
+138   0x00445BE0 E81B43FCFF8B0D7C6860006A
+139   0x00538080 518B41188B118D0440D94482
+140   0x005386D0 A13C31750083EC0885C05355
+141   0x00538ED0 A1344C750081EC140100008B
+142   0x00539340 33C0C705484C750000000000
+143   0x00538BB0 565733F6B90800000033C0BF
+144   0x00539A20 83EC208D442404535556578B
+145   0x005392D0 8B44240856578B7C240C8D34
+146   0x0044F320 A148C9630083EC14538BD9F6
+147   0x0044B880 A19C07610085C00F84930000
+148   0x0044B930 5156578BF9E8A64F010085C0
+149   0x004773D0 A18CC963008B480885C97564
+150   0x0048BFC0 83EC2C555633ED57896C240C
+151   0x004514D0 56578BF933F66639B7E01100
+152   0x0044BDA0 83EC1855568BF18B86F00300
+153   0x004544E0 E90B00000090909090909090
+154   0x004515F0 8B44240483EC1085C0568BF1
+155   0x0048D9E0 83EC300FBF442434558BE956
+156   0x0048D9C0 8B4C241C8B54240C8B412050
+157   0x0048D4E0 83EC2C5355568BF157C74424
+158   0x004A05D0 A11064600083EC1085C05674
+159   0x00486D20 8B0DB4ED600083EC185368E5
+160   0x00450540 83EC08538BD9568B8B100300
+161   0x00507B30 83EC205355568BF15733FF8B
+162   0x00507A50 538B5C240885DB744F8B4114
+163   0x004D33A0 C7417801000000A154C96300
+164   0x004D3420 83EC1C535556578BF933ED39
+165   0x004D25D0 83EC1053555633ED578BF18B
+166   0x004D2C30 833901742DC70101000000A1
+167   0x00424200 83EC0C53568BF157D94654D8
+168   0x00423EB0 83EC10568BF1E8C5860700D9
+169   0x0042C040 83EC1056578BF1E894480300
+170   0x0042BE40 83EC1856578BF1E8944A0300
+171   0x0042B7D0 83EC14535556578BF1C74424
+172   0x0042AD50 568BF1E878AAFFFF8BCEE8F1
+173   0x00429EE0 81EC540100005355568BF1C7
+174   0x0041FAF0 81EC280100005355568BF157
+175   0x0041EB90 83EC185556578BF1E8831D04
+176   0x0041DB30 81ECCC0300005355565733DB
+177   0x0042D240 56578BF1E8973603008B7C24
+178   0x00434AF0 8B4424045683F8148BF17741
+179   0x004314D0 83EC085355568B7424188BE9
+180   0x004318A0 83EC085355568B7424188BE9
+181   0x0042EC10 83EC105355568BF133ED578B
+182   0x00435BE0 568BF18B4C24088B86682A00
+183   0x00435CD0 83EC0C53558B692C5633F657
+184   0x00435E20 568BF15768FC9D5E008B7E2C
+185   0x00433F00 83EC18538B5C242055568BF1
+186   0x0042E850 8B4424085685C08BF17534E8
+187   0x004366D0 83EC0C5355568BF1E803A202
+188   0x0049F760 8B442404C781700200000100
+189   0x0049CE70 568BF1837E040175318B867C
+190   0x00529A30 56578BF1E8B70D00008BF8A1
+191   0x0050DC20 81ECE00000005355568BF133
+192   0x0045BA60 83EC148B44241C5355568BF1
+193   0x00428110 53568BF133DB57BF01000000
+194   0x004A1B80 83EC4456578B7C245033C03B
+195   0x004A1AD0 56578B7C240C8BF185FF7507
+196   0x004A1470 81ECA00000005356578BBC24
+197   0x004A4BA0 8B412483380875178B416C8B
+198   0x004A4FB0 8B512453568B715C8B82C000
+199   0x004F3FE0 83EC2456578B7C2430894C24
+200   0x00496D20 8B4424108B4C240C8B542408
+201   0x00496500 56578B7C240C85FF74338B44
+202   0x004966C0 8B4424045657BF48535F008B
+203   0x00496020 A19893610083EC0C33C95333
+204   0x00495EC0 56578B7C240C8B772485F60F
+205   0x00493A00 8B4C240833C04983F9190F87
+206   0x0041B750 51558B6C240C56578A85AB00
+207   0x004C9A90 81ECE4000000538B9C24EC00
+208   0x004CA660 8B413085C07505E984000000
+209   0x004C9A40 8B492C8B81C801000085C075
+210   0x00437CD0 B80C220200E856F712008B84
+211   0x0043F870 81EC2001000053558BE95657
+212   0x0043F3B0 83EC14568D44240C57508BF1
+213   0x00442300 83EC088B51245533ED33C085
+214   0x00433AD0 83EC44535556576A418BF933
+215   0x004DE610 538BD98B4C240855565785C9
+216   0x004E2CC0 A10C04640085C0750B8B8958
+217   0x004E2D20 568BF1576A008B8EC0190000
+218   0x004E3AF0 81EC40040000568BB4244804
+219   0x00521A60 8B494085C97405E994E3F9FF
+220   0x004DD740 8B44240481EC040100005650
+221   0x004DD5C0 8B44240C538B5C240C565733
+222   0x00502C30 5355568BF15733FF8B861402
+223   0x00502BF0 8BC18B4C2408518B4C24088B
+224   0x004FE520 83EC08A154C9630053568BF1
+225   0x0058D660 83EC20538B5C24288B833001
+226   0x004FE4C0 8B41088B510C568B74240889
+227   0x004EFC60 51568BF18B0DB8066400E811
+228   0x004EFC10 8B442404568BF18B4C240C8B
+229   0x004CDA70 53568B5C240C578BF98B870C
+230   0x005230D0 81EC4003000056578BF133FF
+231   0x00523440 83EC545355568BF1C7050872
+232   0x004D8360 83B934EC00000175098D8138
+233   0x004D8390 8B4424048D14C5000000002B
+234   0x004D66C0 5356578B7C24108BF18D04FD
+235   0x00509D00 83EC285355568BF1C744240C
+236   0x005072A0 64A1000000006AFF68726A5D
+237   0x00507470 64A1000000006AFF688F6A5D
+238   0x0055DE20 568BF18B4C240885C9742B8B
+239   0x0055DD20 64A1000000006AFF683F725D
+240   0x0055E2B0 8B81B40F000085C0740F8B4C
+241   0x0055F540 64A1000000006AFF688C725D
+242   0x0055D8B0 83EC0C8B442410538BD95685
+243   0x005610E0 83EC0C8D44240056578B7C24
+244   0x00486A00 8B0D54C963006A01E8533B03
+245   0x00486F10 5356E899FFFFFFE8144EF8FF
+246   0x00486710 A1488361005733FF83F80175
+247   0x00458640 566878635E00687805000068
+248   0x004586E0 8A54240433C084D27C188B81
+249   0x00458770 8B44240883F80357776CFF24
+250   0x004578A0 8B44240483F802894104750F
+251   0x004578C0 8B44240456578D79378BF72B
+252   0x004576C0 53568BF15733DBB907000000
+253   0x004475B0 8B442404A32CA95E00C3E809
+254   0x004F0060 8B442404894104C204009090
+255   0x004F0070 8B4104C39090909090909090
+256   0x004F0080 8339007509D9053C845D00C2
+257   0x0040A320 8B4424048B0DCCED6000A31C
+258   0x00415650 A1C0ED600056578BF18B0083
+259   0x004590B0 A1C0ED6000568BF1578B4804
+260   0x00459190 A178F560005332DB5685C08B
+261   0x004116EC E80FC7FFFFE8BAFBFFFFE825
+262   0x004116AD 8B1524C963006AF08B421450
+263   0x004116A3 E87872130083F80175508B15
+264   0x0040FD9E E8CDF1FFFF83C4048B0D50C9
+265   0x0040FCB9 E8B2D406008BF883FF017507
+266   0x0040FD8F E8CCFE0D0083FF015F5E5D74
+267   0x0040FC02 E889AA0F008B0DC0C96300E8
+268   0x0040F90D E86EC7FFFFE8990B0500392D
+269   0x0040F95D A178F56000FF5004E886B107
+270   0x0040F304 E83712040081C6780400004B
+271   0x0040F3A5 A1B46C5E0085C074508B0D24
+272   0x0040F2AF E86C7A0700E887FD060085C0
+273   0x0040F1DC E85F3D13008B0D40C9630068
+274   0x0040F143 E888340C00E833EFFFFF85C0
+275   0x0040E512 E8A9DA07008BF083C40485F6
+276   0x0040E7EB E8E02C04008B35C0ED60005F
+277   0x0040E827 E8A48B060083C404A110EE60
+278   0x0040E1EE E8CD4A0D00A124C9630039B0
+279   0x0040E356 E8C5490D008B0DA0C9630068
+280   0x0040EEFA E861940C008B108D4C3C4089
+281   0x0040E05D E82EE0FFFF83C40485C07509
+282   0x0040C055 E8C6D9120083C4045FC7053C
+283   0x0040C19C E8CF0D0B0053E879240B0083
+284   0x0040C2E6 E85532150033C08A8C05E8FE
+285   0x0040C350 E8CB191500A3F0826100B9BC
+286   0x0040C405 E886CD030085C075118B4DF0
+287   0x0040C635 E896D60A0083C40485C07455
+288   0x0040C731 E83AAD0F0083C4048B0DB4ED
+289   0x0040C71F E87CAB0F0083C40885C0750E
+290   0x0040BB5E E83DF20300833D187C610010
+291   0x0040B897 FF15CC825D005FB801000000
+292   0x00411569 FF1548825D0085C0A3606A60
+293   0x00449265 FF1570805D0085C0A37CF560
+294   0x0040FFD7 E8F4010B00A3B4C86300EB06
+295   0x0053CC9B E8807500008B0D5450750068
+296   0x00538F2A 393D6C4C750074198D442408
+297   0x005386EA 8B2D20825D00EB05A13C3175
+298   0x004FE61C E83FF008008B460833FF85C0
+299   0x0050E6EC D81D7C855D00DFE025004100
+300   0x0050E177 E8B4C3FAFFD80DA4845D00D9
+301   0x004D672D E8BE9607008B8E2CEC0000E8
+302   0x004DDF3D E85E430200EB078BCEE885ED
+303   0x004DDEB0 E8BBFBFEFF8B0D40C96300E8
+304   0x004E3B7E E81DE2030085C074168B4E38
+305   0x00424E7C E86FEC0B00F64514400F84AE
+306   0x00424CCC 8B06FF501C85C00F84600300
+307   0x004A4DB8 E813CDFFFF5F5EC20C008B46
+308   0x004A179D E83E2805008BF085F60F8427
+309   0x004A3201 E8DA0D05008BF885FF0F84F6
+310   0x004A1D71 740A8B46406A006A0050EB0B
+311   0x0042B4C7 E8040300008BCEE86DE6FFFF
+312   0x0042B4F1 E8EAE9FFFF8BCEE853CDFFFF
+313   0x0042B501 E84AF8FFFF8BCEE873AA0700
+314   0x0042BBD8 E833C5FFFF8BCEE81CF3FFFF
+315   0x004156AB E8A00100008B7C240C85FF74
+316   0x004156ED E8111B150057E8B51A150083
+317   0x0048136F E85C430700C3909090909090
+318   0x00486FDE 6A12FF510883C4085E5BC3E8
+319   0x0048D79A 68C0D94800506A006A006A00
+320   0x00503333 E8F86602008B0D64CA63008D
+321   0x00520A81 E89A3702008B56048B0D5450
+322   0x004150BD 6A048BC8E8FA050D0085C075
+323   0x004150CF BF040000006878635E006A4A
+324   0x00409F60 6A018BC8A37C686000E8D200
+325   0x00448750 01000000394E607503894B1C
+326   0x00538997 A00F0000897424148B08526A
+327   0x005388B4 05528B0850FF513485C07421
+328   0x0044AAAC 01000000C786C8030000FFFF
+329   0x004488B3 0F84A20000008B4308508B43
+330   0x00617C18 @0x004024F4:833D187C61000E75
+331   0x00617C20 @0x0047D16F:90A1207C61005633
+332   0x00617A00 @0x00478A06:C0A3007A61008B10
+333   0x00617A04 @0x00478D05:C0A3047A61008B10
+334   0x00617C00 @0x00478C19:C0A3007C61008B10
+335   0x0060EC8C @0x0040E074:881D8CEC60005D5B
+336   0x00606880 @0x0040B70A:00BA80686000A368
+337   0x005E7028 @0x0040C44C:8B0D28705E00C601
+338   0x005E7050 @0x0040FDDC:8B3550705E00885C
+339   0x005E6C80 @0x0040C0D6:3935806C5E00750E
+340   0x005ED230 @0x0048A4CF:90A130D25E00C705
+341   0x0060696C @0x0040FCFB:00A16C69600083C4
+342   0x0063C924 @0x00402330:51A124C96300568B
+343   0x00755050 @0x0051BEB2:11A1505075006A00
+344   0x0063C948 @0x00402179:8B0D48C963006A00
+345   0x0063C930 @0x0040A445:8B0D30C963008B15
+346   0x0063C9A0 @0x00401095:8B0DA0C963006A01
+347   0x0063C9A4 @0x00405C57:8B0DA4C9630050D9
+348   0x0063C9A8 @0x0040DCD6:391DA8C963007437
+349   0x0063C9AC @0x004021C4:8B0DACC963006800
+350   0x0063C9BC @0x0040DCC3:00A1BCC963003BC3
+351   0x0063C9C0 @0x0040C740:8B0DC0C96300E815
+352   0x0063C9C4 @0x0040B6DB:8B0DC4C96300E80A
+353   0x0063C9D8 @0x00401CD6:8B0DD8C963008954
+354   0x0063C9E0 @0x0040423B:8B0DE0C963006A03
+355   0x0063C9E8 @0x0040F005:8935E8C96300E870
+356   0x0063C954 @0x00401220:8B0D54C963008B45
+357   0x0063C958 @0x00402812:00A158C9630033D2
+358   0x0063C96C @0x0040BC42:8B0D6CC96300E823
+359   0x0063C974 @0x00404A1F:8B0D74C96300D95C
+360   0x0063C978 @0x00402072:8B0D78C9630050C7
+361   0x0063C988 @0x0040C4D6:8B0D88C96300E8FF
+362   0x0063C98C @0x00401D2B:8B0D8CC963008D44
+363   0x0063C990 @0x0040CA50:00BE90C963006800
+364   0x0063C94C @0x0040BC63:8B0D4CC96300E812
+365   0x00643A30 @0x0040E9EE:00A1303A6400688C
+366   0x0063C8B4 @0x0040A760:8B0DB4C8630081EC
+367   0x005F7E64 @0x004BA5DB:D905647E5F00D81D
+368   0x0060EDCC @0x0040ADA1:8B0DCCED6000681C
+369   0x0060EDB0 @0x0040D849:391DB0ED60007437
+370   0x0060EDB4 @0x004022B2:8B15B4ED60006A01
+371   0x0060EDB8 @0x00409C0D:8B15B8ED60006A01
+372   0x0060EE18 @0x004022AC:8B0D18EE60008B15
+373   0x0060EE1C @0x0040284E:8B0D1CEE600053E8
+374   0x0060EE20 @0x0040A592:8B0D20EE60006A01
+375   0x0060EE24 @0x0040A472:C8A324EE6000E813
+376   0x0060EE28 @0x0040B6E5:00A128EE60008B0D
+377   0x0060EE2C @0x0041139C:C7052CEE60000000
+378   0x00606A60 @0x0040B95C:8B0D606A60008B15
+379   0x00606944 @0x004112C1:8B0D446960008B15
+380   0x005E6CB4 @0x00411268:C705B46C5E000100
+381   0x0060F5B8 @0x0040BB0D:00B9B8F56000E848
+382   0x00610798 @0x00407AEC:8B1598076100D84C
+383   0x00606A68 @0x0040BA11:C0A3686A6000A36C
+384   0x0060687C @0x00409F75:8B0D7C6860006A00
+385   0x00606410 @0x00404EFE:00A11064600085C0
+386   0x00606414 @0x0040BB20:2CA114646000BE01
+387   0x00606420 @0x004A05AF:90A1206460008B4C
+388   0x00619A30 @0x0049FC00:C705309A6100AE47
+389   0x0060EDC0 @0x0040144B:8B0DC0ED60008B41
+390   0x0060EDC4 @0x0040CB16:8B0DC4ED6000E80F
+391   0x0060ED1C @0x0040C3A2:833D1CED60000174
+392   0x0060F578 @0x004024FC:13A178F5600085C0
+393   0x0060F57C @0x004492AF:90A17CF5600085C0
+394   0x0061079C @0x004025CD:C7059C0761000100
+395   0x00606368 @0x00402ECE:C705686360000100
+396   0x00610F5C @0x0045F2E9:891D5C0F6100891D
+397   0x0060EDA0 @0x00401E1A:2DA1A0ED60008B48
+398   0x0060EE00 @0x0040EC63:393D00EE60007434
+399   0x0060EE04 @0x0040EC9F:393D04EE60007405
+400   0x0060EE08 @0x0040EC42:393D08EE60007419
+401   0x0060EE10 @0x00444980:8B0D10EE600033C0
+402   0x00618490 @0x00496EDE:C0BF908461008954
+403   0x00619848 @0x00435F1E:048D489861008D0C
+404   0x0061BFE0 @0x004B7DCA:0C85E0BF6100403D
+405   0x005F9C30 @0x004CD97F:90A1309C5F008B91
+406   0x00754BC8 @0x005384A6:C9BEC84B7500B302
+407   0x00754BE8 @0x0044B0B0:8B0DE84B75003BC8
+408   0x007541B8 @0x00402F0B:C9B8B8417500F600
+409   0x00753058 @0x00538A01:89B05830750089B0
+410   0x00754C18 @0x00402439:DB05184C7500D856
+411   0x00754C1C @0x00402455:DB051C4C7500D856
+412   0x00754C24 @0x0040F50F:DB05244C7500D80D
+413   0x00754C20 @0x005382C4:8B15204C75006A16
+414   0x00754C40 @0x0053827F:90A1404C75006A00
+415   0x0063B4C8 @0x00410B83:00A0C8B463000F85
+416   0x0063BF28 @0x004BE87E:08BE28BF63008A0A
+417   0x005D88E0 A0B242002036420000684300
+418   0x005D8A58 70F84300B0BB430000684300
+419   0x005D9760 C0114A0010474A0010A14100
+420   0x005D9720 800E4A00509E4C0010A14100
+421   0x005D86B8 405041007050410080594500
+422   0x005D8510 B09B4000E09B400080594500
+423   0x005D91B0 401847007018470080594500
+424   0x005D93D0 D0CB480000CC480080594500
+425   0x005D8E30 F09245002093450080594500
+426   0x005D90C0 607346009073460080594500
+427   0x005D85E8 003441003034410080594500
+428   0x005D83D8 302A4000602A400080594500
+429   0x005DAC7C D0834E00405C4E00D0664E00
+430   0x005DAF70 40105600E010560070115600
+431   0x005DAD9C 208351008087510010835100
+432   0x005D891C 0042420050804200
+433   0x005D8918 B03E420000424200
+434   0x005D88EC 40C0420040BE4200
+435   0x005D8A64 B0F34300209D4C00
+436   0x005D86C4 20514100D0524100
+437   0x005D91B4 7018470080594500
+438   0x005D91BC D0194700401C4700
+439   0x005D93DC B0CC480040CE4800
+440   0x005D93E0 40CE4800D0CE4800
+441   0x005D8E40 D095450060964500
+442   0x005D9610 F0BA490030BD4900
+443   0x005D85F4 E034410070364100
+444   0x005D85F8 7036410000374100
+445   0x005ED238 200D4800208D4400
+446   0x005EB540 0000FF7FC8000000
+447   0x005EB8A8 0300000000000000
+448   0x005E6CC0 78765E0068765E00
+449   0x005EC2B8 D8CF5E0000000000
+450   0x005EB358 0000000042454749
+451   0x005E6A48 @0x00409B52:4110486A5E00C204
+452   0x005E6AC8 @0x00409B45:05B8C86A5E008941
+453   0x005E6B48 @0x00409A0F:4610486B5E00897E
+454   0x005D857C CDCC4C3D0AD7233B
+455   0x005D8C48 ABAAAA3F00000000
+456   0x005D8D20 00A00C46CDCC4C3F
+457   0x005FC398 00A00C46FFFFFFFF
+458   0x005D8308 @0x00402E59:FF1508835D00908B
+459   0x005D8248 @0x004A6FB2:FF2548825D00FF25
+460   0x005D82F4 @0x00408989:FF15F4825D009083
+461   0x005D806C @0x0040BDC4:8B356C805D0057FF
+462   0x005D8078 @0x0040AA8C:FF1578805D008B84
+463   0x005D80F4 @0x004C0D18:8B35F4805D0050FF
+464   0x005D80F8 @0x004C0C1B:FF15F8805D0033C9
+465   0x005D8070 @0x0040B767:FF1570805D0085C0
+466   0x005D8080 @0x0044927D:FF1580805D0085C0
+467   0x005D82A8 @0x00412802:FF15A8825D0085C0
+468   0x005D8220 @0x0059B1C8:FF2520825D00FF25

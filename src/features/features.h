@@ -19,7 +19,6 @@ void ApplyFrameCap();    // frame limiter: min(cap, monitor refresh)
 void ApplyLauncher();    // "Enhancements" settings in the launcher's Detail Settings dialog
 void ApplyInGameInput(); // in-game menus: hide the cursor + pad prompts while a pad is in use
 void ApplySplitScreen(); // local split screen: player set-up for players 2-4 (views are built per frame)
-void ApplyDiscord();     // Discord Rich Presence (mission, single player / split screen + players)
 void ApplyDisplay();     // display mode: fullscreen / windowed / borderless window
 void ApplyCinematics();  // skip the start-up logos / mission cutscenes
 void ApplyGraphics();    // anti-aliasing (MSAA) + anisotropic filtering via the D3D8 device
@@ -28,6 +27,16 @@ void ApplyFontSharp();   // sharper text: font texture enlarged to the HUD scale
 void ApplyControls();    // Options -> CONTROLS: keyboard & mouse / controller (per-player pad layouts)
 void ApplyMouse();       // mouse acceleration off by default (game option, value kept in our settings)
 void ApplyMenus();       // menu lists: the pointer selects only when moved; overwrite question defaults to YES
+void ApplyDifficulty();  // VERY HARD: difficulty level 3 + its DIFFICULTY menu item (difficulty.cpp)
+const char* DifficultyText(uint32_t hash);
+void ApplyUnits();       // unit tables: empty item slots skipped, field length guards (units.cpp)
+void ApplyJpFixes();     // fixes only the Japanese PS2 release has (jpfixes.cpp): stuck tanks, ...
+void OnFrameJpFixes();
+// limits.cpp: engine limits raised for big battles (Karma pools, physics list, projectiles, events, waypoints, saves,
+// AI budgets); LimitsHeapExtra = bytes the Global Heap needs on top for the enlarged pools.
+void ApplyLimits();
+void OnFrameLimits();
+uint32_t LimitsHeapExtra();
 void ApplyFollowers();   // the Emir / Franklin: player-controllable followers with a pistol (followers.cpp)
 void OnFrameFollowers();
 void* GiveSpawnedWeapon(void* soldier, const char* weapon, int mags);  // loadout.cpp: weapon in his hands, no unlock
@@ -38,6 +47,17 @@ void ApplyTooltips();    // inventory: "use" hints (MediKit on yourself, fire mo
 void ApplyDiagnostics(); // game messages / file opens in the log (dev), performance overlay (F11)
 void ApplyLoadout();      // squad kits: scene rewrite (dev rules) + runtime weapon spawn for the customise screen
 void ApplyMods();          // loose files from Mods\<mod>\ replace / add game files (mods.cpp)
+// PSE asset store (assetstore.cpp, docs/sdk/asset-store.md): dev only (Dev\PseStore), off by default.
+void ApplyAssetStore();
+bool AssetStoreOn();
+bool AssetStoreServesBorrows();   // store + global fallback (or Dev\PseNoBorrow): mods.cpp skips its archive copies
+// The store's sound part (assetstore.cpp; the store is opened - built behind the progress window if needed - on the
+// first call): level sound caches rebuilt from the store, banks of any level as bank packs ("SCH\0" + BANK + samples).
+bool AssetStoreHasFile(const char* name);   // store + fallback on and some archive ships `name` (any level gets it)
+bool AssetStoreSound();                                                       // store open, with sound caches
+bool AssetStoreSoundCache(const char* cache, std::string* bytes);              // "mission1.sch" as shipped
+bool AssetStoreHasBank(uint32_t key, std::string* cache);                     // key = ElfHash("<NAME>.sbk")
+bool AssetStoreBankPack(uint32_t key, std::string* pack, std::string* cache);
 int ModCount();
 bool ReadGameTable(const char* name, std::string& out);  // mods.cpp: game table incl. mod rows
 bool ModHasFile(const char* name);  // mods.cpp: a mod (or a file the plugin made) provides this file
@@ -63,8 +83,47 @@ bool TimeContinues();                   // this linked level continues the previ
 void RuleTimeOfDay();                   // apply the setting now (the briefing screen opened)
 const char* TimeOfDayLabel(int i);
 const char* TimeFlowLabel(int i);
-std::string LevelTitleText(const char* level);    // discord.cpp: the level's title text ("RESCUE"), "" if unknown
-std::string LevelDisplayName(const char* level);  // discord.cpp: "Mission4.env" -> "Mission 4"
+
+// Footprints (footprints.cpp): life per the FOOTPRINTS setting, everyone's prints, wiped by the weather.
+constexpr int kFootprintModes = 4;     // OFF, GAME, LONG, PERMANENT
+void ApplyFootprints();
+void OnFrameFootprints();
+const char* FootprintLabel(int mode);
+void SetFootprintWipe(float rate);     // extra seconds of age per second for every print (0 = none)
+// A puddle decal on the ground at y, growing from startSize x radius; the decal, or nullptr.
+void* AddPuddle(float x, float y, float z, float radius, float yaw, float startSize);
+bool DecalAlive(const void* decal);
+void KillDecal(void* decal);
+void SetPuddleRain(float rain);        // puddles stay while > 0.15, dry up after
+int PuddleCount();                     // puddles alive
+struct PuddleInfo {
+    float x, y, z, radius, yaw, opacity;   // centre on the ground (cm), spread so far, rim turn, drying 1 -> 0
+    const void* decal;
+    const uint8_t* parts;                  // the decal's geometry: part list (+0x64 indices, +0x68 vertices, +0x6C
+                                           // vertex data, +0x70 index data, +0x78 visible, +0x7C next)
+};
+const std::vector<PuddleInfo>& Puddles();   // alive, from the last decal walk
+void* WeatherPuddleTexture();          // weather.cpp: the puddle picture (null until made)
+
+// Weather (weather.cpp + weathersound.cpp): WEATHER row on the loadout screen's MISSION tab, Lua game.weather.
+constexpr int kWeatherCount = 13;      // MISSION DEFAULT, CLEAR, OVERCAST, LIGHT RAIN, RAIN, THUNDERSTORM, LIGHT SNOW,
+                                       // SNOW, BLIZZARD, DUST, SANDSTORM, FOG, RANDOM
+constexpr int kWeatherLightSnow = 6, kWeatherBlizzard = 8, kWeatherDust = 9, kWeatherSandstorm = 10;
+void ApplyWeather();
+void OnFrameWeather();
+void OnFrameWeatherSound();
+const char* WeatherLabel(int i);
+int WeatherChoice();                   // the remembered choice (may be RANDOM)
+void SetWeather(int choice);           // remembered, applied (changing over 3 s) in a running mission
+void ScriptWeather(int kind, float seconds);   // Lua: this level only
+int WeatherForHost();                  // the host's weather for an online mission (RANDOM resolved)
+int WeatherKind();                     // this level's weather now (0 = the mission's own)
+float WeatherRain();                   // rain density shown (0..~1.4)
+float WindStrength();                  // m/s
+bool CameraSheltered();                // view 0's camera is under a roof
+void WeatherThunder(float delaySeconds, float power);   // weathersound.cpp
+std::string LevelTitleText(const char* level);    // core/pse_host.cpp (pse.game.ds1 code): the level's title text ("RESCUE"), "" if unknown
+std::string LevelDisplayName(const char* level);  // core/pse_host.cpp (pse.game.ds1 code): "Mission4.env" -> "Mission 4"
 // Squad voices (voices.cpp): VOICE 0 auto (the uniform's accent, or the skin's own voice), 1 SAS, 2 Delta, 3 the skin's own.
 constexpr int kVoiceCount = 4;
 void ApplyVoices();   // dev builds: counts plays from an assigned voice bank
@@ -84,6 +143,7 @@ void SetSceneFog(bool on, uint32_t colour, float start, float end);  // graphics
 void SceneFogBegin();
 bool LoadoutUsesFillers();
 bool CustomiseOpen();        // squad customise screen is up (customise.cpp)
+bool CustomiseClose();       // closes it as its last Accept would (dev server / tests); false = wasn't open
 // Lua missions' loadout rules (customise.cpp, set by scripthost.cpp's game.kit / game.briefing / game.loadout)
 void ResetScriptLoadout();
 void SetScriptLoadout(bool on);
@@ -116,6 +176,86 @@ std::vector<std::string> KitChoices(int slot);            // weapons this level 
 // weapon "" = remove only; mags > 0 = magazines to hand out (else the slot's / the .weapon file's count)
 bool KitSwap(void* soldier, void* oldItem, const std::string& weapon, int slot, int mags = 0);
 int KitRounds(void* item);                                // rounds an item holds (reserve + magazine)
+// Soldier gear on the body's connectors (gear.cpp): hats / helmets, packs, face pieces (beards, glasses, cigars).
+// Head, back and face take their own kind of model; the 7 pouch spots (belt back / left / right, hips, chest) all take
+// pouch-kind models (pouches, holster, satchel, torch, ...).
+enum GearSlot { kGearHead, kGearBack, kGearFace, kGearBelt, kGearBeltL, kGearBeltR, kGearHipL, kGearHipR, kGearChestL,
+                kGearChestR, kGearSlotCount, kGearFirstPouch = kGearBelt };
+void ApplyGear();                                          // night vision gives the face piece back when taken off
+std::vector<std::string> GearChoices(int slot);            // models this level can hang there, "" (none) first
+std::string GearOn(void* soldier, int slot);               // model worn there, "" = none, "?" = not a known model
+bool SetGear(void* soldier, int slot, const std::string& model);   // "" = take off
+void FactionGear(void* soldier, int role, int side);       // the faction's standard gear (CONNOBJS.TXT)
+std::string GearLabel(const std::string& model);           // as shown ("NONE", "BUSH HAT (DESERT)", ...)
+// Mod gear (mods.cpp: .gear / .pouches files).
+struct ModGearPiece {
+    std::string model;   // model name (a mod .evo or the plugin's retextured copy)
+    int kind;            // 0 head, 1 back, 2 face, 3 pouch
+    std::string name;    // shown on the row, upper case
+};
+struct ModPouchSet {
+    std::string name;
+    std::string model[7];   // belt, belt left, belt right, hip left, hip right, chest left, chest right ("" = none)
+};
+const std::vector<ModGearPiece>& ModGear();
+const std::vector<ModPouchSet>& ModPouchSets();
+// Vehicles (vehicles.cpp: the loadout screen's VEHICLE rows; mods.cpp: .vehicle files, files from other levels).
+struct ModVehicle {
+    std::string id;        // unit name (VEHICLE.TXT row)
+    std::string name;      // shown on the row, upper case
+    std::string base;      // the game vehicle it is based on
+    std::string faction;   // "" = the base's
+};
+const std::vector<ModVehicle>& ModVehicles();
+struct VehicleHandling {
+    std::string model;   // upper-case model name
+    float grip = -1.0f;  // tyre friction, < 0 = the game's (unlimited)
+    float spin = -1.0f;  // chassis spin damping, < 0 = the game's (0.2)
+};
+const std::vector<VehicleHandling>& ModVehicleHandling();   // .vehicle grip / spin damping (handling.cpp)
+void ApplyHandling();     // tyre friction for mod vehicles with a grip (handling.cpp)
+void BorrowUnitData(const char* level);   // .unit soldier types: model + kit files and banks the level lacks
+void BorrowVehicleData(const char* level, const std::vector<std::string>& units);   // files the level lacks
+bool VehicleDataComplete(const std::string& unit);   // its model and its guns' models exist (game data or a mod)
+void PadLevelPools(const char* level, int extra);     // the level's render pools (<level>.FAS) + extra each
+void VehiclesLevelStart(const char* level);   // level init: this load's swaps (remembered choice or the save's)
+bool VehicleSwapsThisLoad();                  // this level load swaps a vehicle (scripthost: rebuild the octree)
+void VehicleRecord(uint8_t* record);          // NewHLO, before the object is made: a swap rewrites the record
+void VehicleCreated(uint8_t* record, void* obj);   // ... and after (dev trace of swapped vehicles)
+void OnFrameVehicles();                       // dev: swapped vehicles' height for the first frames
+int VehicleSlots();                           // the squad's vehicle kinds in the loaded mission (0 = no rows)
+std::string VehicleSlotLabel(int slot);
+std::string VehicleChoiceLabel(int slot);
+bool VehicleHasChoices(int slot);
+std::string VehicleSlotName(int slot);        // the mission's own vehicle ("M2A1 BRADLEY")
+std::string VehicleSlotNote(int slot);        // "4 CREW", "2 VEHICLES, 1 CREW - CHANGED"
+std::vector<std::string> VehicleChoiceInfo(int slot);   // side, seats, mod / mission's own
+void StepVehicle(int slot, int dir);
+bool VehiclesChanged();                       // the screen's choice differs from what this load built
+bool VehiclesCommit();                        // screen closed: remembered; true = the mission restarts with them
+bool VehicleReloadSkip();                     // the restart after a change is loading / playing its intro
+bool VehicleReloadOpened();                   // loadout screen opened: true once after such a restart
+void VehicleCosaveInit();                     // co-save chunk callbacks of dsfix.vehicles (pse.serialization)
+void VehicleShow(int slot);                   // loadout screen, per frame: slot's vehicle shown (-1 = all hidden)
+uint8_t* VehicleObject(int slot);             // what the VEHICLE tab's camera looks at (preview or the level's own)
+void VehicleShowEnd();                        // screen closed: the level's vehicles back, previews out of play
+void StageSquadOutside(uint8_t* const* soldiers, int count);   // screen open: seated soldiers stand outside
+void ReturnSquadInside();                     // screen closed: back in the same seats
+// Pouch sets: the game's per-faction / role pouches (gear table), "NONE" first - one choice for all 7 pouch spots.
+int PouchSetCount();
+std::string PouchSetLabel(int set);          // "SAS RIFLEMAN", ...
+int PouchSetOn(void* soldier);               // the set the soldier wears, -1 = a mix of his own
+bool SetPouchSet(void* soldier, int set);
+struct GearPiece {
+    std::string connector, model;   // model "" = nothing on it
+};
+std::vector<GearPiece> GearSnapshot(void* soldier);        // every gear connector (pouches too) - kept with saves
+void ApplyGearSnapshot(void* soldier, const std::vector<GearPiece>& pieces);
+void SetSavedGear(int role, std::vector<GearPiece> pieces);   // a loaded save's gear, put on when the level plays
+void GearCaptureForSave();   // the squad's gear for the save being written (co-save chunk of dsfix.gear)
+void GearRestoreSaved();     // the saved / loaded gear back on after a save restore
+void GearCosaveInit();       // co-save chunk callbacks of dsfix.gear (pse.serialization)
+void OnFrameGear();
 // Uniform variants from .skin files with "uniform name = ..." (mods.cpp): rows of the skin tables (uniform 0 SAS /
 // 1 US Delta, role = squad slot) that the customise screen offers on its UNIFORM row, not as other soldiers.
 struct SkinVariant {
@@ -125,7 +265,6 @@ struct SkinVariant {
 const std::vector<SkinVariant>& SkinVariants();
 // Mod weapon pictures (weaponicons.cpp): HUD weapon panel, inventory, pick-up icon.
 int AddWeaponIcon(const std::string& path, const std::string& baseIcon);  // -> n for Weaps.txt "DSFIX_ICON_<n>"
-void* WeaponIconTexture(const void* sheet, int image);  // the texture to bind for that image, or null
 void ApplyWeaponIcons();
 void OnFrameWeaponIcons();
 void ResetWeaponIcons();   // hot reload (mods.cpp)
@@ -158,6 +297,12 @@ void ApplyModsMenu();   // main menu: "DESERTSTORMFIX x INSTALLED" / mod count o
 void LogLayoutOffsetHits();  // hud.cpp, dev: which screen uses which layout-offset site
 const char* QuickStartLevel();  // scripthost.cpp: "+level <name>" on the command line (editor Play), else nullptr
 void ApplyScriptHost();  // scripthost.cpp: ".lua" levels run by an embedded Lua instead of a MissionN.dll
+// missionrt.cpp: x86rt natives for translated mission DLLs (mission2lua); the image / emulated stack ranges and the
+// target of the native call in progress (apitrace.cpp tells the translated mission's API calls from the host's)
+void ApplyMissionRt();
+bool MissionRtRanges(uint32_t* imageLo, uint32_t* imageHi, uint32_t* origBase, uint32_t* stackLo, uint32_t* stackHi);
+uint32_t MissionRtCallTarget();
+void ApplyApiTrace();    // apitrace.cpp, dev: Dev\ApiTrace = n logs every script API call (DLL vs Lua parity)
 void ApplyRumble();      // weapon rumble retuned (nothing for throwing / placing); notes what fired per player
 void ApplyDevHooks();    // development builds only: test hooks (start level)
 void OnFrameDev();       // development builds only: F9 = test pop-up message
@@ -165,14 +310,93 @@ void OnFrameDev();       // development builds only: F9 = test pop-up message
 uint32_t VsyncFps();        // frame rate V-Sync holds the game at, 0 = not synced (graphics.cpp)
 uint32_t VsyncProbeFps();   // frame cap while V-Sync is being checked, 0 = not checking
 long long FrameStartQpc();  // QPC at the start of this frame's update + render (after the frame-cap wait)
-void OnFrame();            // once per game frame (from the frame-cap hook), before update + render
+void OnFrameDevServer();  // devserver.cpp: dev builds - live test pipe (docs/sdk/devserver.md, tests/live)
+// Once per game frame, before update + render. Since 2026-10-19 the game layer (pse/games/ds1/ds1_events.cpp) drives
+// frames: the frame-cap hook (framecap.cpp, priority 0 on the frame dispatch call 0x4116EC) waits, runs OnFrameEarly,
+// then calls the layer's hook (INNER): pse.tasks, PSE_EVENT_FRAME - other plugins' subscribers first, OnFrame (the
+// rest, a subscriber at kFramePriority) last - then the game's frame. Same order as when framecap called pse::Frame
+// itself inside OnFrame.
+void OnFrameEarly();       //   online lockstep ticks + the determinism test's virtual time (before PSE's frame)
+void OnFrame();            //   every other feature's per-frame work (PSE_EVENT_FRAME subscriber)
+constexpr int32_t kFramePriority = -1000000;   // below any plugin's PSE_EVENT_FRAME subscriber (default 0)
 void OnFrameInput();       //   in-game input device tracking (ingame_input.cpp)
 void OnFrameSplitScreen(); //   split-screen viewports (splitscreen.cpp)
-void OnFrameDiscord();     //   Discord status snapshot (discord.cpp)
 void OnFrameCoop();        //   co-op join screen (coop.cpp)
+// Level 0 of a texture as straight-alpha 0xAARRGGBB (rows of w; DXT / 16-bit / 32-bit / A8 / L8), empty if unreadable.
+std::vector<uint32_t> ReadTexturePixels(void* tex, uint32_t& w, uint32_t& h);
+// Menu bar / HUD colour (barcolour.cpp): the texture to bind instead of a menu art / HUD sheet page, or null.
+// The plain image draw's texture bind (FUN_0053c9e0: call 0x544220 SetTexture wrapper, thiscall(stage, texture) at
+// 0x53CC9B) is one pse.hooks chain with three subscribers, higher priority first: weaponicons.cpp (a mod weapon's
+// picture), barcolour.cpp (recoloured menu / HUD page), fontsharp.cpp (enlarged font page). Each passes the texture
+// it chose on to `next`; later ones only replace their own pages, so the earlier replacement wins.
+constexpr uint32_t kGlyphBindSite = 0x53CC9B, kGlyphBindTarget = 0x544220;
+constexpr int32_t kGlyphBindWeaponIcons = 200, kGlyphBindBarColour = 100, kGlyphBindFontSharp = 0;
+// D3D8 COM vtable slots (graphics.cpp device / IDirect3D8, memory.cpp texture Release; core/comhooks.h): DSFix hooks
+// them at this priority - another plugin chains in front of it (sees the game's call first) above it, behind it
+// (sees what DSFix passes on: MSAA present parameters, anisotropic filter states, the overlay drawn) below it.
+constexpr int32_t kD3dHookPriority = 0;
+// Shared clock sites (docs/sdk/reference/hooks.md "DS1 host" > "Clocks"): the game timers' clock calls 0x4BA3E4 /
+// 0x4BA5B7 (call 0x4BA370) and the timeGetTime / GetTickCount import slots 0x5D82F4 / 0x5D806C. Higher runs first and
+// answers when it is active: the dev determinism test's virtual clock (Dev\DetTest) wins over online lockstep's.
+constexpr uint32_t kClockCallCtor = 0x4BA3E4, kClockCallTick = 0x4BA5B7, kClockTarget = 0x4BA370;
+constexpr uint32_t kIatTimeGetTime = 0x5D82F4, kIatGetTickCount = 0x5D806C;
+constexpr int32_t kClockDeterminism = 200, kClockLockstep = 100;
+void ApplyBarColour();        //   hooks the other image draws' texture binds (the plain one is fontsharp.cpp's)
+void OnFrameBarColour();      //   drops recoloured pages the sheets no longer use
+void OpenBarColourPicker(int target);  // DESERTSTORMFIX > MENU BAR COLOUR (0) / HUD COLOUR (1): the colour wheel
+bool BarColourPickerOpen();
+int BarColourPickerTarget();  //   the target being picked, -1 when not open
+void UpdateBarColourPicker(); //   input while open (closes itself on OK / Cancel)
+bool DrawBarColourPicker(void* screen);  //   wheel, brightness, preview in the panel; false = draw the list
+using ColourDone = void (*)(uint32_t colour, void* ctx);
+// The same wheel for any colour (a plugin's pse.settings colour): done(0xRRGGBB) on OK, nothing on Cancel; Delete =
+// defaultColour. While open: BarColourPickerOpen / Update / Draw as above (target 2).
+void OpenColourPicker(uint32_t colour, uint32_t defaultColour, ColourDone done, void* ctx);
+bool ColourPickerDev(const char* op, uint32_t colour);   // dev server: "set" / "ok" / "cancel"
+uint32_t ColourPickerColour();                            //   the colour picked right now
+// pseui.cpp: pse.ui v1 (pse/include/pse/pse_ui.h) - drawing, texts, pop-ups and keyboard focus for plugins
+void RegisterPseUi();                   //   registers the interface (from ApplyFixMenu: before external plugins load)
+const char* PseUiText(uint32_t hash);   //   a plugin's registered text (0xC4xxxxxx) in the fonts' bytes, or null
+bool FontHasGlyph(unsigned char c, void* font);   // the game font (0x60EDB4 / 0x60EDB8) draws byte c
+// UTF-8 -> the fonts' 8-bit text, characters the font lacks replaced (core/pse_ui_model.h); font null = small font.
+std::string GameText(const char* utf8, bool upper = false, void* font = nullptr, size_t maxBytes = 0);
+struct UiDebug {   // dev server (dev.ui)
+    int items = 0, texts = 0, keysQueued = 0, textCount = 0, popupsPending = 0;
+    std::string popup, capture;
+};
+UiDebug PseUiDebug();
+// pluginsmenu.cpp: OPTIONS > DESERTSTORMFIX > PLUGINS (state 0x4D: the plugins + their load state) and a plugin's
+// settings page built from pse.settings (state 0x4E)
+void* PluginsMenuScreen(uint32_t state);
+const char* PluginsMenuText(uint32_t hash);
+void NotePluginSettingsAtStart();       //   PSE_MSG_POST_LOAD: the values the game started with (restart markers)
+std::string PluginsMenuSummary();       //   "3 LOADED" / "2 LOADED, 1 REFUSED" (the PLUGINS row's value)
+struct PluginsMenuDebug {   // dev server (dev.plugins_menu)
+    int screen = 0;          // 0 none, 1 list, 2 page
+    int row = -1, offset = 0;
+    std::string plugin;      // page: the plugin's name
+    std::vector<std::string> labels, values, footer;   // every row (not only the visible ones), footer lines
+};
+PluginsMenuDebug PluginsMenuState();
+bool PluginsMenuOpen(const char* plugin);   // dev: opens the list (null) or a plugin's page
+// dev: drive the open list / page as its own update would: cursor onto absolute row r (scrolling the window), then
+// activate it (dir 0 = Enter, -1 / +1 = Left / Right on a spinner), or Back. False = no PLUGINS screen up / bad row.
+bool PluginsMenuSetRow(int row);
+bool PluginsMenuActivate(int dir);
+bool PluginsMenuBack();
 void OnFrameFontSharp();   //   drops sharp font copies of unloaded fonts (fontsharp.cpp)
 void OnFrameDiagnostics(); //  frame times + performance overlay (diagnostics.cpp)
 void OnFrameControls();    //   builds the CONTROLS screens (controls.cpp)
+void ApplyConsole();       // console.cpp: developer console (` key) - force-start levels
+void OnFrameConsole();
+bool ConsoleOpen();        //   the console has the keyboard (KeyHeld answers no)
+bool UiKeyboardCaptured(); //   pse.ui: a plugin has the keyboard (KeyHeld answers no) - pseui.cpp
+// mods.cpp: level files the mods provide (.dll / .lua; built = a mission DLL made from a .dllpatch)
+struct ModLevel {
+    std::string name, mod;
+    bool built;
+};
+std::vector<ModLevel> ModLevels();
 
 PadType JoystickType(int joystick);  // the game's joystick j by vendor (Xbox, else PlayStation layout)
 // Reads joystick j now: bits 0-15 = the game's buttons (after the per-pad fix-up), 16-19 left stick up/right/down/left.
@@ -185,12 +409,114 @@ bool CheatsActive();                    // any cheat on (save names get "Cheats 
 bool CheatsUnlocked();
 void* DeveloperScreen();                // developer.cpp: CHEATS > DEVELOPER (state 0x46)
 const char* DeveloperText(uint32_t hash);
+void ApplyDebugKeys();                  // developer.cpp: Pivotal's debug key map behind DEVELOPER > DEBUG KEYS
+void* FixMenuScreen();                  // fixmenu.cpp: OPTIONS > DESERTSTORMFIX (state 0x47), optional features ON / OFF
+const char* FixMenuText(uint32_t hash);
+void* VideoMenuScreen();                // videomenu.cpp: OPTIONS > VIDEO (state 0x4C), the launcher's settings
+const char* VideoMenuText(uint32_t hash);
+void OnFrameVideoMenu();
+void ApplyRestart();                    // videomenu.cpp: "+restart <pid>" (APPLY & RESTART) waits for the old process
+bool Restarting();                      //   this start came from APPLY & RESTART (no launcher)
+uint32_t LauncherCaps(uint32_t& stencil);  // launcher.cpp: the device's caps / mode stencil bits before OK masked them
+void OnFrameStartCheck();               // launcher.cpp: clears StartPending once the game runs
+void ApplyTextFit();                    // textfit.cpp: long menu labels / values condensed to fit their boxes
+void ApplyAnisotropy();                 // graphics.cpp: TEXTURE FILTERING changed (live)
+bool ChangeDisplayMode(uint32_t modeIndex, uint32_t displayMode);  // graphics.cpp: new mode now (device reset)
+void PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode);       // display.cpp: the game window for a mode
+uint32_t EffectiveDisplayMode(uint32_t mode);  // display.cpp: Renderer 3 (own DXGI presenter) shows fullscreen as borderless
+void* OnlineScreen(uint32_t state);     // online.cpp: CO-OP (0x48) and the online screens (0x49..0x4B), nullptr if not ours
+const char* OnlineText(uint32_t hash);
+uint32_t CoopMenuState();               // the CO-OP screen (SPLIT SCREEN / ONLINE): where the join screen's Back goes
+void OnFrameOnline();                   // online.cpp: host's level loads mirrored to the players
+void BeginOnlineSession(int players, bool host);   // coop.cpp: the co-op session of an online game (host: + menus)
+void EndOnlineSession();
+// lockstep.cpp: online co-op - the players' inputs synced tick by tick (see the file)
+void OnFrameLockstep();
+bool LockstepActive();                  // an online mission is being kept in step
+// hostsync.cpp: the host's simulation settings for every PC of an online mission (sent with START, memory only)
+struct HostSettings {
+    int timeOfDay = 0, timeFlow = 0;
+    bool timeOfDayOn = false, voices = false, followers = false;
+    int voice[4] = {};
+    uint32_t cheats = 0, modsHash = 0;
+    int drawFar = -1;
+    int jpFixes = -1;                   // Japanese-release fixes (jpfixes.cpp), -1 = not sent
+    int weather = -1;                   // weather.cpp kind (RANDOM resolved by the host), -1 = not sent
+    int inputDelay = -1, pingMs = -1;   // lockstep input delay (ticks) the host chose from its worst ping   // renderer +0x40A9C (launcher DRAW DISTANCE: fog / view range - the AI's too); -1 = not sent
+};
+std::string HostSyncToken();
+uint32_t OwnModsHash();                                      // hostsync.cpp: this PC's enabled mods                                  // the host's settings as START's last field
+bool ApplyHostSyncToken(const char* token, bool own);         // own = the host's own token
+const HostSettings* HostSync();                               // non-null while an online mission runs on the host's
+int CoopVoiceChoice(int role);                                // voices.cpp: this PC's co-op VOICE choice
+uint32_t CheatFlags();                                        // cheats.cpp: the game's cheat values as flags
+void SetCheatFlags(uint32_t flags);
+void LockstepSetSeed(uint32_t seed, uint32_t skipCutscenes);   // joiner: from the host's START
+uint32_t LockstepSeed();
+void ScriptReseed(uint32_t seed);   // scripthost.cpp: math.randomseed of the running Lua level
+bool LockstepSkipCutscenes(bool own);   // the host's setting while online
+bool LockstepAxis(uint8_t* block, int action, int opposite, float& value);   // AxisValue: synced value
+bool LockstepMouse(uint8_t* block, float* dx, float* dy);                    // mouse look: synced value
+void LockstepFixBlocks();
+bool LockstepSkipRender();
+bool LockstepBehind();          // online: the next tick is already due (this PC draws slower than 60 frames a second)
+void LockstepCatchUp(bool on);   // a frame that only updates (no drawing / present)   // online, display device lost: frames run without the render loop
+void OnlineLogLine(const char* text);   // lockstep.cpp: a line in DesertStormFix-online.log
+// authority.cpp: online co-op - the host runs every soldier no player drives, joiners show its records
+void AuthorityStart(bool host, int players);
+void AuthorityStop();
+void AuthorityTick(uint32_t tick);
+std::string AuthorityTakeEvents();
+void AuthorityDeliver(const std::string& events);
+void AuthorityCommand(const std::string& text);
+void AuthorityReceive(const std::vector<uint8_t>& packet);
+void AuthorityReceiveVehicles(const std::vector<uint8_t>& packet);
+bool AuthorityOn();
+bool AuthorityPuppet(const uint8_t* soldier);
+void EnsureDormancyHook();   // scripthost.cpp: the AI dormancy call hooked (online: nobody sleeps)
+void LockstepAxisTrace(const uint8_t* block, int action, float value, bool synced);   // dev
+uint32_t RenderCount();
+void RenderDiffBefore();   // renderdiff.cpp (dev): memory the render loop writes
+void RenderDiffAfter();       // framerec.cpp: render loop runs so far (dev traces)
+int LastFrontEndResult();      // console.cpp: the front-end update's last result (1 = no render this frame)   // every player's input block the same on every PC (after the player set-up re-ran)
+void AxisParts(uint8_t* block, int action, float& pad, bool& touched, bool& key, float& gyro);   // splitscreen.cpp
+float LookScale(int player);
+void ConsoleStartLevel(const std::string& level);   // console.cpp: start a level now, as 'level <name>'
+bool RestartLevel();                    // console.cpp: the level being played again from its start (pause menu)
+void ApplyPauseMenu();                  // pausemenu.cpp: RESTART LEVEL on the pause menu
+void ApplyFixMenu();                    // fixmenu.cpp: the DESERTSTORMFIX item on the OPTIONS screen
 void ApplyFreeCam();
 void OnFrameFreeCam();
 bool FreeCamActive();                   // freecam.cpp: player 1 flies the free camera
+bool FreeCamPhoto(bool on);             // freecam.cpp: photo mode takes / gives back the free camera (no cheats needed)
+// photomode.cpp: F5 / pause menu PHOTO MODE - frozen world, free camera, PNG to the Screenshots folder
+constexpr uint32_t kPhotoModeText = 0xC0140001;   // pause menu item text (Lookup hook)
+const char* PhotoText(uint32_t hash);
+void OnFramePhoto();                    // per game frame, after the input poll (cheats.cpp's frame hook)
+bool PhotoModeOpen();                   // open or closing (world frozen)
+bool PhotoModeAvailable();              // could open now (pause menu item enabled)
+void RequestPhotoMode();                // open once play resumes (pause menu)
+float PhotoFov();                       // photo zoom (vertical degrees), 0 = not in photo mode
+bool PhotoModeShowing();                // open (not closing): frames drawn
+int PhotoFrameCount();                  // photoframes.cpp: 0 none, built-in frames, Mods\<mod>\frames\*.png
+std::string PhotoFrameName(int index);
+void SetPhotoFrame(int index);
+void PhotoFrameArt();                   // late draw: the frame's art
+void PhotoFrameText();                  // the frame's words (photomode.cpp's late draw, over the art)
+bool PhotoAnimate(const void* instance, float& dt);   // a posed soldier's animation time step (customise.cpp's hook)
+std::vector<std::string> PhotoSpawnUnits();   // loadout.cpp: unit names photo mode can spawn in this level
+void* PhotoSpawnSoldier(int index, const float pos[3], float yaw);
+std::vector<std::string> PhotoWeaponChoices();   // loadout.cpp: guns / pistols / launchers a spawned soldier can hold here
+void PhotoBeforePresent(void* device);  // graphics.cpp Present hook: read the frame for a photo
+void PhotoAfterPresent(void* device);
+bool CustomisePending();                // customise.cpp: the loadout screen is still to open in this level
+bool ScriptHidesHud();                  // scripthost.cpp: Lua game.hud(false)
 bool HudHidden();                       // customise screen or free camera: the HUD wrappers draw nothing                  // freecam.cpp: F6 / L3 + R3 in a mission once cheats are unlocked
 const char* CheatsText(uint32_t hash);  // the cheat rows' own texts (Lookup hook)
-void OnFrameHotplug();   // hotplug.cpp: pads plugged in / out while the game runs, "controller disconnected" pause
+void OnFrameHotplug();
+void SetPadsBackground(bool on);   // hotplug.cpp: joysticks keep working without focus (online sessions)
+bool DevNoPads();                  // dev: this copy opens no joysticks
+void ApplyPadAccess();   // hotplug.cpp: pads plugged in / out while the game runs, "controller disconnected" pause
 int SplitScreenPlayers();
 bool DevBackground();    // dev background test mode is on (no cursor clipping / capture)
 bool GameFocused();      // the game window is in front (dev background mode: always) - dev.cpp
@@ -223,4 +549,30 @@ const char* GameText(uint32_t hash);  // the game's own text for a catalog.dat h
 int CoopPromptStyle(int player);      // co-op player's icon style: 0 keyboard, 1 PlayStation, 2 Xbox; -1 no session
 
 void OnSettingsChanged();  // re-applies everything that depends on settings
+
+// determinism.cpp (dev): Dev\DetTest - virtual clock + fixed seed + scripted keys + per-frame world hash
+void ApplyDeterminism();
+void OnFrameDeterminism();
+bool DetActive();          // the virtual clock runs (timing.cpp leaves the frame time alone)
+void DrawLogTick(uint32_t tick);   // dev Dev\LockstepDrawLog: random draws of the last tick -> log
+
+// Optional front-end features (OPTIONS > DESERTSTORMFIX), as decided at start-up (restart toggles).
+bool VersusEnabled();      // versus.cpp: VERSUS menu (off = the game's MULTIPLAYER entry)
+bool ModsFolderEnabled();  // mods.cpp: the Mods folder is read (FeatMods, or a "+level" start from the editor)
+bool CheatsEnabled();      // cheats.cpp: extended CHEATS menu, free camera, DEVELOPER page
+
+// memory.cpp: Global Heap sized to the mods, texture / address-space figures, 4 GB state
+void ApplyMemory();
+bool LargeAddressAware();  // the exe has the 4 GB flag (DesertStormFix-Patcher.exe)
+void NoteTexture(void* tex, uint32_t w, uint32_t h, uint32_t levels, uint32_t format, uint32_t pool);  // graphics.cpp
+struct MemoryStats {
+    uint64_t addressTotal = 0, addressUsed = 0, largestFree = 0, privateBytes = 0;
+    uint32_t textures = 0;
+    uint64_t textureBytesDefault = 0, textureBytesManaged = 0, textureBytesSystem = 0;
+    uint32_t d3dFree = 0;  // IDirect3DDevice8::GetAvailableTextureMem
+    uint32_t heapSize = 0, heapUsed = 0, heapPeak = 0, heapFails = 0;
+    bool heapOurs = false, laa = false;
+};
+MemoryStats GetMemoryStats();  // refreshed at most once a second
+uint32_t LargestModFile(std::string* name);  // mods.cpp: size of the largest file the enabled mods add (0 = none)
 }  // namespace features

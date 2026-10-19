@@ -5,6 +5,9 @@
 //   OK (1040)      -> save to the registry and re-apply the features (the game has not started yet)
 //   Defaults(1034) -> our controls back to their defaults too
 // The game's command handler FUN_004479d0 ignores unknown control ids, so ours (1200+) never reach its logic.
+// Settings of external PSE plugins flagged PSE_SETTING_LAUNCHER (bool = checkbox, int / choice = dropdown) get rows of
+// their own under the column's last row, one block per plugin titled with its name (ids 1300+); the column and the
+// dialog grow by what they need. dsfix.discord's DiscordPresence keeps its own checkbox higher up (Placed).
 // The launcher itself (dialog 106, proc pushed at 0x44793C) gets MainProc; both dialogs get gamepad navigation
 // (launcher_pad.cpp).
 #include <windows.h>
@@ -13,9 +16,13 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <string>
+#include <vector>
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
+#include "core/pse_ui_model.h"
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/framerec.h"
@@ -23,14 +30,16 @@
 #include "features/launcher_pad.h"
 #include "features/overlay.h"
 #include "features/splitscreen_layout.h"
+#include "loader.h"
 
 namespace {
 constexpr uint32_t kMainProcPush = 0x44793C;  // push 0x4478c0 (launcher dialog 106 proc) in FUN_00447930
 constexpr uint32_t kMainGameProc = 0x4478C0;
 constexpr uint32_t kProcPush = 0x44798E;      // push 0x447900 (Detail Settings dialog proc) in FUN_00447980
 constexpr uint32_t kGameProc = 0x447900;
-const DLGPROC g_mainGameProc = reinterpret_cast<DLGPROC>(kMainGameProc);
-const DLGPROC g_gameProc = reinterpret_cast<DLGPROC>(kGameProc);
+// The pushed procs are pointer hooks (patch::HookSlot on the push's imm32): these are the chains' next.
+DLGPROC g_mainGameProc = reinterpret_cast<DLGPROC>(kMainGameProc);
+DLGPROC g_gameProc = reinterpret_cast<DLGPROC>(kGameProc);
 
 // Game control ids in dialog 108
 constexpr int kIdOk = 1040, kIdCancel = 1041, kIdDefaults = 1034;
@@ -41,11 +50,14 @@ constexpr int kIdGroup = 1200, kIdFpsLabel = 1201, kIdFps = 1202, kIdHud = 1203,
               kIdHudSize = 1205, kIdPad = 1206, kIdDeadzoneLabel = 1207, kIdDeadzone = 1208, kIdNote = 1209,
               kIdSplitLabel = 1210, kIdSplit = 1211, kIdSplitPreview = 1212, kIdDiscord = 1213,
               kIdDisplayLabel = 1214, kIdDisplay = 1215, kIdSkipIntro = 1216, kIdSkipCutscenes = 1217,
-              kIdAaLabel = 1218, kIdAa = 1219, kIdAfLabel = 1220, kIdAf = 1221, kIdPerf = 1222, kIdVsync = 1223;
+              kIdAaLabel = 1218, kIdAa = 1219, kIdAfLabel = 1220, kIdAf = 1221, kIdPerf = 1222, kIdVsync = 1223,
+              kIdSkipLauncher = 1224, kIdRendererLabel = 1225, kIdRenderer = 1226;
 
 constexpr int kDialogW = 221;                  // original client width, dialog units
 constexpr int kColumnX = 228, kColumnW = 207;  // our column; 7 DLU margin on both sides
-constexpr int kExtraH = 104;                   // dialog grows by this (DLU) for our rows
+constexpr int kExtraH = 136;                   // dialog grows by this (DLU) for our rows (+ the plugin rows)
+constexpr int kPluginTop = 322;                // first plugin block; the hint line / version note move down by them
+constexpr int kIdPluginFirst = 1300;
 
 struct FpsChoice {
     const char* label;
@@ -64,6 +76,9 @@ constexpr FpsChoice kFps[] = {
 };
 constexpr const char* kDisplayModes[] = {"Fullscreen", "Windowed", "Borderless window"};
 constexpr uint32_t kAntialiasing[] = {0, 2, 4, 8};
+// settings::Values::renderer (src/render): the game's own D3D8, our D3D8-on-D3D9, that on D3D12, + our DXGI presenter
+constexpr const char* kRenderers[] = {"Direct3D 8 (original)", "Direct3D 9", "Direct3D 12 (9On12)",
+                                      "Direct3D 12, modern present"};
 constexpr uint32_t kAnisotropy[] = {0, 2, 4, 8, 16};
 constexpr uint32_t kHudSizes[] = {75, 85, 100, 115, 125, 150};
 constexpr uint32_t kDeadzones[] = {10, 15, 20, 25, 30, 40, 50};
@@ -166,14 +181,182 @@ void UpdateEnabled(HWND dlg) {
     EnableWindow(GetDlgItem(dlg, kIdDeadzone), pad);
 }
 
-void Fill(HWND dlg, const settings::Values& v) {
+// "Show the game in my Discord status" = setting DiscordPresence of the external plugin dsfix.discord (PSE\Plugins);
+// greyed out when that plugin isn't loaded.
+constexpr char kDiscordPlugin[] = "dsfix.discord", kDiscordSetting[] = "DiscordPresence";
+
+// ---- plugin rows (PSE_SETTING_LAUNCHER settings of external plugins) ----
+struct PluginRow {
+    PSEPluginHandle owner;
+    std::string key;
+    PSESettingType type;
+    int32_t def;
+    int id;
+};
+std::vector<PluginRow> g_pluginRows;
+int g_pluginH = 0;   // DLU the plugin blocks take (0 = none)
+
+// Settings with a control of their own above: not repeated.
+bool Placed(PSEPluginHandle owner, const char* key) {
+    return std::strcmp(pse::PluginName(owner), kDiscordPlugin) == 0 && std::strcmp(key, kDiscordSetting) == 0;
+}
+
+std::wstring Wide(const std::string& utf8) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    std::wstring w(n > 0 ? n - 1 : 0, L' ');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, w.data(), n);
+    return w;
+}
+// "BANNER HEIGHT (%)" -> "Banner height (%)" (menu labels are capitals; the launcher's are sentence case)
+std::wstring SentenceCase(const char* label) {
+    std::wstring w = Wide(label ? label : "");
+    for (size_t i = 1; i < w.size(); ++i)
+        if (w[i] >= L'A' && w[i] <= L'Z') w[i] = static_cast<wchar_t>(w[i] + 32);
+    return w;
+}
+
+HWND AddW(HWND dlg, const wchar_t* cls, const std::wstring& text, DWORD style, int id, int x, int y, int w, int h) {
+    RECT r = Dlu(dlg, x, y, w, h);
+    HWND c = CreateWindowExW(0, cls, text.c_str(), WS_CHILD | WS_VISIBLE | style, r.left, r.top, r.right - r.left,
+                             r.bottom - r.top, dlg, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                             GetModuleHandleW(nullptr), nullptr);
+    SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
+    return c;
+}
+
+// The plugins' launcher settings, one block per plugin in load order.
+struct PluginBlock {
+    PSEPluginHandle owner;
+    std::vector<const PSESettingDesc*> settings;
+};
+std::vector<PluginBlock> LauncherBlocks() {
+    std::vector<PluginBlock> blocks;
+    const PSESettingsInterface* set = pse::SettingsInterface();
+    if (!set) return blocks;
+    const PSESettingDesc* d = nullptr;
+    PSEPluginHandle who = 0;
+    for (uint32_t i = 0; set->Describe(0, i, &d, &who) == PSE_OK; ++i) {
+        if (!d || !who || !pse::PluginExternal(who) || pse::PluginHost(who) || pse::PluginDisabled(who)) continue;
+        if (!pse_ui::LauncherSetting(*d) || Placed(who, d->key)) continue;
+        PluginBlock* block = nullptr;
+        for (PluginBlock& b : blocks)
+            if (b.owner == who) block = &b;
+        if (!block) {
+            blocks.push_back({who, {}});
+            block = &blocks.back();
+        }
+        block->settings.push_back(d);
+    }
+    return blocks;
+}
+constexpr int kBlockTitleH = 12, kPluginRowH = 16, kBlockGap = 4;
+int BlocksHeight(const std::vector<PluginBlock>& blocks) {
+    int h = 0;
+    for (const PluginBlock& b : blocks) h += kBlockTitleH + kPluginRowH * static_cast<int>(b.settings.size()) + kBlockGap;
+    return h;
+}
+
+// Int dropdown values: every step when there are at most 101, else 21 spread over the range; always the default.
+std::vector<int32_t> IntValues(const PSESettingDesc& d) {
+    std::vector<int32_t> v;
+    const int64_t step = d.step > 0 ? d.step : 1, span = static_cast<int64_t>(d.maxInt) - d.minInt;
+    if (span / step <= 100) {
+        for (int64_t x = d.minInt; x <= d.maxInt; x += step) v.push_back(static_cast<int32_t>(x));
+        if (v.empty() || v.back() != d.maxInt) v.push_back(d.maxInt);
+    } else {
+        for (int i = 0; i <= 20; ++i) v.push_back(static_cast<int32_t>(i == 20 ? d.maxInt : d.minInt + (span * i / 20) / step * step));
+    }
+    v.push_back(std::clamp(d.defaultInt, d.minInt, d.maxInt));
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    return v;
+}
+
+void SelectPluginValue(HWND combo, int32_t value) {
+    const auto n = SendMessageW(combo, CB_GETCOUNT, 0, 0);
+    for (LRESULT i = 0; i < n; ++i)
+        if (static_cast<int32_t>(SendMessageW(combo, CB_GETITEMDATA, i, 0)) == value) {
+            SendMessageW(combo, CB_SETCURSEL, i, 0);
+            return;
+        }
+    const auto i = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(std::to_wstring(value).c_str()));
+    SendMessageW(combo, CB_SETITEMDATA, i, static_cast<LPARAM>(value));
+    SendMessageW(combo, CB_SETCURSEL, i, 0);
+}
+
+void AddComboItem(HWND combo, std::wstring text, int32_t data, bool isDefault) {
+    if (isDefault) text += L" (default)";
+    const auto k = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
+    SendMessageW(combo, CB_SETITEMDATA, k, static_cast<LPARAM>(data));
+}
+
+// One block per plugin from y (DLU): its name, then one row per setting (ids: control, its label = control + 1).
+void BuildPluginRows(HWND dlg, const std::vector<PluginBlock>& blocks, int x, int w, int cx, int cw, int y) {
+    g_pluginRows.clear();
+    int id = kIdPluginFirst;
+    for (const PluginBlock& b : blocks) {
+        const PSEPluginInfo* info = pse::PluginInfo(b.owner);
+        const std::string name = info && info->displayName && *info->displayName ? info->displayName
+                                                                                : pse::PluginName(b.owner);
+        AddW(dlg, L"STATIC", Wide(name) + L":", SS_LEFT, id++, x, y + 2, w, 8);
+        y += kBlockTitleH;
+        for (const PSESettingDesc* d : b.settings) {
+            const std::wstring label = SentenceCase(d->label && *d->label ? d->label : d->key);
+            if (d->type == PSE_SETTING_BOOL) {
+                AddW(dlg, L"BUTTON", label, BS_AUTOCHECKBOX | WS_TABSTOP, id, x + 6, y + 2, w - 6, 10);
+            } else {
+                AddW(dlg, L"STATIC", label + L":", SS_LEFT, id + 1, x + 6, y + 2, cx - x - 8, 8);
+                HWND combo = AddW(dlg, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, id, cx, y, cw, 120);
+                if (d->type == PSE_SETTING_CHOICE) {
+                    int32_t i = 0;
+                    for (const char* const* c = d->choices; c && *c; ++c, ++i) AddComboItem(combo, SentenceCase(*c), i, i == d->defaultInt);
+                } else {
+                    for (int32_t v : IntValues(*d)) AddComboItem(combo, std::to_wstring(v), v, v == d->defaultInt);
+                }
+            }
+            g_pluginRows.push_back({b.owner, d->key, d->type, d->defaultInt, id});
+            id += 2;
+            y += kPluginRowH;
+        }
+        y += kBlockGap;
+    }
+}
+
+void FillPluginRows(HWND dlg, bool defaults) {
+    for (const PluginRow& r : g_pluginRows) {
+        const int32_t v = defaults ? r.def : pse::SettingsInterface()->GetInt(r.owner, r.key.c_str());
+        if (r.type == PSE_SETTING_BOOL) CheckDlgButton(dlg, r.id, v ? BST_CHECKED : BST_UNCHECKED);
+        else SelectPluginValue(GetDlgItem(dlg, r.id), v);
+    }
+}
+
+void SavePluginRows(HWND dlg) {
+    for (const PluginRow& r : g_pluginRows) {
+        if (pse::PluginDisabled(r.owner)) continue;
+        int32_t v;
+        if (r.type == PSE_SETTING_BOOL) {
+            v = IsDlgButtonChecked(dlg, r.id) == BST_CHECKED ? 1 : 0;
+        } else {
+            HWND c = GetDlgItem(dlg, r.id);
+            const auto sel = SendMessageW(c, CB_GETCURSEL, 0, 0);
+            if (sel < 0) continue;
+            v = static_cast<int32_t>(SendMessageW(c, CB_GETITEMDATA, sel, 0));
+        }
+        pse::SettingsInterface()->SetInt(r.owner, r.key.c_str(), v);   // the plugin's OnChange runs if it changed
+    }
+}
+
+void Fill(HWND dlg, const settings::Values& v, bool defaults = false) {
     SelectData(GetDlgItem(dlg, kIdFps), FpsData(v.fpsCap, v.fpsCapToRefresh), " fps");
     CheckDlgButton(dlg, kIdHud, v.hudScaling ? BST_CHECKED : BST_UNCHECKED);
     SelectData(GetDlgItem(dlg, kIdHudSize), v.hudScalePercent, "%");
     CheckDlgButton(dlg, kIdPad, v.controller ? BST_CHECKED : BST_UNCHECKED);
     SelectData(GetDlgItem(dlg, kIdDeadzone), v.padDeadzone, "%");
     SelectData(GetDlgItem(dlg, kIdSplit), v.splitScreenLayout, "");
-    CheckDlgButton(dlg, kIdDiscord, v.discordPresence ? BST_CHECKED : BST_UNCHECKED);
+    const PSEPluginHandle discord = pse_host::Find(kDiscordPlugin);
+    const bool discordOn = discord && (defaults || pse::SettingsInterface()->GetInt(discord, kDiscordSetting) != 0);
+    CheckDlgButton(dlg, kIdDiscord, discordOn ? BST_CHECKED : BST_UNCHECKED);
+    EnableWindow(GetDlgItem(dlg, kIdDiscord), discord != 0);
     SelectData(GetDlgItem(dlg, kIdDisplay), v.displayMode, "");
     CheckDlgButton(dlg, kIdSkipIntro, v.skipIntro ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, kIdSkipCutscenes, v.skipCutscenes ? BST_CHECKED : BST_UNCHECKED);
@@ -181,6 +364,9 @@ void Fill(HWND dlg, const settings::Values& v) {
     SelectData(GetDlgItem(dlg, kIdAf), v.anisotropy, "x");
     CheckDlgButton(dlg, kIdPerf, v.perfOverlay ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, kIdVsync, v.vsync ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(dlg, kIdSkipLauncher, v.skipLauncher ? BST_CHECKED : BST_UNCHECKED);
+    SelectData(GetDlgItem(dlg, kIdRenderer), v.renderer, "");
+    FillPluginRows(dlg, defaults);
     InvalidateRect(GetDlgItem(dlg, kIdSplitPreview), nullptr, FALSE);
     UpdateEnabled(dlg);
 }
@@ -195,7 +381,8 @@ void Save(HWND dlg) {
     v.controller = IsDlgButtonChecked(dlg, kIdPad) == BST_CHECKED;
     v.padDeadzone = static_cast<uint32_t>(SelectedData(dlg, kIdDeadzone));
     v.splitScreenLayout = static_cast<uint32_t>(SelectedData(dlg, kIdSplit));
-    v.discordPresence = IsDlgButtonChecked(dlg, kIdDiscord) == BST_CHECKED;
+    if (const PSEPluginHandle discord = pse_host::Find(kDiscordPlugin))   // its OnChange starts / stops the status
+        pse::SettingsInterface()->SetInt(discord, kDiscordSetting, IsDlgButtonChecked(dlg, kIdDiscord) == BST_CHECKED);
     v.displayMode = static_cast<uint32_t>(SelectedData(dlg, kIdDisplay));
     v.skipIntro = IsDlgButtonChecked(dlg, kIdSkipIntro) == BST_CHECKED;
     v.skipCutscenes = IsDlgButtonChecked(dlg, kIdSkipCutscenes) == BST_CHECKED;
@@ -203,6 +390,9 @@ void Save(HWND dlg) {
     v.anisotropy = static_cast<uint32_t>(SelectedData(dlg, kIdAf));
     v.perfOverlay = IsDlgButtonChecked(dlg, kIdPerf) == BST_CHECKED;
     v.vsync = IsDlgButtonChecked(dlg, kIdVsync) == BST_CHECKED;
+    v.skipLauncher = IsDlgButtonChecked(dlg, kIdSkipLauncher) == BST_CHECKED;
+    v.renderer = static_cast<uint32_t>(SelectedData(dlg, kIdRenderer));
+    SavePluginRows(dlg);
     if (settings::Save(v)) features::OnSettingsChanged();
 }
 
@@ -225,10 +415,13 @@ void MoveToEndOfTabOrder(HWND dlg, std::initializer_list<int> ids) {
 
 void Build(HWND dlg) {
     g_font = reinterpret_cast<HFONT>(SendMessageA(dlg, WM_GETFONT, 0, 0));
+    const std::vector<PluginBlock> blocks = LauncherBlocks();
+    g_pluginH = BlocksHeight(blocks);
+    const int extraH = kExtraH + g_pluginH;
 
     // Widen the dialog by one column and make it taller, keep it centred, and move the bottom row down / OK and
     // Cancel to the new bottom-right corner.
-    RECT extra = Dlu(dlg, 0, 0, kColumnX + kColumnW + 7 - kDialogW, kExtraH);
+    RECT extra = Dlu(dlg, 0, 0, kColumnX + kColumnW + 7 - kDialogW, extraH);
     const int dx = extra.right, dy = extra.bottom;
     RECT wr;
     GetWindowRect(dlg, &wr);
@@ -239,7 +432,7 @@ void Build(HWND dlg) {
     MoveBy(dlg, kIdDefaults, 0, dy);
 
     const int x = kColumnX + 6, w = kColumnW - 12, lx = x + 12, cx = x + 72, cw = w - 72;
-    Add(dlg, "BUTTON", "Enhancements", BS_GROUPBOX, kIdGroup, kColumnX, 7, kColumnW, 215 + kExtraH);
+    Add(dlg, "BUTTON", "Enhancements", BS_GROUPBOX, kIdGroup, kColumnX, 7, kColumnW, 215 + extraH);
 
     Add(dlg, "STATIC", "&Frame rate limit:", SS_LEFT, kIdFpsLabel, x, 22, 70, 8);
     HWND fps = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdFps, cx, 20, cw, 120);
@@ -297,7 +490,15 @@ void Build(HWND dlg) {
     Add(dlg, "BUTTON", "&Performance overlay (F11 in game)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdPerf, x, 272, w, 10);
     Add(dlg, "BUTTON", "&V-Sync in fullscreen (smooth, no tearing)", BS_AUTOCHECKBOX | WS_TABSTOP, kIdVsync, x, 258, w, 10);
 
-    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 316, w, 8);
+    Add(dlg, "BUTTON", "Start without this launcher (hold Shift to see it)", BS_AUTOCHECKBOX | WS_TABSTOP,
+        kIdSkipLauncher, x, 290, w, 10);
+
+    Add(dlg, "STATIC", "&Renderer:", SS_LEFT, kIdRendererLabel, x, 306, 70, 8);
+    HWND renderer = Add(dlg, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kIdRenderer, cx, 304, cw, 80);
+    for (uint32_t i = 0; i <= settings::Values::kMaxRenderer; ++i) AddItem(renderer, kRenderers[i], i);
+
+    BuildPluginRows(dlg, blocks, x, w, cx, cw, kPluginTop);
+    Add(dlg, "STATIC", "DesertStormFix " DS_VERSION, SS_LEFT, kIdNote, x, 344 + g_pluginH, w, 8);
     Fill(dlg, settings::Get());
     // Left column, our column, then the bottom row left to right.
     MoveToEndOfTabOrder(dlg, {kIdDefaults, kIdOk, kIdCancel});
@@ -305,6 +506,11 @@ void Build(HWND dlg) {
 
 INT_PTR CALLBACK DetailProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     INT_PTR handled;
+    if (msg == WM_WINDOWPOSCHANGING && features::DevBackground()) {  // dev background tests: off-screen
+        auto* pos = reinterpret_cast<WINDOWPOS*>(lp);
+        pos->x = pos->y = -8000;
+        pos->flags = (pos->flags | SWP_NOACTIVATE | SWP_NOZORDER) & ~SWP_NOMOVE;
+    }
     if (launcherpad::OnMessage(dlg, msg, wp, lp, &handled)) return handled;
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
@@ -320,48 +526,126 @@ INT_PTR CALLBACK DetailProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     INT_PTR result = g_gameProc(dlg, msg, wp, lp);
     if (msg == WM_INITDIALOG) {
         Build(dlg);
-        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, 179 + kExtraH, kColumnW - 12, 29);
+        launcherpad::Attach(dlg, launcherpad::Kind::DetailSettings, kColumnX + 6, kPluginTop + g_pluginH, kColumnW - 12,
+                            18);
     }
-    if (msg == WM_COMMAND && LOWORD(wp) == kIdDefaults) Fill(dlg, settings::Values{});
+    if (msg == WM_COMMAND && LOWORD(wp) == kIdDefaults) Fill(dlg, settings::Values{}, true);
     return result;
 }
 
-// Launcher (dialog 106): only adds gamepad navigation. Hint line goes under the OK/Settings/Cancel row.
+// ---- starting without the launcher ----
+// The launcher's OK (FUN_00448570, from the shared command handler) is what applies the game's device settings - adapter,
+// mode, caps bits, stencil, draw distance, shrubs, texture resolution - so the dialog is still created, only kept
+// off-screen, and OK is pressed for the player. It stays visible when Shift is held, when the game has no saved
+// resolution yet (first start: the player picks one), and when the last start never got going (StartPending still set
+// - e.g. a resolution the monitor refused).
+constexpr char kStartPending[] = "StartPending";
+void* g_launcher = nullptr;  // the launcher object (DialogBoxParamA's parameter; renderer +0x48, adapter +0x4C ...)
+bool g_hidden = false;       // this launcher is kept off-screen and presses OK by itself
+uint32_t g_caps = 0xFFFFFFFF, g_stencil = 8;  // the chosen device's caps / mode stencil bits before OK masked them
+
+bool SkipThisStart() {
+    if (!settings::Get().skipLauncher && !features::Restarting()) return false;
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+        dslog::Write("Launcher: Shift held - shown");
+        return false;
+    }
+    uint32_t pending = 0, res = 0;
+    if (settings::ReadDword(false, kStartPending, pending) && pending) {
+        dslog::Write("Launcher: the last start did not reach the game - shown");
+        return false;
+    }
+    if (!settings::ReadDword(true, "ResolutionIndex", res)) {
+        dslog::Write("Launcher: no resolution saved yet - shown");
+        return false;
+    }
+    return true;
+}
+
+// OK: remember what the chosen device can do (OK masks the caps of switched-off options and clears the mode's stencil
+// when shadows are off - OPTIONS > VIDEO needs the unmasked ones), and mark the start until the game is running.
+void NoteOk() {
+    if (g_launcher) {
+        auto* l = static_cast<uint8_t*>(g_launcher);
+        auto* r = *reinterpret_cast<uint8_t**>(l + 0x48);
+        const int adapter = *reinterpret_cast<int*>(l + 0x4C), device = *reinterpret_cast<int*>(l + 0x50),
+                  mode = *reinterpret_cast<int*>(l + 0x54);
+        if (r && adapter >= 0 && device >= 0 && mode >= 0) {
+            const uint8_t* d = r + adapter * 0x66D0 + device * 0x13B4 + 0x524;
+            g_caps = *reinterpret_cast<const uint32_t*>(d + 0xE0);
+            g_stencil = *reinterpret_cast<const uint32_t*>(d + 0xE8 + mode * 0x20 + 0x1C);
+        }
+    }
+    settings::WriteDword(false, kStartPending, 1);
+}
+
+// Launcher (dialog 106): gamepad navigation, the start-without-launcher option. Hint line goes under the
+// OK/Settings/Cancel row.
 INT_PTR CALLBACK MainProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     INT_PTR handled;
-    // dev background tests: the launcher opens off-screen without taking the focus and presses Play itself
-    if (msg == WM_WINDOWPOSCHANGING && features::DevBackground()) {
+    // dev background tests / starting without the launcher: off-screen, never takes the focus, presses Play itself
+    if (msg == WM_WINDOWPOSCHANGING && (g_hidden || features::DevBackground())) {
         auto* pos = reinterpret_cast<WINDOWPOS*>(lp);
         pos->x = pos->y = -8000;
         pos->flags = (pos->flags | SWP_NOACTIVATE | SWP_NOZORDER) & ~SWP_NOMOVE;
     }
+    if (msg == WM_INITDIALOG) {
+        g_launcher = reinterpret_cast<void*>(lp);
+        g_hidden = SkipThisStart();
+    }
+    if (msg == WM_COMMAND && LOWORD(wp) == IDOK) NoteOk();
     if (launcherpad::OnMessage(dlg, msg, wp, lp, &handled)) return handled;
     INT_PTR result = g_mainGameProc(dlg, msg, wp, lp);
     if (msg == WM_INITDIALOG) MoveToEndOfTabOrder(dlg, {IDOK, kIdSettingsButton, IDCANCEL});
     if (msg == WM_INITDIALOG) launcherpad::Attach(dlg, launcherpad::Kind::Launcher, 6, 226, 205, 14);
-    // "+level <name>" (the editor's Play): press Play straight away
-    if (msg == WM_INITDIALOG && (features::QuickStartLevel() || features::DevBackground()))
+    // "+level <name>" (the editor's Play), a restart from OPTIONS > VIDEO, or the launcher switched off: press Play
+#ifndef DS_DIST
+    // dev background tests: Dev\LauncherDetail = 1 opens Detail Settings (off-screen) instead of pressing Play
+    DWORD detail = 0, size = sizeof detail;
+    if (msg == WM_INITDIALOG && features::DevBackground() &&
+        RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStormFix\\Dev", "LauncherDetail", RRF_RT_REG_DWORD, nullptr,
+                     &detail, &size) == ERROR_SUCCESS && detail) {
+        PostMessageA(dlg, WM_COMMAND, MAKEWPARAM(kIdSettingsButton, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(GetDlgItem(dlg, kIdSettingsButton)));
+        return result;
+    }
+#endif
+    if (msg == WM_INITDIALOG && (features::QuickStartLevel() || features::DevBackground() || g_hidden)) {
+        if (g_hidden) dslog::Write("Launcher: started without it (OPTIONS > VIDEO > LAUNCHER, Shift shows it)");
         PostMessageA(dlg, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(dlg, IDOK)));
+    }
     return result;
 }
 
-bool SwapPushedProc(uint32_t site, uint32_t expected, DLGPROC ours) {
-    uint8_t original[5] = {0x68};
-    memcpy(original + 1, &expected, 4);
-    if (!patch::Matches(site, original, 5)) {
+bool SwapPushedProc(uint32_t site, uint32_t expected, DLGPROC ours, DLGPROC& next) {
+    if (!patch::Matches(site, "\x68", 1) ||  // push imm32
+        !patch::HookSlot(site + 1, reinterpret_cast<const void*>(ours), reinterpret_cast<void**>(&next), expected)) {
         dslog::Write("[fail] Launcher: unexpected bytes at 0x%08X", site);
         return false;
     }
-    uint32_t proc = reinterpret_cast<uint32_t>(ours);
-    return patch::Write(site + 1, &proc, 4);
+    return true;
 }
 }  // namespace
 
 void features::ApplyLauncher() {
-    if (SwapPushedProc(kProcPush, kGameProc, &DetailProc))
+    if (SwapPushedProc(kProcPush, kGameProc, &DetailProc, g_gameProc))
         dslog::Write("[ok]   Launcher settings: Detail Settings dialog extended");
-    if (SwapPushedProc(kMainProcPush, kMainGameProc, &MainProc))
+    if (SwapPushedProc(kMainProcPush, kMainGameProc, &MainProc, g_mainGameProc))
         dslog::Write("[ok]   Launcher: gamepad navigation");
+}
+
+uint32_t features::LauncherCaps(uint32_t& stencil) {
+    stencil = g_stencil;
+    return g_caps;
+}
+
+// The start counts as good once the game has drawn a few seconds of frames (a mode the monitor refused fails before).
+void features::OnFrameStartCheck() {
+    static int frames = 0;
+    if (frames < 0 || ++frames < 300) return;
+    frames = -1;
+    uint32_t pending = 0;
+    if (settings::ReadDword(false, kStartPending, pending) && pending) settings::WriteDword(false, kStartPending, 0);
 }
 
 // Each part is timed; one that takes more than 2 ms goes into the frame recorder's notes for that frame.
@@ -378,29 +662,61 @@ void Timed(const char* name, Fn fn) {
     }
 }
 
+// Frames come from the game layer (features.h OnFrame): framecap.cpp runs OnFrameEarly, the layer then pse.tasks and
+// PSE_EVENT_FRAME, whose last subscriber is OnFrame.
+namespace {
+double g_pseStart = 0;   // framerec time when PSE's part of the frame began (tasks + other plugins' FRAME subscribers)
+}
+
+void features::OnFrameEarly() {
+    OnFrameLockstep();      // first: online ticks (waits for the other players' inputs)
+    OnFrameDeterminism();   // the frame's virtual time + world hash before anything else touches it
+    g_pseStart = framerec::Recording() ? framerec::Now() : 0;
+}
+
 void features::OnFrame() {
+    if (g_pseStart > 0) {   // "pse": PSE tasks + PSE_EVENT_FRAME subscribers before this one (e.g. dsfix.discord)
+        const double ms = framerec::Now() - g_pseStart;
+        g_pseStart = 0;
+        if (ms > 2.0) {
+            char note[64];
+            snprintf(note, sizeof note, "pse %.1f ms", ms);
+            framerec::Note(note);
+        }
+    }
     Timed("overlay", [] { overlay::OnFrame(); });
     Timed("input", [] { OnFrameInput(); });
     Timed("splitscreen", [] { OnFrameSplitScreen(); });
-    Timed("discord", [] { OnFrameDiscord(); });
     Timed("coop", [] { OnFrameCoop(); });
     Timed("fontsharp", [] { OnFrameFontSharp(); });
+    Timed("barcolour", [] { OnFrameBarColour(); });
     Timed("weaponicons", [] { OnFrameWeaponIcons(); });
     Timed("bodies", [] { OnFrameBodies(); });
     Timed("followers", [] { OnFrameFollowers(); });
+    Timed("jpfixes", [] { OnFrameJpFixes(); });
+    Timed("limits", [] { OnFrameLimits(); });
     Timed("versus", [] { OnFrameVersus(); });
     Timed("campaigns", [] { OnFrameCampaigns(); });
     Timed("modsmenu", [] { OnFrameModsMenu(); });
     Timed("controls", [] { OnFrameControls(); });
     Timed("diagnostics", [] { OnFrameDiagnostics(); });
+    Timed("console", [] { OnFrameConsole(); });
+    Timed("devserver", [] { OnFrameDevServer(); });
+    Timed("online", [] { OnFrameOnline(); });
     Timed("hotplug", [] { OnFrameHotplug(); });
     Timed("padio", [] { padio::Update(); });
     Timed("followpad", [] { FollowActivePad(); });
     Timed("customise", [] { OnFrameCustomise(); });
+    Timed("gear", [] { OnFrameGear(); });
     Timed("timeofday", [] { OnFrameTimeOfDay(); });
+    Timed("weather", [] { OnFrameWeather(); });
+    Timed("weathersound", [] { OnFrameWeatherSound(); });
+    Timed("footprints", [] { OnFrameFootprints(); });
     Timed("voices", [] { OnFrameVoices(); });
     Timed("overview", [] { OnFrameOverview(); });
     Timed("dev", [] { OnFrameDev(); });
+    Timed("startcheck", [] { OnFrameStartCheck(); });
+    Timed("videomenu", [] { OnFrameVideoMenu(); });
 #ifndef DS_DIST
     Timed("loadoutdev", [] { OnFrameLoadoutDev(); });
     LogLayoutOffsetHits();
@@ -408,12 +724,13 @@ void features::OnFrame() {
 }
 
 void features::OnSettingsChanged() {
-    ApplyHud();
-    ApplyController();
-    ApplyInGameInput();
-    ApplyFrameCap();
-    ApplyDiscord();
-    ApplyDisplay();
-    ApplyCinematics();
-    ApplyDiagnostics();
+    // Each inside its feature's PSE plugin scope (dllmain.cpp kFeatures): patches it makes belong to that plugin.
+    pse_host::RunAs("dsfix.hud", &ApplyHud);
+    pse_host::RunAs("dsfix.controller", &ApplyController);
+    pse_host::RunAs("dsfix.ingame_input", &ApplyInGameInput);
+    pse_host::RunAs("dsfix.framecap", &ApplyFrameCap);
+    pse_host::RunAs("dsfix.graphics", &ApplyAnisotropy);
+    pse_host::RunAs("dsfix.display", &ApplyDisplay);
+    pse_host::RunAs("dsfix.cinematics", &ApplyCinematics);
+    pse_host::RunAs("dsfix.diagnostics", &ApplyDiagnostics);
 }

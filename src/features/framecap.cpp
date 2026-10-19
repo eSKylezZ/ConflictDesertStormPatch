@@ -1,5 +1,8 @@
 // Frame limiter. The message loop FUN_004115b0 calls the per-frame dispatcher FUN_0040de00 (update + render +
 // present) at 0x4116EC; that call goes through Frame(), which waits until the next frame is due.
+// The site is shared (broker chain): the game layer (pse/games/ds1/ds1_events.cpp, pse.game.ds1) hooks it at
+// PSE_DS1_LAYER_PRIORITY_INNER and runs PSE's frame there (pse.tasks + PSE_EVENT_FRAME, whose last subscriber is
+// features::OnFrame) before the game's dispatcher; this hook (priority 0) runs first and calls it through g_frameNext.
 // Target = min(FpsCap, monitor refresh rate): unthrottled, the game runs at 1000+ fps, where even the fixed
 // millisecond clock rounds some frame times to 0 and the game speeds up again.
 #include <windows.h>
@@ -11,9 +14,11 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/framerec.h"
+#include "loader.h"
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -26,7 +31,7 @@ constexpr uint32_t kGameWindow = 0x606A60;  // HWND global (created in FUN_00411
 constexpr uint32_t kMaxFps = 240;           // the most the game runs at (whole-ms game clock; high-refresh monitors)
 
 using FrameFn = void(__cdecl*)();
-const FrameFn g_dispatch = reinterpret_cast<FrameFn>(kFrameDispatch);
+FrameFn g_frameNext = nullptr;   // the chain's next: the game layer's frame hook (PSE frame), then FUN_0040de00
 
 LONGLONG g_freq = 0;
 LONGLONG g_next = 0;
@@ -118,6 +123,12 @@ void WaitUntil(LONGLONG deadline) {
     }
 }
 
+// A game layer that doesn't hook the frame call (older pse_ds1.dll, its hook refused): the chain ends at the game's
+// dispatcher - PSE's frame (and with it OnFrame) runs from here instead.
+void PseFrameIfNoLayer() {
+    if (reinterpret_cast<uint32_t>(g_frameNext) == kFrameDispatch) pse::Frame();
+}
+
 void __cdecl Frame() {
     if (!g_started) Start();
     LONGLONG now = Now();
@@ -146,17 +157,38 @@ void __cdecl Frame() {
     }
     g_frameStart = Now();
     framerec::BeginFrame(double(g_frameStart - now) * 1000.0 / double(g_freq));
+    features::OnFrameEarly();   // lockstep / determinism, then the layer: tasks, PSE_EVENT_FRAME (-> OnFrame), dispatch
+    PseFrameIfNoLayer();
+    g_frameNext();
+    // online: a PC drawing slower than the 60 ticks a second catches up with frames that only update (up to 3 per drawn
+    // frame) - otherwise every PC ran in slow motion with it
+    for (int k = 0; k < 3 && features::LockstepBehind(); ++k) {
+        features::LockstepCatchUp(true);
+        features::OnFrameEarly();
+        PseFrameIfNoLayer();
+        g_frameNext();
+        features::LockstepCatchUp(false);
+    }
+}
+
+// The rest of DesertStormFix's per-frame work: the last PSE_EVENT_FRAME subscriber (other plugins' run first, as when
+// pse::Frame was called from inside features::OnFrame).
+int PSE_CALL OnPseFrame(PSEEventId, void*, void*) {
     features::OnFrame();
-    g_dispatch();
+    return 0;
 }
 }  // namespace
 
 // The hook stays installed even with no cap (Frame() then just calls through), so the cap can change live.
 void features::ApplyFrameCap() {
     static bool hooked = false;
-    if (!hooked && patch::HookCall(kFrameCallSite, reinterpret_cast<const void*>(&Frame), kFrameDispatch)) {
+    if (!hooked && patch::SubscribeCall(kFrameCallSite, reinterpret_cast<const void*>(&Frame), kFrameDispatch, 0,
+                                        reinterpret_cast<void**>(&g_frameNext))) {
         hooked = true;
         dslog::Write("[ok]   Frame cap: hooked per-frame call at 0x%08X", kFrameCallSite);
+        if (!pse::MessagingInterface()->Subscribe(pse_host::Find("dsfix.framecap"), PSE_EVENT_FRAME, &OnPseFrame,
+                                                  nullptr, features::kFramePriority))
+            dslog::Write("[fail] Frame cap: no PSE_EVENT_FRAME subscription - DesertStormFix's per-frame work won't run");
     }
     g_lastRefreshCheck = 0;  // re-evaluate the target on the next frame
 }

@@ -23,7 +23,7 @@
 #include "features/overlay.h"
 
 namespace {
-constexpr uint32_t kSetTexture = 0x544220, kSetTextureSite = 0x53CC9B;
+constexpr uint32_t kSetTextureSite = features::kGlyphBindSite;
 constexpr uint32_t kFontSheet = 0x60EDB0, kDevice = 0x755050;
 constexpr uint32_t kFonts[] = {0x60EDB4, 0x60EDB8};  // small, large: +0 sheet, +0x20 char -> glyph u16[], +0x24 size
 constexpr int kMaxSize = 4096;
@@ -299,7 +299,8 @@ const std::vector<uint8_t>& LetterMask(uint32_t w, uint32_t h) {
 
 int Factor(const uint8_t* sheet) {
     if (!(*reinterpret_cast<const uint32_t*>(sheet + 0x20) & 1)) return 1;  // sheet scale switched off
-    const float k = *reinterpret_cast<const float*>(sheet + 0x24);
+    // the larger scale: textfit.cpp condenses long menu texts by lowering only X (+0x24) for one draw
+    const float k = std::max(*reinterpret_cast<const float*>(sheet + 0x24), *reinterpret_cast<const float*>(sheet + 0x28));
     return k <= 1.05f ? 1 : std::clamp(static_cast<int>(std::ceil(k - 0.05f)), 2, 4);
 }
 
@@ -314,14 +315,20 @@ bool Enabled() {
     }();
     if (off) return false;
 #endif
-    return settings::Get().hudScaling;
+    const bool on = settings::Get().hudScaling && settings::Get().featSharpText;
+    static int logged = -1;
+    if (logged != static_cast<int>(on)) {   // live: OPTIONS > DESERTSTORMFIX (featSharpText); needs HUD scaling
+        logged = on;
+        dslog::Write(on ? "[ok]   Sharp text: enlarged font texture" : "[off]  Sharp text: the game's font texture");
+    }
+    return on;
 }
 
+SetTextureFn g_next = nullptr;  // pse.hooks chain at 0x53CC9B: the next subscriber or the SetTexture wrapper
+
+// Last subscriber of the glyph texture bind (features.h kGlyphBind*): a mod weapon's picture (weaponicons.cpp) or a
+// recoloured page (barcolour.cpp) arrive here already swapped in and are no font pages, so they pass through.
 void __fastcall SetTexture(void* renderer, void* /*edx*/, DWORD stage, void* tex) {
-    if (void* icon = features::WeaponIconTexture(overlay::DrawingSheet(), overlay::DrawingImage())) {
-        reinterpret_cast<SetTextureFn>(kSetTexture)(renderer, stage, icon);  // a mod weapon's picture
-        return;
-    }
     if (tex && Enabled()) {
         const uint8_t* sheet = FontSheet();
         auto it = std::find_if(g_copies.begin(), g_copies.end(), [&](const Copy& c) { return c.original == tex; });
@@ -344,9 +351,18 @@ void __fastcall SetTexture(void* renderer, void* /*edx*/, DWORD stage, void* tex
             if (n > 1 && it->sharp[n]) tex = it->sharp[n];
         }
     }
-    reinterpret_cast<SetTextureFn>(kSetTexture)(renderer, stage, tex);
+    g_next(renderer, stage, tex);
 }
 }  // namespace
+
+std::vector<uint32_t> features::ReadTexturePixels(void* tex, uint32_t& w, uint32_t& h) {
+    SurfaceDesc d{};
+    w = h = 0;
+    if (!tex || FAILED(M<HRESULT(__stdcall*)(void*, UINT, SurfaceDesc*)>(tex, kGetLevelDesc)(tex, 0, &d))) return {};
+    std::vector<uint32_t> px = ReadPixels(tex, d);
+    if (!px.empty()) w = d.width, h = d.height;
+    return px;
+}
 
 // Drops copies of textures the font sheet no longer uses (a level unloaded its fonts).
 void features::OnFrameFontSharp() {
@@ -366,6 +382,7 @@ void features::OnFrameFontSharp() {
 void features::ApplyFontSharp() {
     static bool hooked = false;
     if (hooked) return;
-    hooked = patch::HookCall(kSetTextureSite, reinterpret_cast<const void*>(&SetTexture), kSetTexture);
+    hooked = patch::SubscribeCall(kSetTextureSite, reinterpret_cast<const void*>(&SetTexture), features::kGlyphBindTarget,
+                                  features::kGlyphBindFontSharp, reinterpret_cast<void**>(&g_next));
     dslog::Write(hooked ? "Sharp text: glyph texture hook installed" : "[fail] Sharp text: glyph draw not recognised");
 }

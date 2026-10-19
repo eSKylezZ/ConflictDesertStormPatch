@@ -37,8 +37,10 @@ extern "C" {
 
 #include "core/log.h"
 #include "core/patch.h"
+#include "core/pse_host.h"
 #include "features/features.h"
 #include "generated/standard_anims.h"
+#include "lua_bridge.h"   // pse/loader: plugin Lua functions (pse.lua, docs/sdk/reference/lua.md)
 
 namespace {
 constexpr uint32_t kTextLevelCall = 0x40C405;  // call FUN_00449190 (thiscall loader [0x60ED9C], name)
@@ -116,6 +118,7 @@ bool g_loadingSave = false;       // the level was started by LOAD GAME (API +0x
 void __cdecl ScriptUpdate() {
     if (g_updates++ == 0) dslog::Write("Script: %s - first update", g_name.c_str());
     if (g_base) BaseCall<void>(1);
+    pse::lua_bridge::Sync(g_lua);   // plugin functions registered since the level started
     if (g_lua && !g_failed) CallGlobal("_frame", 0, 0);  // prelude: region ENTERED / LEFT events
     if (g_lua && !g_failed) CallGlobal("update", 0, 0);
 }
@@ -166,11 +169,11 @@ int __cdecl ScriptMessage(int id, uint32_t* param) {
 }
 // Save games: the game writes its sections one after another into a fixed buffer (saver +0x98, 0x2AF53 + objects
 // bytes, the whole buffer goes to the .sav – 176 715 B) and passes the cursor to save(buf) / load(buf), which return
-// it advanced past the script's block; size() > 0 enables SAVE GAME at all (0x472008). Shipped levels leave >= 5.4 KB
-// of the buffer unused (Mission 3; Mission 1: 49 KB), so the block is capped at 2 KB rather than growing the buffer
-// (which would change the file layout). Block = "LUA1", u32 length, Lua text from game._save() (game.state).
+// it advanced past the script's block; size() > 0 enables SAVE GAME at all (0x472008). limits.cpp grows the buffer by
+// 4 MB and writes only the used part, so the block may be 64 KB (a save of a shipped level stays its old size).
+// Block = "LUA1", u32 length, Lua text from game._save() (game.state).
 constexpr uint32_t kSaveMagic = 0x3141554C;  // "LUA1"
-constexpr size_t kSaveMax = 2048;
+constexpr size_t kSaveMax = 64 * 1024;
 
 std::string SaveText() {
     if (!g_lua || g_failed) return {};
@@ -353,12 +356,27 @@ constexpr uint32_t kDormancyCall = 0x42BBD8, kDormancy = 0x428110;
 std::vector<uint8_t*> g_awake;
 
 int __fastcall Dormancy(uint8_t* soldier) {
+    // online (lockstep): nobody sleeps - "seen" depends on what each PC drew (screen size, draw distance), and a guard
+    // asleep on one PC but awake on the other split the games (2-PC test 2026-10-12)
+    if (features::LockstepActive()) {
+        *reinterpret_cast<int*>(soldier + 0x280) = 0;
+        return 0;
+    }
     for (uint8_t* s : g_awake)
         if (s == soldier) {
             *reinterpret_cast<int*>(soldier + 0x280) = 0;
             return 0;
         }
     return reinterpret_cast<int(__fastcall*)(uint8_t*)>(kDormancy)(soldier);
+}
+
+// game.hud(on): false hides the HUD (soldier panels, weapon, compass, prompts) through the same wrappers as the free
+// camera and the loadout screen - for script cameras / videos. Reset at every level start.
+bool g_scriptHudOff = false;
+
+int LuaHud(lua_State* L) {
+    g_scriptHudOff = !lua_toboolean(L, 1);
+    return 0;
 }
 
 bool IsSoldier(const uint8_t* obj) {
@@ -370,7 +388,10 @@ bool IsSoldier(const uint8_t* obj) {
 }
 
 int LuaKeepAwake(lua_State* L) {
-    static const bool hooked = patch::HookCall(kDormancyCall, reinterpret_cast<const void*>(&Dormancy), kDormancy);
+    static const bool hooked = [] {
+        patch::OwnerScope owner(pse_host::Find("dsfix.scripthost"));
+        return patch::HookCall(kDormancyCall, reinterpret_cast<const void*>(&Dormancy), kDormancy);
+    }();
     void* mgr = *reinterpret_cast<void**>(0x63C9A0);
     auto* obj = mgr ? static_cast<uint8_t*>(reinterpret_cast<void*(__thiscall*)(void*, int)>(0x4CA660)(
                           mgr, static_cast<int>(luaL_checkinteger(L, 1))))
@@ -386,6 +407,82 @@ int LuaKeepAwake(lua_State* L) {
     return 1;
 }
 
+// game.kill(id) / game.explode(id): kill a soldier the game's own ways (2026-10-15, for cutscenes) - TakeDamage
+// (vtable +0x3C (damage, attacker), as the debug key "Kill the selected Grunt" 0x444D80: death animation, blood
+// pool) or the explosion death (vtable +0x10 = 0x42BE40 (damage, position, attacker): body thrown, gibs FUN_00418c80,
+// large blood pool FUN_0041b310). Damage = 10 x health, no attacker. Returns true when it was a living soldier.
+uint8_t* LivingSoldier(lua_State* L) {
+    void* mgr = *reinterpret_cast<void**>(0x63C9A0);
+    auto* obj = mgr ? static_cast<uint8_t*>(reinterpret_cast<void*(__thiscall*)(void*, int)>(0x4CA660)(
+                          mgr, static_cast<int>(luaL_checkinteger(L, 1))))
+                    : nullptr;
+    return IsSoldier(obj) && *reinterpret_cast<float*>(obj + 0x54) > 0.0f ? obj : nullptr;
+}
+
+int LuaKill(lua_State* L) {
+    uint8_t* s = LivingSoldier(L);
+    if (s) {
+        void** vtable = *reinterpret_cast<void***>(s);
+        reinterpret_cast<void(__thiscall*)(void*, float, void*)>(vtable[0x3C / 4])(s, *reinterpret_cast<float*>(s + 0x54) * 10.0f,
+                                                                                nullptr);
+    }
+    lua_pushboolean(L, s != nullptr);
+    return 1;
+}
+
+int LuaExplode(lua_State* L) {
+    uint8_t* s = LivingSoldier(L);
+    if (s) {
+        void** vtable = *reinterpret_cast<void***>(s);
+        reinterpret_cast<int(__thiscall*)(void*, float, float*, void*)>(vtable[0x10 / 4])(
+            s, *reinterpret_cast<float*>(s + 0x54) * 10.0f, reinterpret_cast<float*>(s + 0x30), nullptr);
+    }
+    lua_pushboolean(L, s != nullptr);
+    return 1;
+}
+
+// game.difficulty(): 0 EASY, 1 MEDIUM, 2 HARD, 3 VERY HARD, 4 VERY EASY (difficulty.cpp; object [0x63C9E0] +4).
+// game.weather(kind [, seconds]): kind = index (0 = the mission's own .. 11 = FOG) or label ("rain", "sandstorm" ...);
+// changes over `seconds` (default 5); returns the weather now (index).
+int LuaWeather(lua_State* L) {
+    if (lua_gettop(L) >= 1) {
+        int kind = -1;
+        if (lua_type(L, 1) == LUA_TSTRING) {
+            std::string want = lua_tostring(L, 1);
+            for (char& c : want) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            for (char& c : want) if (c == '_') c = ' ';
+            for (int i = 0; i < features::kWeatherCount - 1; ++i)
+                if (want == features::WeatherLabel(i)) kind = i;
+        } else {
+            kind = static_cast<int>(luaL_checkinteger(L, 1));
+        }
+        if (kind < 0 || kind >= features::kWeatherCount - 1) return luaL_error(L, "game.weather: unknown weather");
+        features::ScriptWeather(kind, static_cast<float>(luaL_optnumber(L, 2, 5.0)));
+    }
+    lua_pushinteger(L, features::WeatherKind());
+    return 1;
+}
+
+int LuaDifficulty(lua_State* L) {
+    const uint8_t* d = *reinterpret_cast<const uint8_t* const*>(0x63C9E0);
+    lua_pushinteger(L, d ? *reinterpret_cast<const int*>(d + 4) : 1);
+    return 1;
+}
+
+}  // namespace
+
+// math.randomseed for the running Lua level: online every PC must draw the same "random" numbers (editor rules'
+// random chance) - lockstep.cpp calls this with the session seed when the mission starts in step.
+void features::ScriptReseed(uint32_t seed) {
+    if (!g_lua) return;
+    lua_getglobal(g_lua, "math");
+    lua_getfield(g_lua, -1, "randomseed");
+    lua_pushinteger(g_lua, static_cast<lua_Integer>(seed));
+    if (lua_pcall(g_lua, 1, 0, 0) != LUA_OK) lua_pop(g_lua, 1);
+    lua_pop(g_lua, 1);
+}
+
+namespace {
 int LuaCall(lua_State* L) {
     const uint32_t slot = CheckSlot(L);
     lua_pushinteger(L, static_cast<int32_t>(CallSlot<uint32_t>(L, slot)));
@@ -752,9 +849,14 @@ void OpenLibs(lua_State* L) {
                                     {"_popup", LuaPopup},
                                     {"_clear_skin", LuaClearSkin},
                                     {"keep_awake", LuaKeepAwake},
+                                    {"hud", LuaHud},
                                     {"kit", LuaKit},
                                     {"briefing", LuaBriefing},
                                     {"loadout", LuaLoadout},
+                                    {"kill", LuaKill},
+                                    {"explode", LuaExplode},
+                                    {"difficulty", LuaDifficulty},
+                                    {"weather", LuaWeather},
                                     {nullptr, nullptr}};
     luaL_newlib(L, game);
     features::RegisterFilmFunctions(L);   // movie.cpp: images, shapes, music, film mode
@@ -787,18 +889,30 @@ int __cdecl BaseLoadScene(const char* scene) {
 
 bool LoadBase(const std::string& dll) {
     constexpr uint32_t kLoadMissionDll = 0x449260;   // stdcall(name) (ret 4) -> LevelSetup -> [0x60F578], module [0x60F57C]
+    // A pointer hook for the call (g_loadScene = its next), removed again after it.
+    patch::OwnerScope owner(pse_host::Find("dsfix.scripthost"));
     g_loadScene = *reinterpret_cast<uint32_t*>(kApiLoadScene);
-    patch::WriteValue(kApiLoadScene, reinterpret_cast<uint32_t>(&BaseLoadScene));
+    patch::HookSlot(kApiLoadScene, reinterpret_cast<const void*>(&BaseLoadScene), reinterpret_cast<void**>(&g_loadScene));
     *reinterpret_cast<ScriptObject**>(kScriptObject) = nullptr;
     const bool ok = reinterpret_cast<bool(__stdcall*)(const char*)>(kLoadMissionDll)(dll.c_str());
-    patch::WriteValue(kApiLoadScene, g_loadScene);
+    patch::UnhookSlot(kApiLoadScene, reinterpret_cast<const void*>(&BaseLoadScene));
     g_base = ok ? *reinterpret_cast<ScriptObject**>(kScriptObject) : nullptr;
     if (!g_base) features::ModLog("[fail] script %s: base mission %s didn't load", g_name.c_str(), dll.c_str());
     else dslog::Write("Script: base mission %s runs under %s", dll.c_str(), g_scene.c_str());
     return g_base != nullptr;
 }
 
+// pse.lua: the level's state stops being the plugins' "current script" ("pse.lua.level_end" first). Every level start
+// (LevelInit) and before the state is closed. A DLL level after a Lua one keeps the old state alive as before, but
+// plugins no longer see it.
+void DetachPluginLua() {
+    if (!pse::lua_bridge::g_state) return;
+    pse::lua_bridge::LevelEnded(g_name.c_str());
+    pse::lua_bridge::SetState(nullptr);
+}
+
 int RunLuaLevel(const char* name) {
+    DetachPluginLua();
     if (g_lua) lua_close(g_lua);
     g_lua = nullptr;
     g_awake.clear();   // the previous level's soldiers are gone
@@ -826,6 +940,11 @@ int RunLuaLevel(const char* name) {
     lua_State* L = luaL_newstate();
     g_lua = L;
     OpenLibs(L);
+    // Plugin namespaces (pse.lua) before the prelude and the chunk: scripts can use them anywhere, init() included.
+    const size_t pluginFunctions = pse::lua_bridge::Install(L);
+    pse::lua_bridge::SetState(L);
+    if (pluginFunctions) dslog::Write("Script: %u plugin Lua function(s) installed", static_cast<unsigned>(pluginFunctions));
+    features::ScriptReseed(features::LockstepSeed() ? features::LockstepSeed() : GetTickCount());
     if (luaL_loadbuffer(L, kPrelude, strlen(kPrelude), "=prelude") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
         Report("prelude", L);
         return 0;
@@ -856,6 +975,7 @@ int RunLuaLevel(const char* name) {
     if (!g_base) reinterpret_cast<int(__cdecl*)(int)>(ApiFunction(0x460))(1);   // pause menu allowed (see allow_pause)
     *reinterpret_cast<ScriptObject**>(kScriptObject) = &g_object;
     dslog::Write("Script: %s running (%s)", name, g_base ? ("on " + base).c_str() : "standard animations");
+    pse::lua_bridge::LevelStarted(name);   // "pse.lua.level_start": plugins may CallGlobal now
     return 1;
 }
 
@@ -878,15 +998,10 @@ constexpr uint32_t kArchiveOpenCall = 0x40C19C, kArchiveOpen = 0x4BCF70;
 constexpr uint32_t kSoundCacheCall = 0x40C2E6, kSoundCacheLoad = 0x55F540;
 constexpr uint32_t kMusicBankCall = 0x40C350, kMusicBankLoad = 0x55DD20;
 bool g_luaLevel = false;
+bool g_dllRedirect = false;  // a mission DLL level whose mod names its data in "<name>.level" (below)
 std::string g_archive;  // declared archive base name, "none", or empty
 
-std::string ReadArchiveDirective(const char* name) {
-    char* buf = nullptr;
-    int size = 0;
-    if (!reinterpret_cast<int(__cdecl*)(const char*, char**, int*, int, int)>(kReadFile)(name, &buf, &size, 0, 6) || !buf)
-        return {};
-    std::string head(buf, static_cast<size_t>(size < 2048 ? size : 2048));
-    reinterpret_cast<void(__cdecl*)(void*)>(kFree)(buf);
+std::string ArchiveDirectiveIn(const std::string& head) {
     const size_t at = head.find("--@archive");
     if (at == std::string::npos) return {};
     size_t b = head.find_first_not_of(" \t", at + 10), e = head.find_first_of(" \t\r\n", b);
@@ -896,18 +1011,58 @@ std::string ReadArchiveDirective(const char* name) {
     return value;
 }
 
+std::string ReadArchiveDirective(const char* name) {
+    char* buf = nullptr;
+    int size = 0;
+    if (!reinterpret_cast<int(__cdecl*)(const char*, char**, int*, int, int)>(kReadFile)(name, &buf, &size, 0, 6) || !buf)
+        return {};
+    std::string head(buf, static_cast<size_t>(size < 2048 ? size : 2048));
+    reinterpret_cast<void(__cdecl*)(void*)>(kFree)(buf);
+    return ArchiveDirectiveIn(head);
+}
+
+// A mission DLL has no header: a mod names its level data in "<name minus .dll>.level" next to it, with the same
+// line as a .lua level ("--@archive mission1" / "--@archive none"). Only from mods (the game's own levels have none).
+std::string DllArchiveDirective(const char* name) {
+    std::string stem(name);
+    stem.resize(stem.size() - 4);
+    const std::string path = features::ModFilePath((stem + ".level").c_str());
+    if (path.empty()) return {};
+    std::string head(2048, '\0');
+    FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "rb") || !f) return {};
+    head.resize(fread(head.data(), 1, head.size(), f));
+    fclose(f);
+    return ArchiveDirectiveIn(head);
+}
+
+}  // namespace (reopened below)
+bool features::ScriptHidesHud() { return g_scriptHudOff; }
+namespace {
+
+// Shared site 0x40E05D: the game layer's hook (pse.game.ds1, PSE_DS1_LAYER_PRIORITY_OUTER) runs first - NEW_GAME and
+// PSE_EVENT_LEVEL_LOAD_BEGIN before this, LEVEL_LOAD_END after the level init returned - and calls this one.
+using LevelInitFn = int(__cdecl*)(const char*);
+LevelInitFn g_levelInitNext = reinterpret_cast<LevelInitFn>(kLevelInit);
+
 int __cdecl LevelInit(const char* name) {
+    DetachPluginLua();             // pse.lua: the last level's script is no longer the current one
     features::ResetScriptFilm();   // a film left running by the last level
     g_awake.clear();               // keep_awake soldiers of the last level (pointers are reused)
+    g_scriptHudOff = false;
     g_luaLevel = name && EndsWith(name, ".lua");
-    g_archive = g_luaLevel ? ReadArchiveDirective(name) : std::string();
-    if (g_luaLevel) dslog::Write("Script: level %s, archive %s", name, g_archive.empty() ? "(default)" : g_archive.c_str());
-    return reinterpret_cast<int(__cdecl*)(const char*)>(kLevelInit)(name);
+    g_archive = g_luaLevel ? ReadArchiveDirective(name) : name && EndsWith(name, ".dll") ? DllArchiveDirective(name) : std::string();
+    g_dllRedirect = !g_luaLevel && !g_archive.empty();
+    if (g_luaLevel || g_dllRedirect)
+        dslog::Write("Script: level %s, archive %s", name, g_archive.empty() ? "(default)" : g_archive.c_str());
+    features::BorrowUnitData(name);       // .unit soldier types: their model / kit files + banks
+    features::VehiclesLevelStart(name);   // vehicle swaps: their files + sound banks before the archive / cache load
+    return g_levelInitNext(name);
 }
 
 int __cdecl OpenLevelArchive(int slot, const char* path, int a, int b) {
     using Open = int(__cdecl*)(int, const char*, int, int);
-    if (g_luaLevel) {
+    if (g_luaLevel || g_dllRedirect) {
         if (_stricmp(g_archive.c_str(), "none") == 0) return 0;
         if (!g_archive.empty()) {
             const std::string own = g_archive + ".dat";
@@ -925,11 +1080,13 @@ int __cdecl OpenLevelArchive(int slot, const char* path, int a, int b) {
 // 0x40C1A2 (the only use of that result). Routes / quadtree / octree are named after the scene (.env) instead.
 constexpr uint32_t kBaseNameCall = 0x40C1A2, kBaseName = 0x4BE620;
 const char* __cdecl LevelBaseName(const char* name) {
-    if (g_luaLevel && !g_archive.empty() && _stricmp(g_archive.c_str(), "none") != 0) return g_archive.c_str();
+    if ((g_luaLevel || g_dllRedirect) && !g_archive.empty() && _stricmp(g_archive.c_str(), "none") != 0) return g_archive.c_str();
     return reinterpret_cast<const char* (__cdecl*)(const char*)>(kBaseName)(name);
 }
 
-bool UsesOwnArchive() { return g_luaLevel && !g_archive.empty() && _stricmp(g_archive.c_str(), "none") != 0; }
+bool UsesOwnArchive() {
+    return (g_luaLevel || g_dllRedirect) && !g_archive.empty() && _stricmp(g_archive.c_str(), "none") != 0;
+}
 
 void* __fastcall LoadSoundCache(void* manager, void*, const char* path) {
     using Load = void*(__thiscall*)(void*, const char*);
@@ -952,7 +1109,21 @@ constexpr uint32_t kOctreeFlagCall = 0x40C635, kStartFlag = 0x4B9CD0;
 constexpr uint32_t kOctreeOpenCall = 0x4E35C8, kGameFopen = 0x56732D;
 DWORD g_octreeStart = 0;
 
+// A vehicle swap (vehicles.cpp) breaks the shipped octree too: Mission 9 with the Abrams for the Bradley - every
+// vehicle's ground query found no level pieces (tri probe, same positions, 0 hits) and they all sank. Those loads build
+// it in memory like flag 'c', write it to %TEMP% (never over the game's) and skip the free + load-back (0x40C658
+// FUN_004e3660 frees every zone's tree, 0x40C668 FUN_004e3730 would read the shipped copy from the archive).
+constexpr uint32_t kOctreeLoadCall = 0x40C668, kOctreeLoad = 0x4E3730;
+constexpr uint32_t kOctreeFreeCall = 0x40C658, kOctreeFree = 0x4E3660;   // frees every zone's octree before the load-back
+bool g_octreeForSwap = false;
+
 int __cdecl OctreeFlag(int letter) {
+    g_octreeForSwap = false;
+    if (letter == 'c' && !g_luaLevel && features::VehicleSwapsThisLoad()) {
+        g_octreeForSwap = true;
+        g_octreeStart = GetTickCount();
+        return 1;
+    }
     // Only for a scene the mission ships (its .OCT placeholder is in the mod / built from the player's install): a
     // .lua level on a shipped scene keeps the shipped octree - a rebuild would write <scene>.OCT into the game folder.
     std::string scene = reinterpret_cast<const char*>(0x606880);
@@ -966,12 +1137,35 @@ int __cdecl OctreeFlag(int letter) {
 
 void* __cdecl OctreeOpen(const char* name, const char* mode) {
     using Fopen = void*(__cdecl*)(const char*, const char*);
+    if (g_octreeForSwap) {
+        char tmp[MAX_PATH] = {};
+        GetTempPathA(MAX_PATH, tmp);
+        std::string dir = std::string(tmp) + "DesertStormFix";
+        CreateDirectoryA(dir.c_str(), nullptr);
+        const char* slash = strrchr(name, '\\');
+        const std::string path = dir + "\\vehicle-swap-" + (slash ? slash + 1 : name);
+        return reinterpret_cast<Fopen>(kGameFopen)(path.c_str(), mode);
+    }
     const std::string own = g_luaLevel ? features::ModFilePath(name) : std::string();
     void* f = reinterpret_cast<Fopen>(kGameFopen)(own.empty() ? name : own.c_str(), mode);
     if (g_luaLevel)
         dslog::Write("Script: octree %s rebuilt from the scene in %lu ms -> %s%s", name,
                      GetTickCount() - g_octreeStart, own.empty() ? name : own.c_str(), f ? "" : " (can't write)");
     return f;
+}
+
+void __fastcall OctreeFree(void* world, void*) {
+    if (!g_octreeForSwap) reinterpret_cast<void(__thiscall*)(void*)>(kOctreeFree)(world);
+}
+
+int __fastcall OctreeLoad(void* world, void*, const char* scene) {
+    if (g_octreeForSwap) {
+        g_octreeForSwap = false;
+        dslog::Write("Vehicles: octree for %s rebuilt from the scene in %lu ms (vehicle swap)", scene,
+                     GetTickCount() - g_octreeStart);
+        return 1;
+    }
+    return reinterpret_cast<int(__thiscall*)(void*, const char*)>(kOctreeLoad)(world, scene);
 }
 }  // namespace
 
@@ -1163,10 +1357,35 @@ bool features::ScriptLoadingSave() { return g_loadingSave; }
 
 const char* features::QuickStartLevel() { return g_quickLevel[0] ? g_quickLevel : nullptr; }
 
+// --- mission DLLs from mods -----------------------------------------------------------------------------------------
+// The game loads a level's script DLL (a "*.dll" level, or our "--@base X.dll") only in FUN_00449260:
+// `call [LoadLibraryA]` at 0x449265 with the bare name -> the game folder / system paths, never Mods\. A mod's
+// mission DLL (Mods\<mod>\X.dll through the mod index - a new one, or a changed copy of a shipped MissionN.dll) is
+// loaded by its full path instead, with the altered search path so DLLs next to it resolve. Freed by the game as
+// before (FreeLibrary at 0x4492C4).
+namespace {
+constexpr uint32_t kMissionDllLoadCall = 0x449265, kLoadLibraryIat = 0x5D8070;
+
+HMODULE WINAPI LoadMissionDll(const char* name) {
+    const std::string own = name ? features::ModFilePath(name) : std::string();
+    if (own.empty()) return LoadLibraryA(name);
+    HMODULE m = LoadLibraryExA(own.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    const DWORD error = m ? 0 : GetLastError();
+    dslog::Write(m ? "Script: mission DLL %s from %s" : "[fail] Script: mission DLL %s from %s didn't load (error %lu)",
+                 name, own.c_str(), error);
+    if (!m) features::ModLog("[fail] %s: mission DLL didn't load (error %lu)", own.c_str(), error);
+    return m;
+}
+}  // namespace
+
 void features::ApplyScriptHost() {
     ParseCommandLine();
+    // pse.lua: plugin Lua functions + CallGlobal for this host's state (private pse.lua.host, host plugins only)
+    if (!pse::lua_bridge::g_api && !pse::lua_bridge::Attach(pse::LoadInterfaceFor(pse_host::Core())))
+        dslog::Write("Script host: no pse.lua.host from the loader - plugin Lua functions unavailable");
     if (patch::HookCall(kTextLevelCall, reinterpret_cast<const void*>(&LoadTextLevel), kTextLevelLoad) &&
-        patch::HookCall(kLevelInitCall, reinterpret_cast<const void*>(&LevelInit), kLevelInit) &&
+        patch::SubscribeCall(kLevelInitCall, reinterpret_cast<const void*>(&LevelInit), kLevelInit, 0,
+                             reinterpret_cast<void**>(&g_levelInitNext)) &&
         patch::HookCall(kArchiveOpenCall, reinterpret_cast<const void*>(&OpenLevelArchive), kArchiveOpen) &&
         patch::HookCall(kSoundCacheCall, reinterpret_cast<const void*>(&LoadSoundCache), kSoundCacheLoad) &&
         patch::HookCall(kMusicBankCall, reinterpret_cast<const void*>(&LoadMusicBank), kMusicBankLoad) &&
@@ -1176,6 +1395,18 @@ void features::ApplyScriptHost() {
     if (patch::HookCall(kBuildNavCall, reinterpret_cast<const void*>(&BuildNav), kBuildNav))
         dslog::Write("Script host: .lua levels without a walk map build their AI navigation from the scene");
     if (patch::HookCall(kOctreeFlagCall, reinterpret_cast<const void*>(&OctreeFlag), kStartFlag) &&
-        patch::HookCall(kOctreeOpenCall, reinterpret_cast<const void*>(&OctreeOpen), kGameFopen))
+        patch::HookCall(kOctreeOpenCall, reinterpret_cast<const void*>(&OctreeOpen), kGameFopen) &&
+        patch::HookCall(kOctreeLoadCall, reinterpret_cast<const void*>(&OctreeLoad), kOctreeLoad) &&
+        patch::HookCall(kOctreeFreeCall, reinterpret_cast<const void*>(&OctreeFree), kOctreeFree))
         dslog::Write("Script host: .lua levels rebuild their octree");
+    if (patch::HookIndirectCall(kMissionDllLoadCall, reinterpret_cast<const void*>(&LoadMissionDll), kLoadLibraryIat))
+        dslog::Write("Script host: mission DLLs can come from mods");
+}
+
+void features::EnsureDormancyHook() {   // lockstep.cpp: online missions keep every soldier awake
+    static const bool hooked = [] {
+        patch::OwnerScope owner(pse_host::Find("dsfix.scripthost"));
+        return patch::HookCall(kDormancyCall, reinterpret_cast<const void*>(&Dormancy), kDormancy);
+    }();
+    (void)hooked;
 }
