@@ -84,12 +84,22 @@ target_link_libraries(pse_ds1 PRIVATE pse_hostlink)
 set_target_properties(pse_ds1 PROPERTIES OUTPUT_NAME pse_ds1)
 target_link_options(pse_ds1 PRIVATE /SAFESEH:NO)
 
+# PSE\Games\pse_ds2.dll: the Conflict: Desert Storm II game layer (docs/sdk/reference/game-ds2.md). Deployed only by
+# pse_tree_ds2 below (into DS2_GAME_DIR when set) - never into the DS1 install.
+file(GLOB PSE_DS2_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2/*.h)
+add_library(pse_ds2 SHARED ${PSE_DS2_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)
+target_include_directories(pse_ds2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2 ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(pse_ds2 PRIVATE pse_hostlink)
+set_target_properties(pse_ds2 PROPERTIES OUTPUT_NAME pse_ds2)
+target_link_options(pse_ds2 PRIVATE /SAFESEH:NO)
+
 if(COMMAND ds_ship_target)
     ds_ship_target(pse_loader "Pivotal Script Extender loader" pse_loader.dll)
     ds_ship_target(pse_shim "Pivotal Script Extender shim (dinput8 proxy)" dinput8.dll)
     ds_ship_target(pse_ds1 "Pivotal Script Extender - Conflict: Desert Storm game layer" pse_ds1.dll)
+    ds_ship_target(pse_ds2 "Pivotal Script Extender - Conflict: Desert Storm II game layer" pse_ds2.dll)
 else()
-    foreach(t pse_loader pse_shim pse_ds1)
+    foreach(t pse_loader pse_shim pse_ds1 pse_ds2)
         target_compile_definitions(${t} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
     endforeach()
@@ -164,6 +174,45 @@ if(NOT DS_DIST)
     pse_add_plugin(pse_example_ui_demo SOURCES examples/ui_demo/ui_demo.cpp MANIFEST examples/ui_demo/example.ui_demo.pse)
     target_compile_options(pse_example_ui_demo PRIVATE /W4 /permissive- /utf-8)
     list(APPEND PSE_EXAMPLE_PLUGINS pse_example_ui_demo)
+
+    # ---- Desert Storm II (docs/sdk/reference/game-ds2.md) ----
+    # TEST ONLY: DS2 off-screen / unfocused / muted, booting a level, save / load (test.ds2_harness, never shipped).
+    pse_add_plugin(pse_test_ds2_harness SOURCES tests/ds2_harness/ds2_harness.cpp
+        MANIFEST tests/ds2_harness/test.ds2_harness.pse)
+    target_compile_definitions(pse_test_ds2_harness PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(pse_test_ds2_harness PRIVATE /W4 /permissive- /utf-8)
+    target_link_libraries(pse_test_ds2_harness PRIVATE ole32)
+    list(APPEND PSE_EXAMPLE_PLUGINS pse_test_ds2_harness)
+    # The DS2 install tree: ${CMAKE_BINARY_DIR}/tree-ds2/<config>/ = dinput8.dll (the same shim), PSE\pse_loader.dll (the
+    # same loader), PSE\Games\pse_ds2.dll and the game-neutral example plugins - the SAME plugin DLLs as in the DS1 tree.
+    # Copied into DS2_GAME_DIR when set (it replaces that folder's dinput8.dll: DesertStorm2Fix's own - back it up).
+    set(DS2_GAME_DIR "" CACHE PATH "Conflict: Desert Storm II install folder (optional deploy target of pse_tree_ds2)")
+    set(DS2_TREE "$<TARGET_FILE:pse_shim>|dinput8.dll@$<TARGET_FILE:pse_loader>|PSE/pse_loader.dll")
+    string(APPEND DS2_TREE "@$<TARGET_FILE:pse_ds2>|PSE/Games/pse_ds2.dll")
+    string(APPEND DS2_TREE "@?$<TARGET_PDB_FILE:pse_shim>|dinput8.pdb@?$<TARGET_PDB_FILE:pse_loader>|PSE/pse_loader.pdb")
+    string(APPEND DS2_TREE "@?$<TARGET_PDB_FILE:pse_ds2>|PSE/Games/pse_ds2.pdb")
+    set(DS2_TREE_DEPENDS "")
+    foreach(t pse_example_hello pse_example_hello_client pse_example_events_logger)
+        get_target_property(stem ${t} OUTPUT_NAME)
+        get_target_property(manifest ${t} PSE_MANIFEST)
+        string(APPEND DS2_TREE "@$<TARGET_FILE:${t}>|PSE/Plugins/${stem}.dll@${manifest}|PSE/Plugins/${stem}.pse")
+        list(APPEND DS2_TREE_DEPENDS ${t} ${manifest})
+    endforeach()
+    set(DS2_TREE_STAMP ${CMAKE_BINARY_DIR}/tree-ds2/$<CONFIG>.stamp)
+    set(DS2_TREE_DEPLOY "")
+    if(DS2_GAME_DIR)
+        set(DS2_TREE_DEPLOY COMMAND ${CMAKE_COMMAND} -DDEST=${DS2_GAME_DIR} "-DFILES=${DS2_TREE}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/assemble.cmake)
+    endif()
+    add_custom_command(OUTPUT ${DS2_TREE_STAMP}
+        COMMAND ${CMAKE_COMMAND} -DDEST=${CMAKE_BINARY_DIR}/tree-ds2/$<CONFIG> "-DFILES=${DS2_TREE}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/assemble.cmake
+        ${DS2_TREE_DEPLOY}
+        COMMAND ${CMAKE_COMMAND} -E touch ${DS2_TREE_STAMP}
+        DEPENDS pse_shim pse_loader pse_ds2 ${DS2_TREE_DEPENDS} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/assemble.cmake
+        COMMENT "PSE DS2 tree in ${CMAKE_BINARY_DIR}/tree-ds2/<config>"
+        VERBATIM)
+    add_custom_target(pse_tree_ds2 ALL DEPENDS ${DS2_TREE_STAMP})
 endif()
 
 # pse_tests.exe: unit tests (no game needed) + image tests (DesertStorm.exe mapped at 0x400000, not run).
@@ -176,7 +225,8 @@ if(NOT DS_DIST)
     target_compile_definitions(pse_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_compile_options(pse_tests PRIVATE /W4 /permissive- /utf-8 /Zi /EHsc)
     target_link_libraries(pse_tests PRIVATE pse_core lua_static)   # lua_static: test_lua_iface.cpp (pse/loader/lua_bridge.h)
-    target_link_libraries(pse_tests PRIVATE pse_build_lib)         # test_asset_store.cpp
+    target_link_libraries(pse_tests PRIVATE pse_build_lib)         # test_asset_store.cpp, test_mission2lua.cpp
+    target_compile_definitions(pse_tests PRIVATE "PSE_REPO_DIR=\"${CMAKE_SOURCE_DIR}\"")   # test_mission2lua: ../ModKit
     # Keep 0x400000 free for the mapped game image (tests/exe_image.*).
     target_link_options(pse_tests PRIVATE /BASE:0x10000000 /DYNAMICBASE /SAFESEH:NO /DEBUG)
     # test_plugins.cpp loads the example plugins from their output folder.
@@ -187,5 +237,8 @@ if(NOT DS_DIST)
     add_dependencies(pse_tests pse_ds1)
     target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_DLL=\"$<TARGET_FILE:pse_ds1>\""
         "PSE_FAKE_DSFIX_DIR=\"$<TARGET_FILE_DIR:pse_test_host_dsfix>\"")
+    # test_game_ds2.cpp: the DS2 game layer DLL (detection) and the games/ds2 sources.
+    add_dependencies(pse_tests pse_ds2)
+    target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_DS2_DLL=\"$<TARGET_FILE:pse_ds2>\"")
     add_test(NAME pse_tests COMMAND pse_tests)
 endif()

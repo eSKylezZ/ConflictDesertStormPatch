@@ -29,7 +29,9 @@ int PSE_CALL OnFrame(PSEEventId, void*, void*) {
     return 0;   // let later subscribers run
 }
 
-const char* const kGames[] = {"ds1", nullptr};
+// Both Desert Storm games: this plugin uses only the loader interfaces and the core events, which every game layer
+// serves the same way - the same DLL runs on DS1 and DS2 (docs/sdk/reference/game-ds2.md).
+const char* const kGames[] = {"ds1", "ds2", nullptr};
 
 }  // namespace
 

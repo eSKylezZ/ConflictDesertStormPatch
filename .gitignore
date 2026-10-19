@@ -49,6 +49,8 @@ Data/
 
 # Build output
 build/
+# ... but pse/build/ is source (the first-run builder: asset store + mission translator)
+!/pse/build/
 build-dist/
 build-release/
 build-*/
@@ -95,3 +97,13 @@ pse-cache/
 store.pack
 store.idx
 *.man
+
+# Other games' patches (games/<id>, moved in 2026-10-19 from the DS2 / Vietnam / Global Storm repos). The patterns
+# above without a leading "/" (tools/, build/, build-*/, extracted/, media/, CLAUDE.md, CMakeUserPresets.json, game
+# binaries / data, disc dumps) apply inside games/ too; these are the root-anchored ones of those repos' .gitignore:
+/games/*/TODO.md
+/games/*/SERVICE_RECORD_RESEARCH.md
+/games/*/PLATFORM_DIFFERENCES.md
+/games/*/research/
+/games/*/.vscode/*
+!/games/*/.vscode/extensions.json

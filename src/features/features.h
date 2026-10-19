@@ -302,6 +302,7 @@ void ApplyScriptHost();  // scripthost.cpp: ".lua" levels run by an embedded Lua
 void ApplyMissionRt();
 bool MissionRtRanges(uint32_t* imageLo, uint32_t* imageHi, uint32_t* origBase, uint32_t* stackLo, uint32_t* stackHi);
 uint32_t MissionRtCallTarget();
+void ApplyMissionSource();   // missionsource.cpp, dev: Dev\MissionSource = lua runs mission DLLs as translated Lua
 void ApplyApiTrace();    // apitrace.cpp, dev: Dev\ApiTrace = n logs every script API call (DLL vs Lua parity)
 void ApplyRumble();      // weapon rumble retuned (nothing for throwing / placing); notes what fired per player
 void ApplyDevHooks();    // development builds only: test hooks (start level)

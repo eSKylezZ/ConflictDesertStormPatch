@@ -1,5 +1,5 @@
-// DesertStorm.exe mapped at 0x400000 inside pse_tests.exe (see exe_image.h). The exe has no relocations, so it
-// can only live at its image base; pse_tests.exe is linked at 0x10000000 to keep that range free, and the range
+// DesertStorm.exe (or, for the DS2 tests, CDS II.exe) mapped at 0x400000 inside pse_tests.exe (see exe_image.h). The
+// exes have no relocations, so they can only live at their image base - one at a time (MapGame switches); pse_tests.exe is linked at 0x10000000 to keep that range free, and the range
 // is reserved by a static initializer (or, when Windows already put something there, in a restarted copy).
 #include "exe_image.h"
 
@@ -20,13 +20,25 @@
 
 namespace exe {
 namespace {
-constexpr const char* kKnownSha256 = "D712F5EC82C14DA66B098332B3CC9C99689091F46317112EA35DFD393DC3E164";
-constexpr const char* kSteamExe = "H:\\SteamLibrary\\steamapps\\common\\conflict_desert_storm\\DesertStorm.exe";
-constexpr const char* kGogExe = "H:\\GOG\\Games\\Conflict - Desert Storm\\DesertStorm.EXE";
-constexpr uint32_t kLaaOffset = 0x96;  // IMAGE_FILE_HEADER.Characteristics low byte; 0x20 = large address aware
+// The exes the image tests can map (MapGame). Each: game id, known SHA-256 (4 GB flag cleared), env override,
+// install paths tried in order.
+struct GameExe {
+    const char* id;
+    const char* sha256;
+    const char* env;
+    const char* paths[3];
+};
+constexpr GameExe kGames[] = {
+    {"ds1", "D712F5EC82C14DA66B098332B3CC9C99689091F46317112EA35DFD393DC3E164", "PSE_GAME_EXE",
+     {"H:\\SteamLibrary\\steamapps\\common\\conflict_desert_storm\\DesertStorm.exe",
+      "H:\\GOG\\Games\\Conflict - Desert Storm\\DesertStorm.EXE", nullptr}},
+    {"ds2", "E9B46420DC00B13C3C48A9E9B7B3FDA29458D5EA83AC0D203F5B68FDD111542A", "PSE_GAME_EXE_DS2",
+     {"H:\\SCI Games\\Conflict Desert Storm II\\CDS II.exe", nullptr, nullptr}},
+};
+constexpr size_t kGameCount = sizeof kGames / sizeof kGames[0];
 
-// Range 0x400000 .. 0x803000 (SizeOfImage 0x403000), reserved at start-up; Map commits it.
-constexpr uint32_t kReserveSize = 0x403000;
+// Range 0x400000 .. 0x9A6000 (the larger SizeOfImage: DS2 0x5A6000, DS1 0x403000), reserved at start-up; Map commits it.
+constexpr uint32_t kReserveSize = 0x5A6000;
 void* g_reserved = nullptr;
 DWORD g_reserveError = 0;
 
@@ -111,7 +123,13 @@ struct Import {
     std::string name;
 };
 
-bool g_tried = false, g_mapped = false;
+struct GameState {
+    bool tried = false, ok = false;   // tried and mapped once (it may have been swapped out for another game since)
+    std::string why;
+};
+GameState g_games[kGameCount];
+const GameExe* g_current = nullptr;   // the game whose exe is in the range now
+bool g_mapped = false;
 std::string g_why, g_path;
 std::vector<uint8_t> g_file;
 std::vector<Section> g_sections;
@@ -237,24 +255,49 @@ void CopySections() {
     }
 }
 
-bool DoMap(std::string* why) {
+// Takes the current game's exe out of the range (decommit, forget its sections / imports), so another can go in.
+void Unmap() {
+    if (!g_current) return;
+    VirtualFree(Ptr(kImageBase), kReserveSize, MEM_DECOMMIT);
+    if (g_stubs) VirtualFree(g_stubs, 0, MEM_RELEASE);
+    g_stubs = nullptr;
+    g_sections.clear();
+    g_imports.clear();
+    g_importNames.clear();
+    g_file.clear();
+    g_current = nullptr;
+    g_mapped = false;
+}
+
+bool DoMap(const GameExe& game, std::string* why) {
     std::string path;
-    if (const char* env = std::getenv("PSE_GAME_EXE"); env && *env) {
+    if (const char* env = std::getenv(game.env); env && *env) {
         path = env;
-        if (!FileExists(path)) { *why = "PSE_GAME_EXE=" + path + " does not exist"; return false; }
-    } else if (FileExists(kSteamExe)) {
-        path = kSteamExe;
-    } else if (FileExists(kGogExe)) {
-        path = kGogExe;
+        if (!FileExists(path)) { *why = std::string(game.env) + "=" + path + " does not exist"; return false; }
     } else {
-        *why = "DesertStorm.exe not found (set PSE_GAME_EXE)";
-        return false;
+        for (const char* p : game.paths)
+            if (p && FileExists(p)) {
+                path = p;
+                break;
+            }
+        if (path.empty()) {
+            *why = std::string(game.id) + " exe not found (set " + game.env + ")";
+            return false;
+        }
     }
+    std::vector<uint8_t> file;
+    if (!ReadWholeFile(path, &file)) { *why = "can't read " + path; return false; }
+    if (file.size() > 0x40) {   // the 4 GB patcher's bit (Characteristics 0x20): hash + map the original
+        uint32_t lfanew = 0;
+        std::memcpy(&lfanew, &file[0x3C], 4);
+        if (static_cast<size_t>(lfanew) + 4 + 20 <= file.size()) file[lfanew + 4 + 18] &= ~0x20;
+    }
+    std::string sha = Sha256Hex(file);
+    if (sha != game.sha256) { *why = path + " is not the known build (SHA-256 " + sha + ")"; return false; }
+    Unmap();   // another game's exe out first
     g_path = path;
-    if (!ReadWholeFile(path, &g_file)) { *why = "can't read " + path; return false; }
-    if (g_file.size() > kLaaOffset) g_file[kLaaOffset] &= ~0x20;  // the 4 GB patcher's bit: hash + map the original
-    std::string sha = Sha256Hex(g_file);
-    if (sha != kKnownSha256) { *why = path + " is not the known build (SHA-256 " + sha + ")"; return false; }
+    g_file = std::move(file);
+    g_current = &game;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_file.data());
     auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(g_file.data() + dos->e_lfanew);
@@ -281,6 +324,7 @@ bool DoMap(std::string* why) {
     }
     if (!VirtualAlloc(Ptr(kImageBase), g_sizeOfImage, MEM_COMMIT, PAGE_READWRITE)) {
         *why = "can't commit the image range (error " + std::to_string(GetLastError()) + ")";
+        g_current = nullptr;
         return false;
     }
     CopySections();
@@ -366,15 +410,34 @@ LONG CALLBACK Veh(EXCEPTION_POINTERS* ep) {
 }
 }  // namespace
 
-bool Map(std::string* whyNot) {
-    if (!g_tried) {
-        g_tried = true;
-        g_mapped = DoMap(&g_why);
+bool MapGame(const char* gameId, std::string* whyNot) {
+    size_t i = 0;
+    while (i < kGameCount && std::strcmp(kGames[i].id, gameId) != 0) ++i;
+    if (i == kGameCount) {
+        if (whyNot) *whyNot = std::string("no exe known for game ") + gameId;
+        return false;
     }
-    if (!g_mapped && whyNot) *whyNot = g_why;
-    return g_mapped;
+    GameState& s = g_games[i];
+    if (g_current == &kGames[i] && g_mapped) return true;
+    if (s.tried && !s.ok) {   // missing / not the known build: not read again
+        if (whyNot) *whyNot = s.why;
+        return false;
+    }
+    s.tried = true;
+    std::string why;
+    const bool ok = DoMap(kGames[i], &why);
+    s.ok = ok;
+    g_mapped = ok && g_current == &kGames[i];
+    if (!ok) {
+        s.why = why;
+        g_why = why;
+        if (whyNot) *whyNot = why;
+    }
+    return ok;
 }
+bool Map(std::string* whyNot) { return MapGame("ds1", whyNot); }
 bool Mapped() { return g_mapped; }
+const char* MappedGame() { return g_mapped && g_current ? g_current->id : ""; }
 const std::string& Path() { return g_path; }
 
 void Restore() {

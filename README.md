@@ -14,6 +14,21 @@ Patch for the PC version of Conflict: Desert Storm, adding 16x9 support, control
 - Fixed game speed at high frame rates, plus a frame cap (monitor refresh rate, max 240 fps)
 - Settings in the launcher, and the launcher can be used with a controller
 
+## Games
+One repository for the Pivotal Games "Conflict" series patches. They share the Pivotal Script Extender in `pse/`
+(loader + one game layer per game in `pse/games/<id>`), the input-prompt art in `assets/` and Lua in `third_party/`.
+
+| Game | Patch | Where | State |
+| --- | --- | --- | --- |
+| Conflict: Desert Storm (`ds1`) | DesertStormFix | `src/` (moves to `games/ds1` later), PSE layer `pse/games/ds1` | full feature set (this README) |
+| Conflict: Desert Storm II (`ds2`) | DesertStorm2Fix | [games/ds2](games/ds2/README.md), PSE layer `pse/games/ds2` | widescreen, HUD scaling, 4:3-framed front end, split screen 2-4 players + co-op join; `ds2fix` PSE host plugin (skeleton) |
+| Conflict: Vietnam (`cv`) | VietnamFix | [games/cv](games/cv/README.md) | widescreen, HUD / menu scaling, Mods folder |
+| Conflict: Global Storm (`cgs`) | GlobalStormFix | [games/cgs](games/cgs/README.md) | widescreen, high-res fonts, menus kept 4:3 on wide screens |
+
+Each `games/<id>` is its own CMake project (`cmake -S games/<id> --preset x86`), or build it from the repo root with
+the presets `ds2`, `cv`, `cgs` (+ `-dist`; `ds2-pse` = `ds2fix.dll`). `games/ds1-reference` = the DesertStormFix
+feature sources the ports started from.
+
 ## Install
 Copy `dinput8.dll` into the game folder (next to `DesertStorm.exe`). The exe itself is not modified;
 delete the DLL to uninstall. Settings live in the registry (`HKCU\Software\PSE\ds1\Plugins\dsfix`, see

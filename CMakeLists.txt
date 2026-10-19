@@ -5,6 +5,23 @@ project(DesertStormFix VERSION 3.3.0 LANGUAGES C CXX RC)
 set(DS_VERSION_SUFFIX "-Alpha")
 set(DS_VERSION_FULL "${PROJECT_VERSION}${DS_VERSION_SUFFIX}")
 
+# ---- Other games' standalone patches (games/<id>, 2026-10-19) --------------------------------------------------------
+# PSE_GAME = ds2 / cv / cgs builds ONLY that game's own patch (games/<id>/CMakeLists.txt: dinput8.dll, DS2 also ds2fix)
+# in this binary dir - nothing of DesertStormFix / PSE is configured, so no target names clash. Root presets ds2*, cv*,
+# cgs*. Outputs land where a standalone build of games/<id> puts them (<bin>/<config>/dinput8.dll, <bin>/package).
+# Each games/<id> also still builds on its own: cmake -S games/<id> --preset x86 (its own CMakePresets.json).
+set(PSE_GAME "" CACHE STRING "Build another game's standalone patch from games/<id> instead of DesertStormFix (ds2, cv, cgs)")
+if(PSE_GAME)
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/games/${PSE_GAME}/CMakeLists.txt")
+        message(FATAL_ERROR "PSE_GAME=${PSE_GAME}: no games/${PSE_GAME}/CMakeLists.txt")
+    endif()
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_subdirectory(games/${PSE_GAME} ${CMAKE_BINARY_DIR}/game)
+    return()
+endif()
+
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "DesertStorm.exe is 32-bit: configure with -A Win32 (use the CMake presets).")
 endif()
@@ -185,7 +202,7 @@ pse_add_plugin(dsfix MANIFEST src/dsfix.pse SOURCES
     src/features/lockstep.cpp
     src/features/hostsync.cpp
     src/features/devserver.cpp
-    src/features/missionrt.cpp src/features/apitrace.cpp
+    src/features/missionrt.cpp src/features/apitrace.cpp src/features/missionsource.cpp
     src/game_icons.rc
 )
 target_include_directories(dsfix PRIVATE src ${CMAKE_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/pse/loader

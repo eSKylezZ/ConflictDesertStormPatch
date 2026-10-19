@@ -1,0 +1,5 @@
+# DesertStorm2Fix as a PSE host plugin (skeleton, src/pse/ds2fix.cpp). The DS2 game layer (PSE\Games\pse_ds2.dll)
+# allows "ds2fix" as a host plugin: it gets pse.host and loads before every other plugin.
+name = ds2fix
+host = true
+requires = pse.game.ds2 >= 1.0

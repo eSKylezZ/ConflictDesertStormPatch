@@ -319,11 +319,13 @@ void RequestCancel(HWND hwnd) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
-void Paint(HWND hwnd) {
-    PAINTSTRUCT ps;
-    HDC dc = BeginPaint(hwnd, &ps);
+// Draws the client area (not the Cancel button) into `target` - through a memory bitmap, so it doesn't flicker.
+void Paint(HWND hwnd, HDC target) {
     RECT rc;
     GetClientRect(hwnd, &rc);
+    HDC dc = CreateCompatibleDC(target);
+    HBITMAP bmp = CreateCompatibleBitmap(target, rc.right, rc.bottom);
+    HGDIOBJ oldBmp = SelectObject(dc, bmp);
     FillRect(dc, &rc, GetSysColorBrush(COLOR_BTNFACE));
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
@@ -360,13 +362,24 @@ void Paint(HWND hwnd) {
     t = {16, 140, w - 120, 162};
     DrawTextW(dc, L"Esc / pad Circle or B: Cancel", -1, &t, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
     SelectObject(dc, old);
-    EndPaint(hwnd, &ps);
+    // the Cancel button's area is the button's own (WS_CLIPCHILDREN on a real paint; PrintWindow draws it after us)
+    BitBlt(target, 0, 0, rc.right, rc.bottom, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, oldBmp);
+    DeleteObject(bmp);
+    DeleteDC(dc);
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-        case WM_PAINT:
-            Paint(hwnd);
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(hwnd, &ps);
+            Paint(hwnd, dc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_PRINTCLIENT:   // PrintWindow (test screenshots)
+            Paint(hwnd, reinterpret_cast<HDC>(wp));
             return 0;
         case WM_ERASEBKGND:
             return 1;
@@ -419,7 +432,7 @@ void BuildWithWindow(BuildJob& job) {
     bold.lfWeight = FW_BOLD;
     g_bold = CreateFontIndirectW(&bold);
     RECT r = {0, 0, 480, 176};
-    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
     AdjustWindowRect(&r, style, FALSE);
     const int ww = r.right - r.left, wh = r.bottom - r.top;
     const bool bg = BackgroundRun();

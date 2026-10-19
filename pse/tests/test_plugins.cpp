@@ -321,7 +321,9 @@ PSE_TEST("plugins: hello + hello_client load, interface, frames, settings, unloa
     PSE_CHECK(!(info->flags & PSE_PLUGIN_INTERNAL));
     PSE_REQUIRE(info->games && info->games[0]);
     PSE_CHECK_STR(info->games[0], "ds1");
-    PSE_CHECK(info->games[1] == nullptr);
+    PSE_REQUIRE(info->games[1]);
+    PSE_CHECK_STR(info->games[1], "ds2");   // the same DLL runs on Desert Storm II
+    PSE_CHECK(info->games[2] == nullptr);
 
     // hello's interface, called from here.
     struct HelloV1 {
@@ -475,7 +477,7 @@ PSE_TEST("plugins: refused before loading - missing dependency, version, name, g
         s.Copy("example.hello_client");   // any game, but needs hello
         PSE_CHECK_EQ(pse::LoadPlugins(s.Wide()), 0u);
         auto res = pse::PluginResults();
-        PSE_CHECK(Result(res, "example.hello")->reason.find("made for ds1; this game is cv") != std::string::npos);
+        PSE_CHECK(Result(res, "example.hello")->reason.find("made for ds1, ds2; this game is cv") != std::string::npos);
         PSE_CHECK(Result(res, "example.hello_client")->reason.find("which is not loaded") != std::string::npos);
     }
     Fresh();

@@ -631,6 +631,18 @@ Install
   - A game in Program Files needs administrator rights; Windows asks.
   - Until it's on, the main menu shows "2 GB MEMORY MODE" at the bottom right.
 
+Shared asset store (optional, off by default)
+  OPTIONS -> DESERTSTORMFIX -> PLUGINS -> Shared asset store -> SHARED ASSET
+  STORE ON keeps one copy of all the game's files and level sounds in
+  PSE\Cache\assets (about 350 MB; %LOCALAPPDATA%\PSE\ds1-... if the game
+  folder can't be written). It is made from your own game files at the next
+  start - a small window shows the progress (a few seconds; Cancel, Esc or
+  Circle / B starts the game without it this time). Then every level can use
+  vehicles, weapons and sounds of the other levels without copying files.
+  It is rebuilt by itself when the game files change; REBUILD CACHE AT NEXT
+  START does it on demand. Deleting the PSE\Cache folder is always safe (it
+  is built again at the next start while the setting is on).
+
 Uninstall
   Delete dinput8.dll and the PSE folder from the game folder (deleting only
   PSE\pse_loader.dll or PSE\Plugins\dsfix.dll also turns everything off - the

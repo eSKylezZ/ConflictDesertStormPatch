@@ -108,7 +108,8 @@ void PSE_CALL Load(PSESaveReader* r, void*) {
 }
 void PSE_CALL Revert(void*) { Line("cosave revert"); }
 
-const char* const kGames[] = {"ds1", nullptr};
+// The core events / messages are the same on every game layer: the same DLL logs DS1 and DS2.
+const char* const kGames[] = {"ds1", "ds2", nullptr};
 
 }  // namespace
 

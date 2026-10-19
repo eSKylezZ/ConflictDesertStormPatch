@@ -30,6 +30,13 @@ BUILD_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 DEFAULT_EXES = {
     "ds1": [r"H:\SteamLibrary\steamapps\common\conflict_desert_storm\DesertStorm.exe",
             r"H:\GOG\Games\Conflict - Desert Storm\DesertStorm.EXE"],
+    # Desert Storm II: the disc-free CDS II.exe (the retail SecuROM exe is no build of the database yet).
+    "ds2": [r"H:\SCI Games\Conflict Desert Storm II\CDS II.exe"],
+}
+# Byte patches of the game's feature code (reference windows for globals avoid them - a plugin may patch there).
+# ds1: DesertStormFix's table; other games: none yet (their patch tables live in their own repos).
+PATCH_DEFS = {
+    "ds1": os.path.join(ROOT, "scripts", "patch_defs.py"),
 }
 SIG_TEXT_LEN = 12   # code: bytes at the entry / instruction
 SIG_DATA_LEN = 8    # .rdata / .data contents
@@ -277,8 +284,8 @@ def avoid_set(db, b):
     for a in b.addrs:
         if kinds.get(a.id) in ("function", "site"):
             spans.append((a.va - 2, a.va + 12))
-    pd = os.path.join(ROOT, "scripts", "patch_defs.py")
-    if os.path.exists(pd):
+    pd = PATCH_DEFS.get(db.game)
+    if pd and os.path.exists(pd):
         for m in re.finditer(r"0x([0-9A-Fa-f]{6,8})\b|\b([0-9A-F]{8}) [0-9A-F]+ [0-9A-F]+", open(pd).read()):
             v = int(m.group(1) or m.group(2), 16)
             if 0x401000 <= v < 0x5D8000:

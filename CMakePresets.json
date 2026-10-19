@@ -15,11 +15,73 @@
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build-dist",
       "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "ds2",
+      "displayName": "DS2: DesertStorm2Fix dev (games/ds2)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-ds2",
+      "cacheVariables": { "PSE_GAME": "ds2" }
+    },
+    {
+      "name": "ds2-dist",
+      "displayName": "DS2: DesertStorm2Fix distribution package",
+      "inherits": "ds2",
+      "binaryDir": "${sourceDir}/build-ds2-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "ds2-pse",
+      "displayName": "DS2: ds2fix.dll, DesertStorm2Fix as a PSE host plugin",
+      "inherits": "ds2",
+      "binaryDir": "${sourceDir}/build-ds2fix",
+      "cacheVariables": { "DS2_PSE_PLUGIN": "ON" }
+    },
+    {
+      "name": "cv",
+      "displayName": "Vietnam: VietnamFix dev (games/cv)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-cv",
+      "cacheVariables": { "PSE_GAME": "cv" }
+    },
+    {
+      "name": "cv-dist",
+      "displayName": "Vietnam: VietnamFix distribution package",
+      "inherits": "cv",
+      "binaryDir": "${sourceDir}/build-cv-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "cgs",
+      "displayName": "Global Storm: GlobalStormFix dev (games/cgs)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-cgs",
+      "cacheVariables": { "PSE_GAME": "cgs" }
+    },
+    {
+      "name": "cgs-dist",
+      "displayName": "Global Storm: GlobalStormFix distribution package",
+      "inherits": "cgs",
+      "binaryDir": "${sourceDir}/build-cgs-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
     }
   ],
   "buildPresets": [
     { "name": "debug",   "displayName": "Debug",   "configurePreset": "x86",  "configuration": "Debug" },
     { "name": "release", "displayName": "Release", "configurePreset": "x86",  "configuration": "RelWithDebInfo" },
-    { "name": "dist",    "displayName": "Package", "configurePreset": "dist", "configuration": "Release" }
+    { "name": "dist",    "displayName": "Package", "configurePreset": "dist", "configuration": "Release" },
+    { "name": "ds2-debug",   "displayName": "DS2: Debug",   "configurePreset": "ds2",      "configuration": "Debug" },
+    { "name": "ds2-release", "displayName": "DS2: Release", "configurePreset": "ds2",      "configuration": "RelWithDebInfo" },
+    { "name": "ds2-dist",    "displayName": "DS2: Package", "configurePreset": "ds2-dist", "configuration": "Release" },
+    { "name": "ds2-pse",     "displayName": "DS2: ds2fix host plugin", "configurePreset": "ds2-pse", "configuration": "RelWithDebInfo", "targets": [ "ds2fix" ] },
+    { "name": "cv-debug",    "displayName": "Vietnam: Debug",   "configurePreset": "cv",      "configuration": "Debug" },
+    { "name": "cv-release",  "displayName": "Vietnam: Release", "configurePreset": "cv",      "configuration": "RelWithDebInfo" },
+    { "name": "cv-dist",     "displayName": "Vietnam: Package", "configurePreset": "cv-dist", "configuration": "Release" },
+    { "name": "cgs-debug",   "displayName": "Global Storm: Debug",   "configurePreset": "cgs",      "configuration": "Debug" },
+    { "name": "cgs-release", "displayName": "Global Storm: Release", "configurePreset": "cgs",      "configuration": "RelWithDebInfo" },
+    { "name": "cgs-dist",    "displayName": "Global Storm: Package", "configurePreset": "cgs-dist", "configuration": "Release" }
   ]
 }

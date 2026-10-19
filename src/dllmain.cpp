@@ -99,6 +99,8 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.shadows", "Shadow fix", kClient, &features::ApplyShadows},
     {"dsfix.scripthost", "Lua mission scripts", kSim, &features::ApplyScriptHost},
     {"dsfix.missionrt", "Translated mission runtime", kSim, &features::ApplyMissionRt},
+    // dev: Dev\MissionSource = lua - Mission*.dll / Training*.dll levels run as their translated Lua (pse/build/mission2lua)
+    {"dsfix.missionsource", "Translated missions (dev)", kSim, &features::ApplyMissionSource},
     {"dsfix.campaigns", "Custom campaigns", kSim, &features::ApplyCampaigns},
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
     {"dsfix.determinism", "Determinism tests (dev)", kSim, &features::ApplyDeterminism},

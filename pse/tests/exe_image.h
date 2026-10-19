@@ -14,6 +14,9 @@
 // violation, ...) is a Fault too. Calls are single-threaded and not re-entrant.
 // Exe lookup: env PSE_GAME_EXE, else the Steam install, else the GOG install. Only the known build is mapped
 // (SHA-256 D712F5EC..., with the 4 GB flag cleared before hashing).
+// Desert Storm II (2026-10-19): MapGame("ds2") maps CDS II.exe 1.0 disc-free (SHA-256 E9B46420..., env
+// PSE_GAME_EXE_DS2, else the install under H:\SCI Games) into the same range - ONE exe at a time: MapGame takes the
+// other one out first, Map() / PSE_REQUIRE_EXE() put DS1 back. Tests use PSE_REQUIRE_EXE_FOR("ds2").
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -26,9 +29,13 @@ namespace exe {
 constexpr uint32_t kImageBase = 0x400000;
 constexpr uint32_t kImportTrapCode = 0xE0D5A001;  // exception code raised by an IAT trap stub
 
-// Maps the exe once (later calls return the first result). whyNot = reason when it can't be mapped.
+// Maps DS1's exe (later calls: already there, or put back after another game's). whyNot = reason when it can't be.
 bool Map(std::string* whyNot = nullptr);
+// Maps a game's exe ("ds1", "ds2") into the range, taking out the one that is there. A missing / unknown exe is
+// reported (and not looked for again).
+bool MapGame(const char* gameId, std::string* whyNot = nullptr);
 bool Mapped();
+const char* MappedGame();   // "ds1" / "ds2", "" = none
 const std::string& Path();  // file that was mapped
 
 // Puts every section back to the file's bytes and re-fills the IAT traps (undo what earlier calls wrote).
@@ -121,4 +128,10 @@ Result<R> Fastcall(uint32_t addr, A... a) {
     do {                                                 \
         std::string pse_why_;                            \
         if (!::exe::Map(&pse_why_)) PSE_SKIP(pse_why_);  \
+    } while (0)
+// The same for another game's exe ("ds2").
+#define PSE_REQUIRE_EXE_FOR(game)                                  \
+    do {                                                           \
+        std::string pse_why_;                                      \
+        if (!::exe::MapGame(game, &pse_why_)) PSE_SKIP(pse_why_);  \
     } while (0)

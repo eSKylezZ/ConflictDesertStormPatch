@@ -76,6 +76,14 @@ void Arg(char* buf, size_t len, uint32_t v, uint32_t stackLo, uint32_t stackHi) 
     uint32_t lo = 0, hi = 0, orig = 0, slo = 0, shi = 0;
     uint32_t rva = 0;
     bool mission = false;
+    // the level's script module ([0x60F57C], FUN_00449260): the cached range is the FIRST module seen - after a level
+    // change (FrontEnd.dll -> Mission1.dll at the same base, larger image) it was stale and the new mission's pointers
+    // past the old size showed as plain hex (missionsource test, 2026-10-19)
+    if (const uint32_t cur = *reinterpret_cast<const uint32_t*>(0x60F57C); cur) {   // (same base, other size: re-read)
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(cur);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(cur + dos->e_lfanew);
+        g_modLo = cur, g_modHi = cur + nt->OptionalHeader.SizeOfImage;
+    }
     if (features::MissionRtRanges(&lo, &hi, &orig, &slo, &shi) && v >= lo && v < hi) mission = true, rva = v - lo;
     else if (g_modHi && v >= g_modLo && v < g_modHi) mission = true, rva = v - g_modLo;
     if (mission) {

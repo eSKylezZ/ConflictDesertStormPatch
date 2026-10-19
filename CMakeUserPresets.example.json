@@ -12,11 +12,56 @@
       "displayName": "Package: install into a second (clean) game install for validation",
       "inherits": "dist",
       "cacheVariables": { "DS_GAME_DIR": "C:/GOG Games/Conflict - Desert Storm" }
+    },
+    {
+      "name": "ds2-local",
+      "displayName": "DS2: dev, deploy to my game install",
+      "inherits": "ds2",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Desert Storm II" }
+    },
+    {
+      "name": "ds2-dist-local",
+      "displayName": "DS2: package, install into a second (clean) game install for validation",
+      "inherits": "ds2-dist",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Desert Storm II (validation)" }
+    },
+    {
+      "name": "cv-local",
+      "displayName": "Vietnam: dev, deploy to my game install",
+      "inherits": "cv",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Vietnam" }
+    },
+    {
+      "name": "cv-dist-local",
+      "displayName": "Vietnam: package, install into a second (clean) game install for validation",
+      "inherits": "cv-dist",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Vietnam (validation)" }
+    },
+    {
+      "name": "cgs-local",
+      "displayName": "Global Storm: dev, deploy to my game install",
+      "inherits": "cgs",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Global Storm" }
+    },
+    {
+      "name": "cgs-dist-local",
+      "displayName": "Global Storm: package, install into a second (clean) game install for validation",
+      "inherits": "cgs-dist",
+      "cacheVariables": { "DS_GAME_DIR": "C:/Games/Conflict Global Storm (validation)" }
     }
   ],
   "buildPresets": [
     { "name": "debug-local",   "displayName": "Debug + deploy",       "configurePreset": "x86-local",  "configuration": "Debug" },
     { "name": "release-local", "displayName": "Release + deploy",     "configurePreset": "x86-local",  "configuration": "RelWithDebInfo" },
-    { "name": "dist-local",    "displayName": "Package + install",    "configurePreset": "dist-local", "configuration": "Release" }
+    { "name": "dist-local",    "displayName": "Package + install",    "configurePreset": "dist-local", "configuration": "Release" },
+    { "name": "ds2-debug-local",   "displayName": "DS2: Debug + deploy",   "configurePreset": "ds2-local",      "configuration": "Debug" },
+    { "name": "ds2-release-local", "displayName": "DS2: Release + deploy", "configurePreset": "ds2-local",      "configuration": "RelWithDebInfo" },
+    { "name": "ds2-dist-local",    "displayName": "DS2: Package + install", "configurePreset": "ds2-dist-local", "configuration": "Release" },
+    { "name": "cv-debug-local",    "displayName": "Vietnam: Debug + deploy",   "configurePreset": "cv-local",      "configuration": "Debug" },
+    { "name": "cv-release-local",  "displayName": "Vietnam: Release + deploy", "configurePreset": "cv-local",      "configuration": "RelWithDebInfo" },
+    { "name": "cv-dist-local",     "displayName": "Vietnam: Package + install", "configurePreset": "cv-dist-local", "configuration": "Release" },
+    { "name": "cgs-debug-local",   "displayName": "Global Storm: Debug + deploy",   "configurePreset": "cgs-local",      "configuration": "Debug" },
+    { "name": "cgs-release-local", "displayName": "Global Storm: Release + deploy", "configurePreset": "cgs-local",      "configuration": "RelWithDebInfo" },
+    { "name": "cgs-dist-local",    "displayName": "Global Storm: Package + install", "configurePreset": "cgs-dist-local", "configuration": "Release" }
   ]
 }
