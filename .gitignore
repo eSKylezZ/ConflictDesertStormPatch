@@ -12,7 +12,7 @@ tools/
 # AI assistant context and settings
 CLAUDE.md
 .claude/
-/docs
+/docs/internal
 
 # Game binaries and data (Steam / GOG / Xbox) – never commit
 *.exe
