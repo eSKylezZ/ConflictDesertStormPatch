@@ -643,10 +643,31 @@ Shared asset store (optional, off by default)
   START does it on demand. Deleting the PSE\Cache folder is always safe (it
   is built again at the next start while the setting is on).
 
+Missions from Lua (optional, off by default)
+  OPTIONS -> DESERTSTORMFIX -> PLUGINS -> Translated missions -> MISSIONS
+  FROM LUA ON (takes effect at the next start) runs the game's mission
+  scripts (Mission*.dll / Training*.dll) as Lua made from your own game
+  files, in PSE\Cache\missions (all made at start-up: about a second the
+  first time, again only after a game or DesertStormFix update). They play exactly like the originals - checked
+  frame by frame against the DLLs - and saves work either way. A mission
+  that isn't on the checked list, or comes from a mod, keeps its DLL.
+  This is the groundwork for editing missions; there is nothing new to see
+  in game yet.
+
+Original game files (PSE\Originals)
+  At start-up DesertStormFix moves the game's archives (*.dat), level sound
+  caches (*.sch) and mission scripts (Mission*.dll, Training*.dll) into
+  PSE\Originals once it has read them; the game finds them there. Nothing is
+  deleted. If a game update or Steam / GOG "verify files" puts a file back,
+  it is moved again at the next start. Don't delete PSE\Originals - the game
+  needs those files.
+
 Uninstall
-  Delete dinput8.dll and the PSE folder from the game folder (deleting only
+  First move everything in PSE\Originals back into the game folder. Then
+  delete dinput8.dll and the PSE folder from the game folder (deleting only
   PSE\pse_loader.dll or PSE\Plugins\dsfix.dll also turns everything off - the
-  game then runs as it came). If you turned 4 GB on, run
+  game then runs as it came, once the original files are back). If you turned
+  4 GB on, run
   DesertStormFix-Patcher.exe and press "Turn 4 GB off" first (or rename
   DesertStorm.exe.original back to DesertStorm.exe).
 
@@ -695,3 +716,6 @@ Credits
     CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
     TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  Missions from Lua are translated with the Zydis disassembler
+  (https://zydis.re), Copyright (C) 2014-2024 Florian Bernd and Joel Hoener,
+  MIT license (the same text as Lua's above).

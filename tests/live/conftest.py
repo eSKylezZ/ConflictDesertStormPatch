@@ -1,4 +1,4 @@
-"""Live tests: one running dev game per pytest session (docs/sdk/devserver.md).
+"""Live tests: one running dev game per pytest session (docs/internal/devserver.md).
 
 The `game` fixture attaches to a running dev game (a pse-dev-<pid> pipe whose game no other test run owns - see the
 install lock in tools/bg.py), or starts one off-screen with tools/bg.py (local tooling) and kills it at the end.

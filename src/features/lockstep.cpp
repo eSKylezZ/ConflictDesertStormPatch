@@ -241,6 +241,7 @@ DWORD WINAPI VirtualGetTickCount() {
 }
 
 void HookVirtualSound();
+extern bool g_virtualSound;
 #ifndef DS_DIST
 void InstallProbe();
 #endif
@@ -471,7 +472,7 @@ bool Install() {
         !patch::HookSlot(kIatGetTickCount, reinterpret_cast<const void*>(&VirtualGetTickCount),
                          reinterpret_cast<void**>(&g_realGetTickCount), 0, features::kClockLockstep))
         dslog::Write("[fail] Lockstep: timeGetTime / GetTickCount imports not hooked - desyncs likely");
-    HookVirtualSound();
+    if (!g_virtualSound) HookVirtualSound();
     HookEffectDraws();
     if (!patch::HookCall(0x4116A3, reinterpret_cast<const void*>(&DeviceCheck), 0x548920))
         dslog::Write("[fail] Lockstep: device check not hooked - a lost display stops every PC");
@@ -571,7 +572,12 @@ struct VoiceRec {
     bool loop, live;
 };
 std::vector<VoiceRec> g_voices;
-bool g_virtualSound = false;
+bool g_virtualSound = false;   // (declared above)
+// The dev determinism harness (Dev\DetTest, mission DLL -> Lua parity runs) uses the same answer with its own virtual
+// clock: real-time sound was the remaining noise between two runs of one mission (11B / 12A / Training 1).
+bool g_harnessSound = false;
+bool SoundVirtual() { return g_armed || (g_harnessSound && features::DetActive()); }
+uint32_t SoundNow() { return g_armed ? g_virtual : features::DetVirtualTime(); }
 
 void ScanVoices() {
     const uint8_t* mgr = *reinterpret_cast<uint8_t* const*>(0x63C9AC);
@@ -600,10 +606,10 @@ void ScanVoices() {
         if (!freq) freq = wfx.nSamplesPerSec;
         const uint64_t perSec = uint64_t(wfx.nBlockAlign ? wfx.nBlockAlign : 2) * (freq ? freq : 22050);
         const uint32_t ms = static_cast<uint32_t>(uint64_t(caps.bytes) * 1000 / perSec);
-        g_voices.push_back({i, buf, *reinterpret_cast<const uint32_t*>(v + 0x60), g_virtual + ms, (status & 4) != 0, true});
+        g_voices.push_back({i, buf, *reinterpret_cast<const uint32_t*>(v + 0x60), SoundNow() + ms, (status & 4) != 0, true});
     }
     g_voices.erase(std::remove_if(g_voices.begin(), g_voices.end(),
-                                  [](const VoiceRec& r) { return r.loop ? !r.live : int(r.end - g_virtual) <= 0; }),
+                                  [](const VoiceRec& r) { return r.loop ? !r.live : int(r.end - SoundNow()) <= 0; }),
                    g_voices.end());
 }
 
@@ -618,7 +624,7 @@ int SoundPlayingAnswer(uint8_t* mgr, uint32_t owner) {
     if (!owner) return 0;
     const uint8_t* base = *reinterpret_cast<uint8_t* const*>(mgr + 0x34);
     const int n = *reinterpret_cast<const int*>(mgr + 0x38);
-    if (g_virtualSound && g_armed) {
+    if (g_virtualSound && SoundVirtual()) {
         for (const VoiceRec& r : g_voices)
             if (r.owner == owner) return 1;
         for (int i = 0; i < n; ++i) {   // started since the last scan (this frame): playing
@@ -660,6 +666,23 @@ void HookVirtualSound() {
     dslog::Write("Lockstep: 'sound still playing' answered by game time");
 }
 
+}  // namespace
+
+// Dev determinism harness: sound random draws from the private generator + "sound still playing" by its virtual clock
+// (same hooks as online; installing them again later is a no-op).
+void features::HarnessSound() {
+    g_harnessSound = true;
+    if (!patch::HookCall(0x55E518, reinterpret_cast<const void*>(&SoundRandRange), kRandRange) ||
+        !patch::HookCall(0x55FE77, reinterpret_cast<const void*>(&SoundRand), kCrtRand) ||
+        !patch::HookCall(0x5616F7, reinterpret_cast<const void*>(&SoundRand), kCrtRand))
+        dslog::Write("[fail] Determinism: sound random draws not separated");
+    if (!g_virtualSound) HookVirtualSound();
+}
+void features::HarnessSoundFrame() {
+    if (g_harnessSound && features::DetActive()) ScanVoices();
+}
+
+namespace {
 // ---- inputs ----
 Input Sample(int p) {
     Input in;

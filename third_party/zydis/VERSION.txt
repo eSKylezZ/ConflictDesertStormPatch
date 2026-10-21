@@ -1,5 +1,5 @@
 Zydis 4.1.0 (Zyan Disassembler Library), amalgamated release - x86 decoder for the mission translator
-(pse/build/mission2lua, docs/sdk/mission-translation.md "C++ port").
+(pse/build/mission2lua, docs/internal/mission-translation.md "C++ port").
 
 Source:   https://github.com/zyantific/zydis/releases/download/v4.1.0/zydis-amalgamated.zip
           (official release asset of tag v4.1.0, 2024-02-04; Zydis.c + Zydis.h = Zydis + Zycore in one file each)

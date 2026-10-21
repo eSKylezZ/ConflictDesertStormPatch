@@ -123,15 +123,9 @@ bool GameLevelName(const char* file) {
 
 std::vector<Level> AllLevels() {
     std::vector<Level> out;
-    for (const char* pattern : {"\\*.dll", "\\*.lua"}) {
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA((GameDir() + pattern).c_str(), &fd);
-        if (h == INVALID_HANDLE_VALUE) continue;
-        do {
-            if (pattern[3] == 'l' || GameLevelName(fd.cFileName)) out.push_back({fd.cFileName, "game"});
-        } while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
+    for (const char* pattern : {"*.dll", "*.lua"})   // game folder + PSE\Originals (moved mission DLLs, originals.cpp)
+        for (const std::string& file : features::GameFiles(pattern))
+            if (pattern[2] == 'l' || GameLevelName(file.c_str())) out.push_back({file, "game"});
     for (const features::ModLevel& m : features::ModLevels())
         out.push_back({m.name, m.mod + (m.built ? " (dllpatch)" : "")});
     std::sort(out.begin(), out.end(), [](const Level& a, const Level& b) {
@@ -163,6 +157,12 @@ std::string Resolve(std::string name, std::string& source) {
                 return l.name;
             }
     }
+    // a mission whose DLL isn't in the game folder but which a mod replaces ("--@replaces", missionsource.cpp)
+    for (const std::string& t : tries)
+        if (EndsWithI(t, ".dll") && !features::MissionReplacement(t.c_str()).empty()) {
+            source = "mod mission";
+            return t;
+        }
     return {};
 }
 

@@ -1,9 +1,9 @@
 #pragma once
-// pse_build - the first-run builder of docs/sdk/DESIGN.md §12 (stage 1: the asset store). Plain C++, no game code: it
+// pse_build - the first-run builder of docs/internal/DESIGN.md §12 (stage 1: the asset store). Plain C++, no game code: it
 // reads files, never runs or patches the game. Used by:
 //   - pse_build.exe (pse_build_main.cpp): the command line front end (dev, ModKit, tests);
 //   - DesertStormFix's asset-store glue (src/features/assetstore.cpp): builds / opens the store inside the game.
-// Format, build stamp, search order and measurements: docs/sdk/asset-store.md.
+// Format, build stamp, search order and measurements: docs/internal/asset-store.md.
 //
 // The store is CONTENT-ADDRESSED: every file of every archive is hashed (SHA-256) and stored once in one pack file;
 // each archive gets a manifest {name hash -> content}. A file that is the same in 12 missions is stored once; a file
@@ -111,6 +111,9 @@ struct StoreStats {
 // <game>\PSE\Cache\assets when <game>\PSE\Cache can be written, else %LOCALAPPDATA%\PSE\<game>-<install hash>\assets
 // (install hash = 8 hex digits of the SHA-256 of the lower-case game folder path). Creates the folders.
 std::wstring DefaultStoreDir(const std::wstring& gameDir, const char* gameId = "ds1");
+// Where a player's original game files go once processed (<game>\PSE\Originals, DesertStormFix's "move originals");
+// every reader of the game's archives / sound caches / mission DLLs looks in the game folder first, then here.
+std::wstring OriginalsDir(const std::wstring& gameDir);
 // Whether the stamp in storeDir matches the archives in gameDir (format, builder major, every input's name, size and
 // modification time). *why = the first difference (empty when valid).
 bool StampValid(const std::wstring& storeDir, const std::wstring& gameDir, const ArchiveFormat& format,

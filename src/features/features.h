@@ -47,7 +47,7 @@ void ApplyTooltips();    // inventory: "use" hints (MediKit on yourself, fire mo
 void ApplyDiagnostics(); // game messages / file opens in the log (dev), performance overlay (F11)
 void ApplyLoadout();      // squad kits: scene rewrite (dev rules) + runtime weapon spawn for the customise screen
 void ApplyMods();          // loose files from Mods\<mod>\ replace / add game files (mods.cpp)
-// PSE asset store (assetstore.cpp, docs/sdk/asset-store.md): dev only (Dev\PseStore), off by default.
+// PSE asset store (assetstore.cpp, docs/internal/asset-store.md): dev only (Dev\PseStore), off by default.
 void ApplyAssetStore();
 bool AssetStoreOn();
 bool AssetStoreServesBorrows();   // store + global fallback (or Dev\PseNoBorrow): mods.cpp skips its archive copies
@@ -61,6 +61,12 @@ bool AssetStoreBankPack(uint32_t key, std::string* pack, std::string* cache);
 int ModCount();
 bool ReadGameTable(const char* name, std::string& out);  // mods.cpp: game table incl. mod rows
 bool ModHasFile(const char* name);  // mods.cpp: a mod (or a file the plugin made) provides this file
+// originals.cpp: the game's archives / sound caches / mission DLLs, moved to <game>\PSE\Originals once processed
+void ApplyOriginalsRedirect();   // early: the exe's file opens find moved files
+void ApplyOriginalsMove();       // late: moves them
+std::string GameFile(const std::string& name);          // game folder path, else the PSE\Originals one if only there
+std::vector<std::string> GameFiles(const char* pattern);  // names in both folders (game folder's first, once each)
+std::string OriginalPath(const char* name);             // PSE\Originals path when the file was moved, else ""
 std::string ModFilePath(const char* name);  // mods.cpp: full path of that file ("" = no mod has it)
 const char* ModText(uint32_t hash);  // mods.cpp: texts mods define (weapon display names), by catalog hash
 const std::vector<std::string>& ModWeapons();  // mods.cpp: weapon ids made by .weapon files
@@ -302,7 +308,9 @@ void ApplyScriptHost();  // scripthost.cpp: ".lua" levels run by an embedded Lua
 void ApplyMissionRt();
 bool MissionRtRanges(uint32_t* imageLo, uint32_t* imageHi, uint32_t* origBase, uint32_t* stackLo, uint32_t* stackHi);
 uint32_t MissionRtCallTarget();
-void ApplyMissionSource();   // missionsource.cpp, dev: Dev\MissionSource = lua runs mission DLLs as translated Lua
+void ApplyMissionSource();
+std::string MissionReplacement(const char* dllName);   // missionsource.cpp: a mod's "--@replaces <dllName>" Lua ("" = none)
+const char* MissionScriptText();   // "DLL" / "Lua (translated[, no DLL])" / "Lua (mod mission)" for this level, or null   // missionsource.cpp, dev: Dev\MissionSource = lua runs mission DLLs as translated Lua
 void ApplyApiTrace();    // apitrace.cpp, dev: Dev\ApiTrace = n logs every script API call (DLL vs Lua parity)
 void ApplyRumble();      // weapon rumble retuned (nothing for throwing / placing); notes what fired per player
 void ApplyDevHooks();    // development builds only: test hooks (start level)
@@ -311,7 +319,7 @@ void OnFrameDev();       // development builds only: F9 = test pop-up message
 uint32_t VsyncFps();        // frame rate V-Sync holds the game at, 0 = not synced (graphics.cpp)
 uint32_t VsyncProbeFps();   // frame cap while V-Sync is being checked, 0 = not checking
 long long FrameStartQpc();  // QPC at the start of this frame's update + render (after the frame-cap wait)
-void OnFrameDevServer();  // devserver.cpp: dev builds - live test pipe (docs/sdk/devserver.md, tests/live)
+void OnFrameDevServer();  // devserver.cpp: dev builds - live test pipe (docs/internal/devserver.md, tests/live)
 // Once per game frame, before update + render. Since 2026-10-19 the game layer (pse/games/ds1/ds1_events.cpp) drives
 // frames: the frame-cap hook (framecap.cpp, priority 0 on the frame dispatch call 0x4116EC) waits, runs OnFrameEarly,
 // then calls the layer's hook (INNER): pse.tasks, PSE_EVENT_FRAME - other plugins' subscribers first, OnFrame (the
@@ -459,6 +467,8 @@ bool LockstepSkipCutscenes(bool own);   // the host's setting while online
 bool LockstepAxis(uint8_t* block, int action, int opposite, float& value);   // AxisValue: synced value
 bool LockstepMouse(uint8_t* block, float* dx, float* dy);                    // mouse look: synced value
 void LockstepFixBlocks();
+void HarnessSound();        // dev determinism harness: private sound draws + sound timing by its virtual clock
+void HarnessSoundFrame();   //   per harness frame (records the voices started this frame)
 bool LockstepSkipRender();
 bool LockstepBehind();          // online: the next tick is already due (this PC draws slower than 60 frames a second)
 void LockstepCatchUp(bool on);   // a frame that only updates (no drawing / present)   // online, display device lost: frames run without the render loop
@@ -555,6 +565,7 @@ void OnSettingsChanged();  // re-applies everything that depends on settings
 void ApplyDeterminism();
 void OnFrameDeterminism();
 bool DetActive();          // the virtual clock runs (timing.cpp leaves the frame time alone)
+uint32_t DetVirtualTime();   // its virtual game-thread clock (ms)
 void DrawLogTick(uint32_t tick);   // dev Dev\LockstepDrawLog: random draws of the last tick -> log
 
 // Optional front-end features (OPTIONS > DESERTSTORMFIX), as decided at start-up (restart toggles).

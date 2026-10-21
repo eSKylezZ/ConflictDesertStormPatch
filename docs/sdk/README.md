@@ -12,6 +12,7 @@ Conflict: Desert Storm II runs on the same shim + loader with its layer `PSE\Gam
 | [layout.md](layout.md) | The files in an install, the start-up sequence (shim → loader → game layer → host plugin → plugins), what happens when a part is missing, uninstall |
 | [API_CHANGELOG.md](API_CHANGELOG.md) | Every interface version and what changed |
 | [ds1-plugins.md](ds1-plugins.md) | DesertStormFix's features as internal plugins `dsfix.<feature>`: names, flags, owner scopes, shared hook sites; its external plugins (`dsfix.discord`) |
+| [data-files.md](data-files.md) | PSE data files (Lua-table literals, canonical form) and the records: `ds1:` IDs, record types, the schema |
 | [online-compat.md](online-compat.md) | Online: the plugin-set check – what is compared (simulation plugins, host fingerprint, mods), messages, flags guidance for plugin authors |
 | [ds1-settings.md](ds1-settings.md) | Where DesertStormFix's settings live (pse.settings plugin `dsfix`), the one-time move from the old key, every value |
 
@@ -35,6 +36,7 @@ Reference, one page per interface:
 | `pse.lua` – Lua functions for mission scripts (namespaces, accessor marshalling, CallGlobal, crash guard) | [reference/lua.md](reference/lua.md) |
 | `pse.vfs` – game files from providers (name / name hash + context → bytes; the asset store is one) | [reference/vfs.md](reference/vfs.md) |
 | Plugin DLLs – manifest (`.pse`), load order, exports, lifecycle, failure handling | [reference/plugins.md](reference/plugins.md) |
+| Mission replacements – a mod's Lua (`--@replaces Mission1.dll`) runs instead of a mission DLL | [reference/mission-replacement.md](reference/mission-replacement.md) |
 
 Game interfaces (one per game, served by the host):
 

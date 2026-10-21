@@ -1,4 +1,4 @@
-# Pivotal Script Extender (docs/sdk/DESIGN.md, layout docs/sdk/layout.md). Phase 2 layout:
+# Pivotal Script Extender (docs/internal/DESIGN.md, layout docs/sdk/layout.md). Phase 2 layout:
 #   pse_shim     -> dinput8.dll               proxy + entry-point hook, starts the loader (shim/)
 #   pse_loader   -> PSE\pse_loader.dll        pse_core (the ONE copy of the loader services) + start-up (loader_dll/)
 #   pse_ds1      -> PSE\Games\pse_ds1.dll     DS1 game layer: detection, pse.game.ds1, core game events + co-save
@@ -24,7 +24,7 @@ target_compile_definitions(pse_hostlink PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CR
 target_compile_options(pse_hostlink PRIVATE /W4 /permissive- /utf-8 $<$<NOT:$<BOOL:${DS_DIST}>>:/Zi>)
 target_link_libraries(pse_hostlink PUBLIC advapi32 bcrypt)
 
-# pse_build (DESIGN.md §12, docs/sdk/asset-store.md): the first-run builder - stage 1 = the content-addressed asset
+# pse_build (DESIGN.md §12, docs/internal/asset-store.md): the first-run builder - stage 1 = the content-addressed asset
 # store. A static library (DesertStormFix's store glue, pse_tests) and pse_build.exe (built in dev AND release builds;
 # not shipped in the package yet). No game code: it only reads the install's files.
 add_library(pse_build_lib STATIC ${CMAKE_CURRENT_SOURCE_DIR}/build/store.cpp ${CMAKE_CURRENT_SOURCE_DIR}/build/names.cpp
@@ -34,12 +34,19 @@ target_include_directories(pse_build_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/buil
 target_compile_definitions(pse_build_lib PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(pse_build_lib PRIVATE /W4 /permissive- /utf-8 $<$<NOT:$<BOOL:${DS_DIST}>>:/Zi>)
 target_link_libraries(pse_build_lib PUBLIC bcrypt shell32 ole32)
+# pse_records (DESIGN.md §13.3-13.4): PSE data files (Lua-table literals, canonical writer) - the records layer's
+# format. Byte-identical with the ModKit's conflict_ds_tools/pse_data.py (scripts/records_gate.py).
+add_library(pse_records STATIC ${CMAKE_CURRENT_SOURCE_DIR}/records/data.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.h)
+target_include_directories(pse_records PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/records)
+target_compile_options(pse_records PRIVATE /W4 /permissive- /utf-8 /EHsc $<$<NOT:$<BOOL:${DS_DIST}>>:/Zi>)
+target_link_libraries(pse_build_lib PUBLIC pse_records)
 add_executable(pse_build ${CMAKE_CURRENT_SOURCE_DIR}/build/pse_build_main.cpp)
 target_compile_definitions(pse_build PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(pse_build PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(pse_build PRIVATE pse_build_lib)
 
-# ---- mission2lua: mission DLL -> Lua, the C++ port of ModKit mission2lua.py (docs/sdk/mission-translation.md) ----
+# ---- mission2lua: mission DLL -> Lua, the C++ port of ModKit mission2lua.py (docs/internal/mission-translation.md) ----
 # Zydis 4.1.0 (MIT, third_party/zydis/VERSION.txt): only the decoder is used (the linker drops the rest). pse_m2l = decoder adapter + flow + emitter + cache,
 # linked into pse_build_lib's users (pse_build.exe, dsfix.dll's Dev\MissionSource, pse_tests).
 add_library(zydis STATIC ${CMAKE_SOURCE_DIR}/third_party/zydis/Zydis.c)

@@ -88,6 +88,7 @@ cosmetic, UI or local input (may differ between peers). When in doubt a feature 
 | `dsfix.shadows` | Shadow fix | CLIENT_ONLY | `ApplyShadows` |
 | `dsfix.scripthost` | Lua mission scripts | SIMULATION | `ApplyScriptHost` |
 | `dsfix.missionrt` | Translated mission runtime: Lua native `x86rt` for translated missions | SIMULATION | `ApplyMissionRt` |
+| `dsfix.originals` | Original game files: moves `*.dat` / `*.sch` / mission DLLs to `PSE\Originals` ([layout.md](layout.md)); pointer hooks on the exe's `CreateFileA` `0x5D8138`, `CreateFileW` `0x5D80B0`, `GetFileAttributesA` `0x5D810C`, `FindFirstFileA` `0x5D8104`, `LoadLibraryA` `0x5D8070` (redirect only when the game-folder file is missing). Two rows: the redirect before `dsfix.mods`, the move after `dsfix.missionsource` | SIMULATION | `ApplyOriginalsRedirect`, `ApplyOriginalsMove` |
 | `dsfix.missionsource` | Translated missions: setting MISSIONS FROM LUA (`TranslatedMissions`, [ds1-settings.md](ds1-settings.md)), dev `Dev\MissionSource`; hook at the level's DLL load `0x40C3EB` | SIMULATION | `ApplyMissionSource` |
 | `dsfix.campaigns` | Custom campaigns | SIMULATION | `ApplyCampaigns` |
 | `dsfix.console` | Developer console | SIMULATION | `ApplyConsole` |

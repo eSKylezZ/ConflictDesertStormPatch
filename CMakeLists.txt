@@ -202,7 +202,7 @@ pse_add_plugin(dsfix MANIFEST src/dsfix.pse SOURCES
     src/features/lockstep.cpp
     src/features/hostsync.cpp
     src/features/devserver.cpp
-    src/features/missionrt.cpp src/features/apitrace.cpp src/features/missionsource.cpp
+    src/features/missionrt.cpp src/features/apitrace.cpp src/features/missionsource.cpp src/features/originals.cpp
     src/game_icons.rc
 )
 target_include_directories(dsfix PRIVATE src ${CMAKE_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/pse/loader
@@ -250,6 +250,9 @@ set(DS_TREE "$<TARGET_FILE:pse_shim>|dinput8.dll@$<TARGET_FILE:patcher>|DesertSt
 string(APPEND DS_TREE "@$<TARGET_FILE:pse_loader>|PSE/pse_loader.dll@$<TARGET_FILE:pse_ds1>|PSE/Games/pse_ds1.dll")
 string(APPEND DS_TREE "@$<TARGET_FILE:dsfix>|PSE/Plugins/dsfix.dll@${CMAKE_SOURCE_DIR}/src/dsfix.pse|PSE/Plugins/dsfix.pse")
 set(DS_TREE_DEPENDS ${CMAKE_SOURCE_DIR}/src/dsfix.pse)
+# the records schema (how the game's tables read as records; mods' records\*.lua edits need it - mods.cpp ApplyRecords)
+string(APPEND DS_TREE "@${CMAKE_SOURCE_DIR}/pse/records/ds1/schema.lua|PSE/Records/ds1/schema.lua")
+list(APPEND DS_TREE_DEPENDS ${CMAKE_SOURCE_DIR}/pse/records/ds1/schema.lua)
 foreach(t IN LISTS DSFIX_PLUGINS)
     get_target_property(stem ${t} OUTPUT_NAME)
     get_target_property(manifest ${t} PSE_MANIFEST)

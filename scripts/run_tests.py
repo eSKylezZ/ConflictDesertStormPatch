@@ -1,5 +1,5 @@
 """Builds and runs pse_tests.exe (tier 1 unit tests + tier 2 image tests) - no game is started.
-See docs/sdk/testing.md.
+See docs/internal/testing.md.
 
   python scripts/run_tests.py                       # configure if needed, build Debug, run everything
   python scripts/run_tests.py "patch tables"        # only tests whose name contains the filter

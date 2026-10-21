@@ -1,4 +1,4 @@
-// The PSE asset store in Conflict: Desert Storm (docs/sdk/asset-store.md, DESIGN.md §12 stage 1).
+// The PSE asset store in Conflict: Desert Storm (docs/internal/asset-store.md, DESIGN.md §12 stage 1).
 // Player setting: plugin dsfix.assetstore, "SharedAssetStore" (SHARED ASSET STORE, default OFF for now, restart) +
 // "RebuildCache" (REBUILD CACHE AT NEXT START, switches itself off) - OPTIONS > DESERTSTORMFIX > PLUGINS. Dev builds:
 // Dev\PseStore = 1 / 2 overrides it (below).
@@ -267,7 +267,7 @@ void DeclareSettings() {
     d.key = kSetOn;
     d.type = PSE_SETTING_BOOL;
     d.flags = 0;   // restart
-    d.defaultInt = 0;   // OFF until the user decides (docs/sdk/asset-store.md "Before it is on by default")
+    d.defaultInt = 0;   // OFF until the user decides (docs/internal/asset-store.md "Before it is on by default")
     d.minInt = 0;
     d.maxInt = 1;
     d.label = "SHARED ASSET STORE";

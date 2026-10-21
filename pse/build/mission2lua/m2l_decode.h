@@ -1,5 +1,5 @@
 #pragma once
-// mission2lua (C++ port) - x86 instruction decoding in capstone's terms (docs/sdk/mission-translation.md "C++ port").
+// mission2lua (C++ port) - x86 instruction decoding in capstone's terms (docs/internal/mission-translation.md "C++ port").
 //
 // The Python generator (ModKit conflict_ds_tools/mission2lua.py + missionflow.py) is built on capstone 5: its
 // mnemonics ("je", "rep movsd", "repne scasb"), its Intel operand text ("dword ptr [esp + 0x20]", "push -0xa") and its

@@ -1,4 +1,4 @@
-// pse.hooks - the hooks broker (docs/sdk/DESIGN.md 5.2, reference docs/sdk/reference/hooks.md).
+// pse.hooks - the hooks broker (docs/internal/DESIGN.md 5.2, reference docs/sdk/reference/hooks.md).
 //
 // Every byte the broker writes has an owner: a byte group (PatchGroup) or a hook site. Hook sites are shared - each
 // subscriber is a link in a chain: site -> subscriber 0 -> subscriber 1 -> ... -> original. The chain lives in the

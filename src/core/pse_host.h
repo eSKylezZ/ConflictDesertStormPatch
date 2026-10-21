@@ -1,5 +1,5 @@
 #pragma once
-// DesertStormFix as a host plugin of the Pivotal Script Extender (pse/, docs/sdk/DESIGN.md, docs/sdk/layout.md):
+// DesertStormFix as a host plugin of the Pivotal Script Extender (pse/, docs/internal/DESIGN.md, docs/sdk/layout.md):
 // dsfix.dll in <game>\PSE\Plugins, loaded by PSE\pse_loader.dll with the private pse.host table; the features are its
 // internal sub-plugins ("dsfix.<feature>", docs/sdk/ds1-plugins.md).
 #include <cstddef>

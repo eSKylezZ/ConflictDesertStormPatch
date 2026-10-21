@@ -1,4 +1,4 @@
-// The asset store: build (archives -> content-addressed pack + manifests + stamp) and read. docs/sdk/asset-store.md.
+// The asset store: build (archives -> content-addressed pack + manifests + stamp) and read. docs/internal/asset-store.md.
 #include <windows.h>
 
 #include <bcrypt.h>
@@ -132,27 +132,31 @@ private:
 
 struct InputFile {
     std::string name;       // as on disk
+    std::wstring dir;       // the game folder, or OriginalsDir() for a moved file
     uint64_t size = 0;
     uint64_t mtime = 0;     // FILETIME
     bool sound = false;     // a sound cache (format.soundPattern), not an archive
 };
 
-// The game folder's archives and sound caches (by the format's patterns; uninstaller data never), sorted by lower-case
-// name.
+// The game folder's archives and sound caches (by the format's patterns; uninstaller data never), then the moved ones
+// in OriginalsDir (a name in both: the game folder's), sorted by lower-case name.
 std::vector<InputFile> ListInputs(const std::wstring& gameDir, const ArchiveFormat& format) {
     std::vector<InputFile> out;
+    std::unordered_set<std::string> seen;
+    for (const std::wstring& dir : {gameDir, OriginalsDir(gameDir)})
     for (int kind = 0; kind < 2; ++kind) {
         const char* pattern = kind ? format.soundPattern : format.pattern;
         if (!pattern || (kind && !format.parseSound)) continue;
         WIN32_FIND_DATAW fd;
-        HANDLE h = FindFirstFileW((gameDir + L"\\" + Widen(pattern)).c_str(), &fd);
+        HANDLE h = FindFirstFileW((dir + L"\\" + Widen(pattern)).c_str(), &fd);
         if (h == INVALID_HANDLE_VALUE) continue;
         do {
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
             const std::string name = Narrow(fd.cFileName);
-            if (_strnicmp(name.c_str(), "unins", 5) == 0) continue;
+            if (_strnicmp(name.c_str(), "unins", 5) == 0 || !seen.insert(Lower(name)).second) continue;
             InputFile in;
             in.name = name;
+            in.dir = dir;
             in.size = (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
             in.mtime = (static_cast<uint64_t>(fd.ftLastWriteTime.dwHighDateTime) << 32) | fd.ftLastWriteTime.dwLowDateTime;
             in.sound = kind == 1;
@@ -292,6 +296,8 @@ std::string Narrow(const std::wstring& w) {
 }
 
 // ---- where ----
+std::wstring OriginalsDir(const std::wstring& gameDir) { return gameDir + L"\\PSE\\Originals"; }
+
 std::wstring DefaultStoreDir(const std::wstring& gameDir, const char* gameId) {
     auto writable = [](const std::wstring& dir) {
         SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
@@ -464,14 +470,14 @@ bool BuildStore(const StoreOptions& options, StoreStats* statsOut, std::string* 
     for (const InputFile& in : inputs) {
         if (cancelled()) return abandon("cancelled", true);
         progress(doneInput, in.name);
-        const std::wstring path = options.gameDir + L"\\" + Widen(in.name);
+        const std::wstring path = in.dir + L"\\" + Widen(in.name);
         auto tr = std::chrono::steady_clock::now();
         std::vector<uint8_t> data;
         if (!ReadFileAll(path, &data)) return abandon("can't read " + Narrow(path), false);
         msRead += Ms(tr);
         doneInput += in.size;
         ContentHash whole;
-        if (in.sound) {   // a level sound cache: one blob per chunk (docs/sdk/asset-store.md "Sound caches")
+        if (in.sound) {   // a level sound cache: one blob per chunk (docs/internal/asset-store.md "Sound caches")
             Store::SoundManifest sm;
             std::vector<SoundPiece> pieces;
             if (!format.parseSound(data.data(), data.size(), sm.header, &pieces)) {

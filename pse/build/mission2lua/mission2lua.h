@@ -1,6 +1,6 @@
 #pragma once
 // mission2lua - mission DLL -> Lua (stage 1: static recompilation), the C++ port of ModKit
-// conflict_ds_tools/mission2lua.py (docs/sdk/mission-translation.md, DESIGN.md §12). Used by pse_build.exe
+// conflict_ds_tools/mission2lua.py (docs/internal/mission-translation.md, DESIGN.md §12). Used by pse_build.exe
 // (`pse_build missions`) and by DesertStormFix's Dev\MissionSource (src/features/missionsource.cpp).
 //
 // The output is made from the player's own DLL and is game code: never commit it, never ship it.
@@ -27,7 +27,7 @@ struct Stats {
 bool Translate(const std::vector<uint8_t>& dll, const std::string& name, std::string* lua, Stats* stats,
                std::string* error);
 
-// ---- the missions cache (<game>\PSE\Cache\missions, docs/sdk/asset-store.md "Missions") ---------------------------
+// ---- the missions cache (<game>\PSE\Cache\missions, docs/internal/asset-store.md "Missions") ---------------------------
 // <stem>.lua (the generated mission) + <stem>.stamp ("dll <sha256> <size>\ntranslator <TranslatorBuild()>\n").
 struct MissionFile {
     std::wstring dll;        // full path of the DLL

@@ -1,5 +1,5 @@
 #pragma once
-// mission2lua (C++ port): the DLL as the Python generator sees it (docs/sdk/mission-translation.md "C++ port").
+// mission2lua (C++ port): the DLL as the Python generator sees it (docs/internal/mission-translation.md "C++ port").
 //   Dll       = missionflow.Dll    (pefile's memory-mapped image, .text range, capstone decode cache)
 //   Function  = missionflow.Function (recursive descent, basic blocks, jump tables incl. byte-indexed ones)
 //   Program   = mission2lua.Program  (relocations, imports, exports, every reachable function, address-taken ones)

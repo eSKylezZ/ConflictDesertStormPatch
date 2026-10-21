@@ -1,4 +1,4 @@
-"""Live: the asset store as players get it (src/features/assetstore.cpp, docs/sdk/asset-store.md "For players").
+"""Live: the asset store as players get it (src/features/assetstore.cpp, docs/internal/asset-store.md "For players").
 
 The player setting (plugin dsfix.assetstore: SharedAssetStore = 1), no Dev\\PseStore. Three games of its own, one after
 the other (tools/bg.py, off-screen):

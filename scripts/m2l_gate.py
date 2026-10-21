@@ -4,7 +4,7 @@
                                [--keep <dir>] [--decode]
 
 For each Mission*.dll / Training*.dll of the install: ModKit conflict_ds_tools/mission2lua.py (the oracle,
-docs/sdk/mission-translation.md) and `pse_build missions` (pse/build/mission2lua, the C++ port) translate it; the two
+docs/internal/mission-translation.md) and `pse_build missions` (pse/build/mission2lua, the C++ port) translate it; the two
 files must be byte-identical. Also checks that pse/build/mission2lua/m2l_runtime.inc matches mission2lua.py's runtime
 text (scripts/sync_m2l_runtime.py). --decode additionally compares the two decoders at every byte offset of every
 DLL's code section (capstone through missionflow.Dll vs Zydis through m2l_decode.cpp).

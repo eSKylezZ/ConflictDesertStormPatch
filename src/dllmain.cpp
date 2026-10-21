@@ -76,6 +76,8 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.limits", "Engine limits", kSim, &features::ApplyLimits},
     {"dsfix.tooltips", "Inventory tooltips", kClient, &features::ApplyTooltips},
     {"dsfix.rumble", "Weapon rumble", kClient, &features::ApplyRumble},
+    // before every reader of the game's archives / sound caches / mission DLLs: they may be in PSE\Originals
+    {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsRedirect},
     {"dsfix.mods", "Mods folder", kSim, &features::ApplyMods},
     // after ApplyMods (its resolver / opener hooks): pse.vfs + the asset store (setting SHARED ASSET STORE in the
     // PLUGINS menu, default off; dev: Dev\PseStore). ApplyMods' sound work opens it first (features::AssetStoreSound).
@@ -99,8 +101,10 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.shadows", "Shadow fix", kClient, &features::ApplyShadows},
     {"dsfix.scripthost", "Lua mission scripts", kSim, &features::ApplyScriptHost},
     {"dsfix.missionrt", "Translated mission runtime", kSim, &features::ApplyMissionRt},
-    // dev: Dev\MissionSource = lua - Mission*.dll / Training*.dll levels run as their translated Lua (pse/build/mission2lua)
-    {"dsfix.missionsource", "Translated missions (dev)", kSim, &features::ApplyMissionSource},
+    // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
+    {"dsfix.missionsource", "Translated missions", kSim, &features::ApplyMissionSource},
+    // after the asset store + the mission translations have read them: the originals move to PSE\Originals
+    {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsMove},
     {"dsfix.campaigns", "Custom campaigns", kSim, &features::ApplyCampaigns},
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
     {"dsfix.determinism", "Determinism tests (dev)", kSim, &features::ApplyDeterminism},

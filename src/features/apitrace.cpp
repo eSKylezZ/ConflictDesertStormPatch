@@ -1,5 +1,5 @@
 // Dev: script API call trace (Dev\ApiTrace = n, dev builds only) - the parity check between a mission DLL and its
-// translation (docs/sdk/mission-translation.md). Every entry of the script API table (0x5ED238, 566 cdecl functions,
+// translation (docs/internal/mission-translation.md). Every entry of the script API table (0x5ED238, 566 cdecl functions,
 // 0x8D8 bytes) gets an outermost broker pointer hook (priority 1000): a 10-byte stub `push slot; jmp Common` logs the
 // call and jumps on to whatever the slot held. Both paths go through the table - the DLL's `call [api + slot]` and the
 // translated mission's X86RT.call on the value it read from the table - so both traces see the same calls.

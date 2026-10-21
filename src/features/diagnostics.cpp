@@ -304,6 +304,11 @@ void Draw(int screenH, bool full) {
     const int W = r ? Read<int>(uintptr_t(r) + 0x40688) : 0, H = r ? Read<int>(uintptr_t(r) + 0x4068C) : 0;
     const bool frontEnd = _strnicmp(level, "FrontEnd", 8) == 0 || !level[0];
     line(RGB(200, 200, 200), "%s  %dx%d  %s", level[0] ? level : "-", W, H, frontEnd ? "menus" : "");
+    if (!frontEnd) {   // where the mission's script came from (missionsource.cpp; DLL when nothing else ran it)
+        const char* how = features::MissionScriptText();
+        if (!how) how = features::ScriptLevelActive() ? "Lua (custom mission)" : "DLL";
+        line(how[0] == 'L' ? RGB(120, 220, 255) : RGB(200, 200, 200), "mission script: %s", how);
+    }
 
     // memory: address space (2 GB, or 4 GB with the patcher's flag), textures, the game's Global Heap
     const features::MemoryStats m = features::GetMemoryStats();

@@ -24,13 +24,20 @@ game starts, and what happens when a part is missing or fails.
   Mods\                             content mods (unchanged)
 ```
 
-`PSE\Cache\assets\` (only when `Dev\PseStore` is set, dev builds) is the asset store DesertStormFix builds from the
-install's own archives at start-up: game-derived, never shipped,
-safe to delete (rebuilt in ~5 s). A read-only install uses `%LOCALAPPDATA%\PSE\ds1-<hash>\assets\` instead.
-`PSE\Cache\missions\` (only with `Dev\MissionSource = lua`, dev builds) holds the mission DLLs translated to Lua
-(`<Mission>.lua` + `.stamp`, written on a level's first start or by `pse_build missions`;
-the mission translator): game code made from the player's DLLs, never shipped, safe to
-delete (~45 ms per mission to remake); read-only installs use `%LOCALAPPDATA%\PSE\ds1-<hash>\missions\`.
+`PSE\Cache\assets\` (setting SHARED ASSET STORE) is the asset store DesertStormFix builds from the install's own
+archives at start-up: game-derived, never shipped, safe to delete (rebuilt in ~5 s). A read-only install uses
+`%LOCALAPPDATA%\PSE\ds1-<hash>\assets\` instead.
+`PSE\Cache\missions\` (setting MISSIONS FROM LUA) holds the mission DLLs translated to Lua (`<Mission>.lua` +
+`.stamp`, written at start-up or by `pse_build missions`): game code made from the player's DLLs, never shipped, safe to
+delete (~1 s to remake all 18); read-only installs use `%LOCALAPPDATA%\PSE\ds1-<hash>\missions\`.
+
+`PSE\Originals\` holds the game's own archives (`*.dat`), level sound caches (`*.sch`) and mission DLLs
+(`Mission*.dll`, `Training*.dll`), moved out of the game folder at every start once processed (plugin
+`dsfix.originals`). The game finds them through a redirect of its file opens; a file back in the game folder (a game
+update, "verify files") wins and is moved again at the next start; a read-only game folder keeps its files. Readers of
+the game's files list the game folder first, then `PSE\Originals` (`pse_build` `OriginalsDir`, DesertStormFix
+`features::GameFile` / `GameFiles`). **Never delete it**: to remove PSE, move its contents back into the game folder
+first. Dev builds: `Dev\KeepOriginals` = 1 moves nothing.
 
 Dev builds have a `.pdb` next to every DLL. The build assembles the same tree in `build*/tree/<config>/` (and copies it
 into `DS_GAME_DIR` when that is set); the release zip has it without PDBs, plus `DesertStormFix-README.txt`.

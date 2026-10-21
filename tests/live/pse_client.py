@@ -1,4 +1,4 @@
-r"""Client for the DesertStormFix dev server (src/features/devserver.cpp, docs/sdk/devserver.md). Stdlib only.
+r"""Client for the DesertStormFix dev server (src/features/devserver.cpp, docs/internal/devserver.md). Stdlib only.
 
     from pse_client import Client
     with Client() as c:                       # newest \\.\pipe\pse-dev-<pid>, or Client(pid=1234)

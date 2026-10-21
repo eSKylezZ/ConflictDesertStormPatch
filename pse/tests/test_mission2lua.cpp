@@ -1,4 +1,4 @@
-// mission2lua, the C++ mission translator (pse/build/mission2lua, docs/sdk/mission-translation.md "C++ port").
+// mission2lua, the C++ mission translator (pse/build/mission2lua, docs/internal/mission-translation.md "C++ port").
 // Tier 1 = the decoder on single instructions (capstone's view through Zydis) and the whole pipeline on a small
 // hand-made DLL; tier 2 = Mission1.dll of the real install (PSE_GAME_DIR, else the Steam / GOG path): the output is
 // compared with the Python generator when Python + the ModKit are there (PSE_MODKIT_DIR, else ../ConflictDesertStormModKit),

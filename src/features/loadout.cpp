@@ -168,10 +168,7 @@ void LoadLevelDirectory(const char* scene) {
     if (slash != std::string::npos) base = base.substr(slash + 1);
     const size_t dot = base.find('.');
     if (dot != std::string::npos) base.resize(dot);
-    char exe[MAX_PATH];
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    std::string path = exe;
-    path = path.substr(0, path.find_last_of("\\/") + 1) + base + ".dat";
+    const std::string path = features::GameFile(base + ".dat");   // (or PSE\Originals)
     HANDLE f = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return;
     uint32_t head[2] = {};

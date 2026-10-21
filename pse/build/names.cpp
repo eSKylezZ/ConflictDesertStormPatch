@@ -103,13 +103,14 @@ void RecoverNames(const std::wstring& gameDir, std::unordered_set<std::string>* 
                   const std::unordered_map<uint32_t, const char*>& wanted, uint32_t (*hash)(const char*),
                   std::unordered_map<uint32_t, std::string>* out, const std::function<bool(uint32_t, uint32_t)>& tick) {
     // The game's code names many files too (FrontEnd.dll, mission DLLs, the exe).
+    for (const std::wstring& dir : {gameDir, OriginalsDir(gameDir)})   // mission DLLs may have been moved
     for (const wchar_t* pattern : {L"*.exe", L"*.dll"}) {
         WIN32_FIND_DATAW fd;
-        HANDLE h = FindFirstFileW((gameDir + L"\\" + pattern).c_str(), &fd);
+        HANDLE h = FindFirstFileW((dir + L"\\" + pattern).c_str(), &fd);
         if (h == INVALID_HANDLE_VALUE) continue;
         do {
             if (fd.nFileSizeHigh || fd.nFileSizeLow > (32u << 20) || _wcsnicmp(fd.cFileName, L"unins", 5) == 0) continue;
-            HANDLE f = CreateFileW((gameDir + L"\\" + fd.cFileName).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+            HANDLE f = CreateFileW((dir + L"\\" + fd.cFileName).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                    OPEN_EXISTING, 0, nullptr);
             if (f == INVALID_HANDLE_VALUE) continue;
             std::vector<uint8_t> data(fd.nFileSizeLow);

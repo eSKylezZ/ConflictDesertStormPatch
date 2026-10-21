@@ -133,8 +133,9 @@ menu **OPTIONS > DESERTSTORMFIX > PLUGINS > Translated missions**:
 
 Default OFF until a human play-test. Dev builds: `HKCU\Software\DesertStormFix\Dev\MissionSource` = `lua` / `dll`
 overrides it; `MissionUnverified` = 1 also runs DLLs that aren't on the verified list; `PseRebuild` (missing = 1)
-regenerates each mission once per start. Release builds read only `TranslatedMissions` and regenerate a mission only
-when its stamp (DLL SHA-256 + translator build) changes.
+regenerates every mission at each start. With the setting on, every `Mission*.dll` / `Training*.dll` is translated at
+start-up (before the launcher, ~1 s the first time); release builds then only regenerate a mission whose stamp (DLL
+SHA-256 + translator build) changed.
 
 ## Other values in the same key (raw registry)
 

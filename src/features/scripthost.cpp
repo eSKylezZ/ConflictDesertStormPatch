@@ -1372,7 +1372,10 @@ constexpr uint32_t kMissionDllLoadCall = 0x449265, kLoadLibraryIat = 0x5D8070;
 
 HMODULE WINAPI LoadMissionDll(const char* name) {
     const std::string own = name ? features::ModFilePath(name) : std::string();
-    if (own.empty()) return LoadLibraryA(name);
+    if (own.empty()) {   // the game's DLL - from PSE\Originals once it was moved there (originals.cpp)
+        const std::string moved = features::OriginalPath(name);
+        return moved.empty() ? LoadLibraryA(name) : LoadLibraryExA(moved.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    }
     HMODULE m = LoadLibraryExA(own.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     const DWORD error = m ? 0 : GetLastError();
     dslog::Write(m ? "Script: mission DLL %s from %s" : "[fail] Script: mission DLL %s from %s didn't load (error %lu)",

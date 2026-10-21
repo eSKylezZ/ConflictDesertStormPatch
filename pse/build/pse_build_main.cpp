@@ -1,4 +1,4 @@
-// pse_build.exe - command line front end of the first-run builder (docs/sdk/DESIGN.md §12, docs/sdk/asset-store.md).
+// pse_build.exe - command line front end of the first-run builder (docs/internal/DESIGN.md §12, docs/internal/asset-store.md).
 //
 //   pse_build [--game <dir>] [--out <dir>] [--force] [--no-names]      build / confirm the asset store
 //   pse_build --verify [--game <dir>] [--out <dir>]                    every archive entry read back byte-identical
@@ -9,11 +9,17 @@
 // Exit code: 0 ok, 1 usage, 2 build / verify failed.
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <io.h>
+
+#include "data.h"
+#include "forms.h"
 #include "pse_build.h"
 
 using namespace pse::build;
@@ -161,9 +167,187 @@ namespace pse::m2l {
 int MissionsCommand(int argc, wchar_t** argv, std::wstring (*findGame)());   // mission2lua/m2l_cli.cpp
 }
 
+// `pse_build data canon <file> [<out>]` / `pse_build data check <file>`: PSE data files (pse/records/data.h) -
+// canon writes the canonical text (stdout without <out>), check exits 0 when the file already is canonical, 3 when
+// not, 2 when it isn't a PSE data file.
+int DataCommand(int argc, wchar_t** argv) {
+    if (argc < 2 || (std::wcscmp(argv[0], L"canon") && std::wcscmp(argv[0], L"check"))) {
+        std::fputs("usage: pse_build data canon <file> [<out>]\n       pse_build data check <file>\n", stderr);
+        return 1;
+    }
+    FILE* f = _wfopen(argv[1], L"rb");
+    if (!f) {
+        std::fwprintf(stderr, L"can't read %ls\n", argv[1]);
+        return 2;
+    }
+    std::string text;
+    char buf[65536];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+    std::fclose(f);
+    pse::data::Document doc;
+    std::string out, error;
+    if (!pse::data::Parse(text, &doc, &error) || !pse::data::Write(doc, &out, &error)) {
+        std::fwprintf(stderr, L"%ls:", argv[1]);
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 2;
+    }
+    if (!std::wcscmp(argv[0], L"check")) return out == text ? 0 : 3;
+    if (argc < 3) {
+        _setmode(_fileno(stdout), _O_BINARY);
+        std::fwrite(out.data(), 1, out.size(), stdout);
+        return 0;
+    }
+    FILE* o = _wfopen(argv[2], L"wb");
+    if (!o || std::fwrite(out.data(), 1, out.size(), o) != out.size()) {
+        if (o) std::fclose(o);
+        std::fwprintf(stderr, L"can't write %ls\n", argv[2]);
+        return 2;
+    }
+    std::fclose(o);
+    return 0;
+}
+
+// `pse_build records generate --schema <file> [--game <dir>] --out <dir>`: the game's tables as records
+// (<out>\<type>.lua); `pse_build records merged --schema <file> [--game <dir>] [--mods <dir>] --out <dir>`: the
+// tables with every switched-on mod's record edits (<out>\<TABLE>.TXT + report.txt). pse/records/forms.h.
+std::string ReadAllW(const std::wstring& path, bool* ok) {
+    std::string s;
+    *ok = false;
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return s;
+    char buf[65536];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+    std::fclose(f);
+    *ok = true;
+    return s;
+}
+bool WriteAllW(const std::wstring& path, const std::string& s) {
+    FILE* f = _wfopen(path.c_str(), L"wb");
+    if (!f) return false;
+    const bool ok = std::fwrite(s.data(), 1, s.size(), f) == s.size();
+    std::fclose(f);
+    return ok;
+}
+
+int RecordsCommand(int argc, wchar_t** argv) {
+    if (argc < 1 || (std::wcscmp(argv[0], L"generate") && std::wcscmp(argv[0], L"merged"))) {
+        std::fputs("usage: pse_build records generate --schema <file> [--game <dir>] --out <dir>\n"
+                   "       pse_build records merged --schema <file> [--game <dir>] [--mods <dir>] --out <dir>\n",
+                   stderr);
+        return 1;
+    }
+    const bool merged = !std::wcscmp(argv[0], L"merged");
+    std::wstring schemaPath, game, mods, out;
+    for (int i = 1; i + 1 < argc; i += 2) {
+        if (!std::wcscmp(argv[i], L"--schema")) schemaPath = argv[i + 1];
+        else if (!std::wcscmp(argv[i], L"--game")) game = argv[i + 1];
+        else if (!std::wcscmp(argv[i], L"--mods")) mods = argv[i + 1];
+        else if (!std::wcscmp(argv[i], L"--out")) out = argv[i + 1];
+    }
+    if (game.empty()) game = FindGame();
+    if (mods.empty()) mods = game + L"\\Mods";
+    bool ok = false;
+    pse::data::Document schema;
+    std::string error;
+    const std::string schemaText = ReadAllW(schemaPath, &ok);
+    if (!ok || !pse::data::Parse(schemaText, &schema, &error)) {
+        std::fprintf(stderr, "schema: %s\n", ok ? error.c_str() : "can't read it");
+        return 2;
+    }
+    std::wstring catalog = game + L"\\catalog.dat";
+    if (GetFileAttributesW(catalog.c_str()) == INVALID_FILE_ATTRIBUTES)
+        catalog = pse::build::OriginalsDir(game) + L"\\catalog.dat";   // moved by DesertStormFix
+    const std::string cat = ReadAllW(catalog, &ok);
+    std::vector<pse::build::ArchiveEntry> entries;
+    uint32_t bad = 0;
+    if (!ok || !pse::build::Ds1ParseArchive(reinterpret_cast<const uint8_t*>(cat.data()), cat.size(), &entries, &bad)) {
+        std::fputs("catalog.dat not found / not an archive\n", stderr);
+        return 2;
+    }
+    pse::records::TableFiles tables;
+    for (const pse::data::Entry& t : schema.root.Get("tables")->entries) {
+        const pse::data::Value* f = t.value->Get("file");
+        if (!f || f->kind != pse::data::Kind::String) continue;
+        const uint32_t h = pse::build::Ds1NameHash(f->s.c_str());
+        for (const pse::build::ArchiveEntry& e : entries)
+            if (e.nameHash == h) {
+                tables[f->s] = cat.substr(e.offset, e.size);
+                break;
+            }
+    }
+    pse::records::Forms forms;
+    if (!pse::records::Generate(tables, schema.root, &forms, &error)) {
+        std::fprintf(stderr, "generate: %s\n", error.c_str());
+        return 2;
+    }
+    CreateDirectoryW(out.c_str(), nullptr);
+    if (!merged) {
+        for (const auto& [type, doc] : forms) {
+            std::string text;
+            if (!pse::data::Write(doc, &text, &error)) return std::fprintf(stderr, "%s\n", error.c_str()), 2;
+            WriteAllW(out + L"\\" + std::wstring(type.begin(), type.end()) + L".lua", text);
+        }
+        std::printf("%zu record files\n", forms.size());
+        return 0;
+    }
+    // the switched-on mods' records\*.lua, mods in folder-name order (case-insensitive), files likewise
+    std::vector<pse::records::Edits> edits;
+    auto listSorted = [](const std::wstring& pattern, bool dirs) {
+        std::vector<std::wstring> names;
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(pattern.c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return names;
+        do {
+            const bool dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (dir == dirs && std::wcscmp(fd.cFileName, L".") && std::wcscmp(fd.cFileName, L".."))
+                names.push_back(fd.cFileName);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+        std::sort(names.begin(), names.end(), [](const std::wstring& a, const std::wstring& b) {
+            std::wstring x = a, y = b;
+            for (auto& c : x) c = static_cast<wchar_t>(towlower(c));
+            for (auto& c : y) c = static_cast<wchar_t>(towlower(c));
+            return x < y;
+        });
+        return names;
+    };
+    auto narrow = [](const std::wstring& w) {
+        std::string s(static_cast<size_t>(WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr)), 0);
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), static_cast<int>(s.size()), nullptr, nullptr);
+        s.pop_back();
+        return s;
+    };
+    std::vector<std::string> report;
+    for (const std::wstring& mod : listSorted(mods + L"\\*", true)) {
+        if (mod[0] == L'_' || mod[0] == L'.') continue;
+        const std::wstring folder = mods + L"\\" + mod + L"\\records";
+        for (const std::wstring& file : listSorted(folder + L"\\*.lua", false)) {
+            pse::records::Edits e;
+            e.mod = narrow(mod);
+            e.file = narrow(file);
+            const std::string text = ReadAllW(folder + L"\\" + file, &ok);
+            if (!ok || !pse::data::Parse(text, &e.doc, &error)) {
+                report.push_back("[fail] " + e.mod + "/" + e.file + ": " + (ok ? error : "can't read it"));
+                continue;
+            }
+            edits.push_back(std::move(e));
+        }
+    }
+    pse::records::Merge(&forms, edits, schema.root, &report);
+    for (const auto& [file, bytes] : pse::records::Tables(forms, schema.root))
+        WriteAllW(out + L"\\" + std::wstring(file.begin(), file.end()), bytes);
+    std::string rep;
+    for (const std::string& l : report) rep += l + "\n";
+    WriteAllW(out + L"\\report.txt", rep);
+    std::printf("%zu edit file(s), %zu report line(s)\n", edits.size(), report.size());
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
-    // `pse_build missions ...`: the mission translator (docs/sdk/mission-translation.md "C++ port")
+    // `pse_build missions ...`: the mission translator (docs/internal/mission-translation.md "C++ port")
     if (argc > 1 && std::wcscmp(argv[1], L"missions") == 0) return pse::m2l::MissionsCommand(argc - 2, argv + 2, &FindGame);
+    if (argc > 1 && std::wcscmp(argv[1], L"data") == 0) return DataCommand(argc - 2, argv + 2);
+    if (argc > 1 && std::wcscmp(argv[1], L"records") == 0) return RecordsCommand(argc - 2, argv + 2);
     StoreOptions o;
     std::wstring list, find;
     bool verify = false, quiet = false;

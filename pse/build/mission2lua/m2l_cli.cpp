@@ -1,4 +1,4 @@
-// `pse_build missions` - the mission translator's command line (docs/sdk/mission-translation.md "C++ port").
+// `pse_build missions` - the mission translator's command line (docs/internal/mission-translation.md "C++ port").
 //
 //   pse_build missions [--game <dir>] [--out <dir>] [--only <Mission1,Training2,...>] [--check] [--force] [--quiet]
 //       every Mission*.dll / Training*.dll of the install -> <out>\<stem>.lua (+ .stamp); default out = the missions

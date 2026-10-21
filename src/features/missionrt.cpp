@@ -1,4 +1,4 @@
-// Mission runtime for translated mission DLLs (docs/sdk/mission-translation.md; generator: ModKit
+// Mission runtime for translated mission DLLs (docs/internal/mission-translation.md; generator: ModKit
 // conflict_ds_tools/mission2lua.py). A translated mission is a .lua level whose code is the DLL's x86 code turned into
 // Lua; it needs a few things the level's Lua state can't do by itself, provided here as raw Lua C functions:
 //

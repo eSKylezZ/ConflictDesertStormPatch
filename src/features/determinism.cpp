@@ -318,6 +318,7 @@ void features::DrawLogTick(uint32_t tick) {   // lockstep.cpp: after each tick's
 }
 
 bool features::DetActive() { return g_started; }   // (the clock stays virtual after the logged frames)
+uint32_t features::DetVirtualTime() { return g_virtual; }
 
 void features::ApplyDeterminism() {
     if (DevDword("LockstepDrawLog", 0)) {
@@ -335,6 +336,12 @@ void features::ApplyDeterminism() {
                     patch::SubscribeCall(kClockCallTick, reinterpret_cast<const void*>(&ClockTick), kClock,
                                          features::kClockDeterminism, reinterpret_cast<void**>(&g_clockTickNext));
     dslog::Write(ok ? "[dev]  Determinism test armed (run %u)" : "[fail] Determinism: clock hooks not applied", g_run);
+    // Real-time sound was the remaining run-to-run noise (11B / 12A / Training 1 parity, 2026-10-19): sound random draws
+    // from a private generator, "sound still playing" by the virtual clock (lockstep.cpp's online hooks).
+    if (DevDword("DetPrivateSound", 1)) {
+        features::HarnessSound();
+        dslog::Write("[dev]  Determinism: sound draws private, sound timing virtual");
+    }
     if (DevDword("DetRandLog", 1)) HookDraws();
     if (DevDword("DetNoSound", 0)) {
         // import slot pointer hook ahead of dev.cpp's GlobalFocusAudio (priority 0): never calls on
@@ -361,11 +368,13 @@ void features::OnFrameDeterminism() {
     if (!g_started) {
         const char* next = *reinterpret_cast<char**>(kNextLevel);
         if (*reinterpret_cast<int8_t*>(kDispatchMode) == 1 && next &&
-            (_strnicmp(next, "Mission", 7) == 0 || _strnicmp(next, "Training", 8) == 0)) Start();
+            (_strnicmp(next, "Mission", 7) == 0 || _strnicmp(next, "Training", 8) == 0 ||
+             _strnicmp(next, "MP_Mission", 10) == 0)) Start();   // MP levels: booted alone, no network session
         return;
     }
     ++g_frame;
     g_virtual = kVirtualStart + static_cast<uint32_t>(uint64_t(g_frame) * 1000 / 60);
+    features::HarnessSoundFrame();
     if (g_done) return;
     Hash();
     if (g_dump) DumpObject();
@@ -415,6 +424,7 @@ void features::OnFrameDeterminism() {
 }
 #else
 bool features::DetActive() { return false; }
+uint32_t features::DetVirtualTime() { return 0; }
 void features::DrawLogTick(uint32_t) {}
 void features::ApplyDeterminism() {}
 void features::OnFrameDeterminism() {}

@@ -27,6 +27,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <initializer_list>
+#include <map>
 #include <set>
 #include <cmath>
 #include <cstdint>
@@ -39,6 +40,8 @@
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "data.h"
+#include "forms.h"
 
 namespace {
 constexpr uint32_t kResolve = 0x4BE810;
@@ -81,6 +84,8 @@ std::vector<ModFile> g_gearFiles, g_pouchFiles;                   // .gear / .po
 std::vector<features::ModGearPiece> g_modGear;
 std::vector<features::ModPouchSet> g_modPouchSets;
 std::vector<ModFile> g_vehicleFiles;                              // .vehicle: vehicle skins / new vehicles (vehicles.cpp)
+std::vector<ModFile> g_recordFiles;                               // Mods\<mod>\records\*.lua: record edits (ApplyRecords)
+std::map<std::string, std::string> g_recordTables;                // upper table name -> bytes, the tables records changed
 std::vector<ModFile> g_unitFiles;                                 // .unit: new soldier types (BuildUnits)
 struct ModUnit {
     std::string id, model;
@@ -195,6 +200,14 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             continue;
         }
         const std::string key = Upper(fd.cFileName);
+        // Mods\<mod>\records\*.lua = record edits (docs/sdk/data-files.md) - never in the file index (a
+        // records\mission1.lua would be taken for a level)
+        if (key.size() > 4 && key.compare(key.size() - 4, 4, ".LUA") == 0 &&
+            _stricmp(dir.c_str(), (g_modsRoot + "\\" + g_mods[mod] + "\\records").c_str()) == 0) {
+            g_recordFiles.push_back({path, mod});
+            ++count;
+            continue;
+        }
         if (key.size() > 12 && key.compare(key.size() - 12, 12, ".REPLACE.TXT") == 0) {
             g_tableReplace[key.substr(0, key.size() - 12) + ".TXT"].push_back({path, mod});
             ++count;
@@ -261,7 +274,7 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             continue;
         }
         if (key.size() > 4 && key.compare(key.size() - 4, 4, ".SCH") == 0) {
-            if (GetFileAttributesA((GameDir() + "\\" + fd.cFileName).c_str()) != INVALID_FILE_ATTRIBUTES)
+            if (GetFileAttributesA(features::GameFile(fd.cFileName).c_str()) != INVALID_FILE_ATTRIBUTES)
                 g_levelSounds[key].push_back(path);   // named like a level cache: replaces its samples
             else
                 g_bankPacks.push_back(path);
@@ -360,19 +373,22 @@ bool WriteAll(const std::string& path, const std::string& data) {
 }
 
 // The game's own copy of `name` from the archives in the game folder (catalog.dat first: it holds the tables).
+bool ReadGameFileRaw(const std::string& name, std::string& out);
 bool ReadGameFile(const std::string& name, std::string& out) {
+    // a table the mods' record edits changed: that is "the game's copy" for every reader (table merges, units, weapons)
+    if (auto it = g_recordTables.find(Upper(name)); it != g_recordTables.end()) {
+        out = it->second;
+        return true;
+    }
+    return ReadGameFileRaw(name, out);
+}
+bool ReadGameFileRaw(const std::string& name, std::string& out) {
     const uint32_t hash = ArchiveHash(name);
     std::vector<std::string> dats = {"catalog.dat"};
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((GameDir() + "\\*.dat").c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do
-            if (_stricmp(fd.cFileName, "catalog.dat")) dats.push_back(fd.cFileName);
-        while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
+    for (const std::string& n : features::GameFiles("*.dat"))   // game folder + PSE\Originals
+        if (_stricmp(n.c_str(), "catalog.dat")) dats.push_back(n);
     for (const std::string& dat : dats) {
-        HANDLE f = CreateFileA((GameDir() + "\\" + dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        HANDLE f = CreateFileA(features::GameFile(dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         if (f == INVALID_HANDLE_VALUE) continue;
         std::vector<uint32_t> index(0x8000 / 4);
         DWORD got = 0;
@@ -466,6 +482,61 @@ int ApplyReplacements(std::string& text, const std::vector<ModFile>& parts) {
     return static_cast<int>(rows.size());
 }
 
+// ---- records (docs/sdk/data-files.md, pse/records/forms.h) ----
+// The mods' records\*.lua edits applied to the game's tables field by field: the schema PSE\Records\ds1\schema.lua
+// says how the tables read as records; the base records are made from the game's tables (catalog.dat), the edits
+// merged in mod order, the tables written back - those that changed become "the game's copy" (ReadGameFile) for the
+// .txt / .replace.txt merges after this. Report lines go to the mod report.
+void ApplyRecords() {
+    if (g_recordFiles.empty()) return;
+    std::string text, error;
+    pse::data::Document schema;
+    const std::string schemaPath = GameDir() + "\\PSE\\Records\\ds1\\schema.lua";
+    if (!ReadAll(schemaPath, text) || !pse::data::Parse(text, &schema, &error)) {
+        features::ModLog("[fail] Records: %s %s - record edits ignored", schemaPath.c_str(),
+                         error.empty() ? "is missing" : error.c_str());
+        return;
+    }
+    pse::records::TableFiles game;
+    if (const pse::data::Value* tables = schema.root.Get("tables"))
+        for (const pse::data::Entry& t : tables->entries)
+            if (const pse::data::Value* f = t.value->Get("file"); f && f->kind == pse::data::Kind::String)
+                if (std::string bytes; ReadGameFileRaw(f->s, bytes)) game[f->s] = bytes;
+    pse::records::Forms forms;
+    if (!pse::records::Generate(game, schema.root, &forms, &error)) {
+        features::ModLog("[fail] Records: %s - record edits ignored", error.c_str());
+        return;
+    }
+    // per mod (index order), its files by name (case-insensitive) - as the ModKit's forms.load_mod_edits
+    std::vector<ModFile> files = g_recordFiles;
+    std::stable_sort(files.begin(), files.end(), [](const ModFile& a, const ModFile& b) {
+        if (a.mod != b.mod) return a.mod < b.mod;
+        return _stricmp(a.path.c_str(), b.path.c_str()) < 0;
+    });
+    std::vector<pse::records::Edits> edits;
+    std::vector<std::string> report;
+    for (const ModFile& f : files) {
+        pse::records::Edits e;
+        e.mod = g_mods[f.mod];
+        e.file = f.path.substr(f.path.find_last_of("\\/") + 1);
+        if (!ReadAll(f.path, text) || !pse::data::Parse(text, &e.doc, &error)) {
+            report.push_back("[fail] " + e.mod + "/" + e.file + ": " + error);
+            continue;
+        }
+        edits.push_back(std::move(e));
+    }
+    pse::records::Merge(&forms, edits, schema.root, &report);
+    int changed = 0;
+    for (const auto& [file, bytes] : pse::records::Tables(forms, schema.root)) {
+        auto it = game.find(file);
+        if (it != game.end() && it->second == bytes) continue;
+        g_recordTables[Upper(file)] = bytes;
+        ++changed;
+    }
+    for (const std::string& line : report) features::ModLog("Records: %s", line.c_str());
+    features::ModLog("Records: %zu edit file(s) from the mods, %d table(s) changed", edits.size(), changed);
+}
+
 // Every mod table becomes one file: the game's rows (if the game has that file) with the replace parts applied, then
 // each mod's appended rows in order.
 void MergeTables() {
@@ -505,11 +576,27 @@ void MergeTables() {
         g_files[key] = {out, parts.empty() ? replace->second.back().mod : parts.back().mod};
         features::ModLog("Mods: %s = %s + %zu mod part(s)", name.c_str(), game ? "game rows" : "no game file", parts.size());
     }
+    // tables only record edits changed (no .txt parts): their merged copy as it is
+    for (const auto& [key, bytes] : g_recordTables) {
+        if (g_files.count(key)) continue;
+        if (g_mergedRoot.empty()) g_mergedRoot = TempDir();
+        const std::string out = g_mergedRoot + "\\" + key;
+        HANDLE f = CreateFileA(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (f == INVALID_HANDLE_VALUE) {
+            features::ModLog("[fail] Mods: can't write %s", out.c_str());
+            continue;
+        }
+        DWORD written = 0;
+        WriteFile(f, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+        CloseHandle(f);
+        g_files[key] = {out, g_recordFiles.back().mod};
+        features::ModLog("Mods: %s = game rows changed by record edits", key.c_str());
+    }
 }
 
 // ---- unit tables ----
 // Units.txt / HStat.txt / UnitWpns.txt rows the game can't load safely (research/custom_units.md): a text field longer
-// than the loader's buffer (35 / HStat name 39 chars), an unknown unit type / base stat / experience (the type falls
+// than the loader's buffer (35; models / speech bank 34), an unknown unit type / base stat / experience (the type falls
 // to an unhandled 6, the other two make the game drop the whole table), a UnitWpns row for a unit that doesn't exist
 // (whole table dropped). Such rows are left out of the merged table with a [fail] line. Column 14 (item slots) is
 // raised to the unit's UnitWpns row count - more rows than slots = "Trying to allocate" box + table dropped; more slots
@@ -556,8 +643,11 @@ void StoreTable(const char* key, const char* name, const std::vector<std::string
     g_files[key] = {path, it != g_files.end() ? it->second.mod : -1};
 }
 
+// A table a mod changed: by a .txt part or by record edits (Mods\<mod>\records\*.lua).
+bool ModTable(const char* key) { return g_tables.count(key) || g_recordTables.count(key); }
+
 void CheckUnitTables() {
-    if (!g_tables.count("UNITS.TXT") && !g_tables.count("HSTAT.TXT") && !g_tables.count("UNITWPNS.TXT")) return;
+    if (!ModTable("UNITS.TXT") && !ModTable("HSTAT.TXT") && !ModTable("UNITWPNS.TXT")) return;
     std::string unitsText, statsText, itemsText, gameUnits;
     if (!TableText("UNITS.TXT", "Units.txt", unitsText) || !TableText("HSTAT.TXT", "HStat.txt", statsText) ||
         !TableText("UNITWPNS.TXT", "UnitWpns.txt", itemsText)) {
@@ -583,8 +673,8 @@ void CheckUnitTables() {
     std::set<std::string> statNames;
     for (const std::string& l : Lines(statsText)) {
         const std::string name = Fields(l)[0];
-        if (!l.empty() && name.size() > 39) {
-            features::ModLog("[fail] HStat.txt: row \"%s\" left out - its name is longer than 39 characters", name.c_str());
+        if (!l.empty() && name.size() > 35) {   // stack buffer 40, but the record's name is char[36] (+0x24 written after)
+            features::ModLog("[fail] HStat.txt: row \"%s\" left out - its name is longer than 35 characters", name.c_str());
             statsChanged = true;
             continue;
         }
@@ -602,9 +692,12 @@ void CheckUnitTables() {
         if (f.size() < 14) {
             why = "it has " + std::to_string(f.size()) + " of the 14 columns";
         } else {
-            for (size_t i = 0; i < 13 && why.empty(); ++i)
-                if (i != 8 && f[i].size() > 35)
-                    why = "column " + std::to_string(i + 1) + " is longer than 35 characters";
+            for (size_t i = 0; i < 13 && why.empty(); ++i) {
+                // models (record +8 / +0x2B, char[35]) and the speech bank (+0x1A4, the role byte follows): 34
+                const size_t max = i == 2 || i == 3 || i == 10 ? 34 : 35;
+                if (i != 8 && f[i].size() > max)
+                    why = "column " + std::to_string(i + 1) + " is longer than " + std::to_string(max) + " characters";
+            }
             if (why.empty() && !known(f[1], kTypes, 6))
                 why = "unit type \"" + f[1] + "\" isn't SOLDIER, CIVILIAN, GOAT HERDER, EMIR, MISSILE EXPERT or POW";
             if (why.empty() && !statNames.count(f[4])) why = "base stat \"" + f[4] + "\" isn't in HStat.txt";
@@ -663,7 +756,7 @@ void CheckUnitTables() {
 }
 
 // Vehicle.txt / VStat.txt / VehWpns.txt / Props.txt, same idea: rows left out when a field is longer than its buffer
-// (Vehicle.txt seat / exit connectors 34 characters, other names 35; VStat.txt name 39, propulsion 35), the base stats
+// (Vehicle.txt models and seat / exit connectors 34 characters, other names 35; VStat.txt name 35, propulsion 35), the base stats
 // (VStat.txt) or propulsion (Props.txt) is unknown, a VehWpns row names an unknown vehicle or a non-weapon (the game
 // drops the whole table for these), a Props.txt row's type (column 2) isn't one of the 12 the game knows (FUN_00493e60:
 // a wrong one stops the game at start-up). Column 1 is the name VStat.txt uses - a new name with a built-in type is a new
@@ -671,8 +764,7 @@ void CheckUnitTables() {
 // game's own data always matches; an empty slot crashes the vehicle set-up (units.cpp). More than 8 crew is only noted
 // (the game cuts it to 8 with a box).
 void CheckVehicleTables() {
-    if (!g_tables.count("VEHICLE.TXT") && !g_tables.count("VSTAT.TXT") && !g_tables.count("VEHWPNS.TXT") &&
-        !g_tables.count("PROPS.TXT"))
+    if (!ModTable("VEHICLE.TXT") && !ModTable("VSTAT.TXT") && !ModTable("VEHWPNS.TXT") && !ModTable("PROPS.TXT"))
         return;
     std::string vehiclesText, statsText, gunsText, propsText, weaponsText;
     if (!TableText("VEHICLE.TXT", "Vehicle.txt", vehiclesText) || !TableText("VSTAT.TXT", "VStat.txt", statsText) ||
@@ -717,7 +809,7 @@ void CheckVehicleTables() {
         const std::vector<std::string> f = Fields(l);
         std::string why;
         if (f.size() < 27) why = "it has " + std::to_string(f.size()) + " of the 27 columns";
-        else if (f[0].size() > 39) why = "its name is longer than 39 characters";
+        else if (f[0].size() > 35) why = "its name is longer than 35 characters";   // record +0x24 written after it
         else if (f[12].size() > 35 || !props.count(f[12])) why = "propulsion \"" + f[12] + "\" isn't in Props.txt";
         if (!why.empty()) {
             features::ModLog("[fail] VStat.txt: row \"%s\" left out - %s", f[0].c_str(), why.c_str());
@@ -740,7 +832,7 @@ void CheckVehicleTables() {
         if (f.size() < 27) why = "it has " + std::to_string(f.size()) + " of the 27 columns";
         for (size_t i = 0; i < 25 && i < f.size() && why.empty(); ++i) {
             if (i == 5) continue;   // a number
-            const size_t max = i >= 6 && i <= 21 ? 34 : 35;
+            const size_t max = (i >= 6 && i <= 21) || i == 1 || i == 2 ? 34 : 35;   // connectors, models: char[35]
             if (f[i].size() > max) why = "column " + std::to_string(i + 1) + " is longer than " + std::to_string(max) + " characters";
         }
         if (why.empty() && !statNames.count(f[4])) why = "base stats \"" + f[4] + "\" aren't in VStat.txt";
@@ -886,7 +978,7 @@ std::string SoundCache(const char* name) {
     std::string file;
     // The level's own cache: from the asset store when it is on (rebuilt byte-identical from its chunks), else the file.
     const bool fromStore = features::AssetStoreSoundCache(name, &file);
-    if (!fromStore && !ReadAll(GameDir() + "\\" + name, file)) return result;
+    if (!fromStore && !ReadAll(features::GameFile(name), file)) return result;
     std::vector<Chunk> level = Chunks(file);
     if (level.empty()) return result;
     int replaced = 0;
@@ -1126,16 +1218,11 @@ bool BorrowBank(const std::string& name) {
         features::ModLog("Mods: sound %s served by the asset store (from %s)", name.c_str(), cache.c_str());
         return true;
     }
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    std::vector<std::string> caches;
-    do caches.push_back(fd.cFileName);
-    while (FindNextFileA(h, &fd));
-    FindClose(h);
+    const std::vector<std::string> caches = features::GameFiles("*.sch");   // game folder + PSE\Originals
+    if (caches.empty()) return false;
     for (const std::string& cache : caches) {
         std::string file;
-        if (!ReadAll(GameDir() + "\\" + cache, file)) continue;
+        if (!ReadAll(features::GameFile(cache), file)) continue;
         const std::vector<Chunk> chunks = Chunks(file);
         const Chunk* bank = nullptr;
         for (const Chunk& c : chunks)
@@ -1294,16 +1381,11 @@ bool FindBank(const std::string& name, std::string& bank, std::vector<std::pair<
         }
         return !bank.empty();
     }
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    std::vector<std::string> caches;
-    do caches.push_back(fd.cFileName);
-    while (FindNextFileA(h, &fd));
-    FindClose(h);
+    const std::vector<std::string> caches = features::GameFiles("*.sch");   // game folder + PSE\Originals
+    if (caches.empty()) return false;
     for (const std::string& cache : caches) {
         std::string file;
-        if (!ReadAll(GameDir() + "\\" + cache, file)) continue;
+        if (!ReadAll(features::GameFile(cache), file)) continue;
         const std::vector<Chunk> chunks = Chunks(file);
         const Chunk* b = nullptr;
         for (const Chunk& c : chunks)
@@ -1932,13 +2014,8 @@ void BorrowKitBanks() {
                          found == static_cast<int>(want.size()) ? "" : " (some not found)");
         return;
     }
-    std::vector<std::string> caches;
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((GameDir() + "\\*.sch").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do caches.push_back(fd.cFileName);
-    while (FindNextFileA(h, &fd));
-    FindClose(h);
+    std::vector<std::string> caches = features::GameFiles("*.sch");   // game folder + PSE\Originals
+    if (caches.empty()) return;
     std::stable_partition(caches.begin(), caches.end(), [](const std::string& c) { return _strnicmp(c.c_str(), "mp_", 3) == 0; });
     std::string pack;
     std::unordered_map<uint64_t, bool> packed;
@@ -1946,7 +2023,7 @@ void BorrowKitBanks() {
     for (const std::string& cache : caches) {
         if (want.empty()) break;
         std::string file;
-        if (!ReadAll(GameDir() + "\\" + cache, file)) continue;
+        if (!ReadAll(features::GameFile(cache), file)) continue;
         const std::vector<Chunk> chunks = Chunks(file);
         std::unordered_map<uint32_t, bool> refs;
         for (const Chunk& c : chunks) {
@@ -2187,7 +2264,7 @@ bool ApplyDllPatch(const std::string& patch, std::string& out, std::string& base
         return false;
     }
     std::string file;
-    if (!ReadAll(GameDir() + "\\" + base, file)) {
+    if (!ReadAll(features::GameFile(base), file)) {
         error = base + " isn't in the game folder";
         return false;
     }
@@ -2828,7 +2905,7 @@ struct ArchiveLoc {
 
 std::vector<uint32_t> ArchiveEntries(const std::string& dat) {   // {hash, offset, size} x n of a game archive
     std::vector<uint32_t> entries(0x8000 / 4);
-    HANDLE f = CreateFileA((GameDir() + "\\" + dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE f = CreateFileA(features::GameFile(dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return {};
     DWORD got = 0;
     ReadFile(f, entries.data(), 0x8000, &got, nullptr);
@@ -2846,14 +2923,8 @@ const std::unordered_map<uint32_t, ArchiveLoc>& GameArchiveIndex() {   // first 
     static std::unordered_map<uint32_t, ArchiveLoc> index;
     if (!index.empty()) return index;
     std::vector<std::string> dats = {"catalog.dat", "chardata.dat"};
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((GameDir() + "\\*.dat").c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do
-            if (_stricmp(fd.cFileName, "catalog.dat") && _stricmp(fd.cFileName, "chardata.dat")) dats.push_back(fd.cFileName);
-        while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
+    for (const std::string& n : features::GameFiles("*.dat"))   // game folder + PSE\Originals
+        if (_stricmp(n.c_str(), "catalog.dat") && _stricmp(n.c_str(), "chardata.dat")) dats.push_back(n);
     for (const std::string& dat : dats) {
         const std::vector<uint32_t> e = ArchiveEntries(dat);
         for (size_t i = 0; i + 2 < e.size(); i += 3) index.emplace(e[i], ArchiveLoc{dat, e[i + 1], e[i + 2]});
@@ -2886,7 +2957,7 @@ bool BorrowLevelFile(const std::string& name, const std::string& levelDat, std::
     const bool present = ArchiveHas(levelDat, hash) || ArchiveHas("catalog.dat", hash) || ArchiveHas("chardata.dat", hash);
     if (present && !data) return true;
     std::string bytes;
-    HANDLE f = CreateFileA((GameDir() + "\\" + loc->second.dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE f = CreateFileA(features::GameFile(loc->second.dat).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return present;
     bytes.resize(loc->second.size);
     DWORD got = 0;
@@ -2946,6 +3017,7 @@ void BuildAll() {
     BeginReport(GameDir() + "\\Mods");
     BuildIndex();
     BuildReferences();
+    ApplyRecords();   // before everything that reads the game's tables
     BuildWeapons();
     BuildSkins();
     BuildGear();
@@ -2974,6 +3046,8 @@ void ResetState() {
     g_modGear.clear();
     g_modPouchSets.clear();
     g_vehicleFiles.clear();
+    g_recordFiles.clear();
+    g_recordTables.clear();
     g_unitFiles.clear();
     g_modUnits.clear();
     g_modVehicles.clear();

@@ -1,4 +1,4 @@
-// pse_build: the asset store (pse/build, docs/sdk/asset-store.md). Tier 1 = synthetic archives in a temp folder;
+// pse_build: the asset store (pse/build, docs/internal/asset-store.md). Tier 1 = synthetic archives in a temp folder;
 // tier 2 = the real install (PSE_GAME_DIR, else the Steam / GOG path) built into a temp folder and read back.
 #include <windows.h>
 

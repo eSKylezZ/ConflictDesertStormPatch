@@ -1,4 +1,4 @@
-// Dev-only live test API ("tier 3", docs/sdk/devserver.md): a named pipe \\.\pipe\pse-dev-<pid> that runs Lua chunks
+// Dev-only live test API ("tier 3", docs/internal/devserver.md): a named pipe \\.\pipe\pse-dev-<pid> that runs Lua chunks
 // inside the running game and answers with their return values as JSON. Lets many tests share one booted game
 // (tests/live/, client tests/live/pse_client.py).
 //

@@ -1,4 +1,4 @@
-// The asset store's sound part (docs/sdk/asset-store.md "Sound caches"): DS1's level sound caches (<level>.sch) are
+// The asset store's sound part (docs/internal/asset-store.md "Sound caches"): DS1's level sound caches (<level>.sch) are
 // stored chunk by chunk in the same content-addressed pack as the archive files. A cache = its 8-byte header + chunks
 // {u32 tag, u32 size, data}: BANK (u32 key = ELF hash of "<NAME>.sbk", entries -> sample ids), PFSM (sample: i32
 // language, u32 id, u32 size, u16 rate, u8 bits, u8 pad, data), PFST (stream: i32 language, u32 id, ...), IMUS. The

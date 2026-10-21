@@ -1,7 +1,7 @@
 /*
  * Pivotal Script Extender (PSE) - public plugin API.
  *
- * Design: docs/sdk/DESIGN.md. Reference: docs/sdk/reference/. Changes: docs/sdk/API_CHANGELOG.md.
+ * Design: docs/internal/DESIGN.md. Reference: docs/sdk/reference/. Changes: docs/sdk/API_CHANGELOG.md.
  *
  * Stability: API version 0 = UNSTABLE (phase 1, inside DesertStormFix). Everything here may change until SDK 1.0
  * freezes the v1 interfaces. After that: structs only grow (every struct starts with `size`), interfaces get new

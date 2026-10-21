@@ -2,7 +2,7 @@
 
     python scripts/sync_m2l_runtime.py [--modkit <ConflictDesertStormModKit>] [--check]
 
-The generated Lua of a mission DLL (docs/sdk/mission-translation.md) starts with a runtime prelude (registers, lazy
+The generated Lua of a mission DLL (docs/internal/mission-translation.md) starts with a runtime prelude (registers, lazy
 flags, x87 stack, call helpers) and ends with a level template (init / detach). Both are OUR code and live as text in
 ModKit conflict_ds_tools/mission2lua.py (RUNTIME, MAIN, VERSION). The C++ port (pse/build/mission2lua) must write the
 same text, so this script writes them into pse/build/mission2lua/m2l_runtime.inc (committed; no game code in it).

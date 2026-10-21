@@ -1,4 +1,4 @@
-// External plugin DLLs (docs/sdk/DESIGN.md 4, reference docs/sdk/reference/plugins.md).
+// External plugin DLLs (docs/internal/DESIGN.md 4, reference docs/sdk/reference/plugins.md).
 //
 // LoadPlugins(dir) in four steps:
 //   1. every <dir>\*.pse manifest is parsed; the .dll of the same name is mapped as an image RESOURCE (no code runs,

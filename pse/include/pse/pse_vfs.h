@@ -1,7 +1,7 @@
 /*
  * Pivotal Script Extender (PSE) - pse.vfs (version 1): game files by name, from any provider.
  *
- * Reference: docs/sdk/reference/vfs.md. Design: docs/sdk/DESIGN.md §5.9, §12. Changes: docs/sdk/API_CHANGELOG.md.
+ * Reference: docs/sdk/reference/vfs.md. Design: docs/internal/DESIGN.md §5.9, §12. Changes: docs/sdk/API_CHANGELOG.md.
  * Same ABI rules as pse_api.h (plain C, 32-bit x86, __cdecl, UTF-8, each side frees its own memory - except ReadAlloc,
  * whose buffer the plugin gives back with Free).
  *

@@ -166,10 +166,7 @@ const std::set<uint32_t>& CharacterArchive() {   // names in chardata.dat (archi
     static bool read = false;
     if (read) return hashes;
     read = true;
-    char exe[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    std::string path = exe;
-    path = path.substr(0, path.find_last_of("\\/") + 1) + "chardata.dat";
+    const std::string path = features::GameFile("chardata.dat");   // (or PSE\Originals)
     HANDLE f = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (f == INVALID_HANDLE_VALUE) return hashes;
     std::vector<uint32_t> index(0x8000 / 4);

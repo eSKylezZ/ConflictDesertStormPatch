@@ -7,6 +7,14 @@ changes are in the repo's `CHANGELOG.md`.
 
 First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still change until SDK 1.0.
 
+- 2026-10-21 – **record limits**: schema `max_len` (text / link columns) and `max_rows` (tables); mods' record edits past them are refused with `[fail]` report lines (C++ `pse/records/forms` = ModKit `forms.py`), and the unit / vehicle table checks now also run for tables only record edits changed ([data-files.md](data-files.md#changing-records-from-a-mod)).
+- 2026-10-20 – **PSE data files + records** (not a plugin interface yet): `pse/records/data.h` reader / canonical writer, `pse_build data canon|check`, records schema `pse/records/ds1/schema.lua` (19 tables, `ds1:<type>/<key>` IDs), [data-files.md](data-files.md).
+- 2026-10-20 – **mission replacements** ([reference/mission-replacement.md](reference/mission-replacement.md)).
+  `PSE_API_VERSION` stays 0; no interface changed. New mod format: `Mods\<Mod>\<Stem>.lua` with `--@replaces
+  <Stem>.dll` in its header runs (in the translated-mission host: `x86rt`, `game.log`, plugin namespaces) instead of
+  that mission DLL, whatever the MISSIONS FROM LUA setting; a mod's own DLL still wins, a failing script falls back to
+  the DLL. ModKit: readable missions wrap every named script API slot; example `examples/training_restored`.
+
 - 2026-10-19 – **phase 2 layout** ([layout.md](layout.md)). No public interface changed (`PSE_API_VERSION` stays 0);
   plugin DLLs built against API 0 load as before. What changed around them:
   - the loader runs in `PSE\pse_loader.dll`, started by the shim `dinput8.dll` at the exe's entry point; the game is

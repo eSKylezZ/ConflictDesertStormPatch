@@ -1,4 +1,4 @@
-"""Live: the PSE asset store + pse.vfs (src/features/assetstore.cpp, docs/sdk/asset-store.md).
+"""Live: the PSE asset store + pse.vfs (src/features/assetstore.cpp, docs/internal/asset-store.md).
 
 Starts its OWN game (dev values are read at start-up, so it can't share the session game):
   Dev\\PseStore = 1 (store first + global fallback), Dev\\PseNoBorrow = 1 (mods.cpp copies nothing from other levels),

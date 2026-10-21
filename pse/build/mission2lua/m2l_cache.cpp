@@ -1,5 +1,5 @@
 // mission2lua (C++ port): the missions cache - <game>\PSE\Cache\missions\<stem>.lua + <stem>.stamp
-// (docs/sdk/asset-store.md "Missions cache", DESIGN.md §12).
+// (docs/internal/asset-store.md "Missions cache", DESIGN.md §12).
 #include <windows.h>
 #include <shlobj.h>
 
@@ -69,18 +69,33 @@ bool ReadFileBytes(const std::wstring& path, std::vector<uint8_t>* out) {
 
 std::vector<std::wstring> MissionDlls(const std::wstring& gameDir) {
     std::vector<std::wstring> out;
+    // the game folder, then <game>\PSE\Originals (pse_build OriginalsDir: DLLs moved there once processed); a name in
+    // both counts once - the game folder's copy (sorted first below, then unique by file name)
+    for (const std::wstring& dir : {gameDir, gameDir + L"\\PSE\\Originals"})
     for (const wchar_t* pat : {L"Mission*.dll", L"Training*.dll"}) {
         WIN32_FIND_DATAW fd;
-        HANDLE h = FindFirstFileW((gameDir + L"\\" + pat).c_str(), &fd);
+        HANDLE h = FindFirstFileW((dir + L"\\" + pat).c_str(), &fd);
         if (h == INVALID_HANDLE_VALUE) continue;
         do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) out.push_back(gameDir + L"\\" + fd.cFileName);
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) out.push_back(dir + L"\\" + fd.cFileName);
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
+    {   // one entry per file name, the game folder's first
+        auto fileName = [](const std::wstring& p) { return p.substr(p.find_last_of(L"\\/") + 1); };
+        std::vector<std::wstring> unique;
+        for (const std::wstring& p : out) {
+            bool dup = false;
+            for (const std::wstring& u : unique) dup |= _wcsicmp(fileName(u).c_str(), fileName(p).c_str()) == 0;
+            if (!dup) unique.push_back(p);
+        }
+        out.swap(unique);
+    }
     // Python: sorted by os.path.normcase (lower-case full path)
-    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) {
-        return _wcsicmp(a.c_str(), b.c_str()) < 0;
+    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) {   // by file name
+        const wchar_t* x = a.c_str() + a.find_last_of(L"\\/") + 1;
+        const wchar_t* y = b.c_str() + b.find_last_of(L"\\/") + 1;
+        return _wcsicmp(x, y) < 0;
     });
     out.erase(std::unique(out.begin(), out.end(),
                           [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; }),

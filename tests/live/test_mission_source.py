@@ -1,5 +1,5 @@
 """Live: a mission DLL run from its C++-generated Lua (Dev\\MissionSource = lua, src/features/missionsource.cpp,
-pse/build/mission2lua; docs/sdk/mission-translation.md).
+pse/build/mission2lua; docs/internal/mission-translation.md).
 
 Two games, the same script each (own games - dev values are read at start-up): the main menu, then the console's
 `level Mission1.dll`, Space through PLEASE PRESS ANY KEY, 60 s of play (the intro film plays, SkipCutscenes 0), under
