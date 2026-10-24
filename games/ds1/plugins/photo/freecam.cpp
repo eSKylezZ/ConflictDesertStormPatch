@@ -21,11 +21,11 @@
 // reachable through the portal graph (zone data +0x20C: portal list +0x1C, next +4, zone behind +0x21C) plus the
 // world list's zone roots ([world+0x1A48], next +0xB0, FUN_004ce0a0) - collected per flight, only zones that have an
 // octree (zone data +0; FUN_004d0850 walks it unchecked - a null one crashed at 0x50C359, see CollectZones).
-#include "features.h"
+#include "features/features.h"
 
-#include "../core/log.h"
-#include "../core/patch.h"
-#include "padio.h"
+#include "core/log.h"
+#include "core/patch.h"
+#include "features/padio.h"
 
 #include <windows.h>
 
@@ -181,7 +181,8 @@ bool features::FreeCamPhoto(bool on) {
     Detach(false);
     return true;
 }
-bool features::HudHidden() { return g_flying || CustomiseHidesHud() || ScriptHidesHud() || ViewPeekPass(); }
+// (dsfix.dll's HudHidden adds the loadout screen, Lua hud(false) and the peek window to this)
+bool features::FreeCamFlying() { return g_flying; }
 
 void features::OnFrameFreeCam() {
     if (!features::CheatsEnabled() && !g_photo) return;

@@ -1,0 +1,4 @@
+# Photo mode, photo frames, free camera, the extended CHEATS menu and pause menu items for Conflict: Desert Storm
+# (DesertStormFix).
+name     = dsfix.photo
+requires = dsfix >= 3.3

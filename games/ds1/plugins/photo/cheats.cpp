@@ -24,13 +24,13 @@
 // header (+0x50 flags 1 damage / 2 ammo / 4 AI / 8 enemy level 0, +0x54 trooper level) and restores them on load.
 // We add bit 0x100 (infinite health), name such saves "Cheats <name>" (coop.cpp SaveName) and unlock the menu when a
 // save with cheats is loaded.
-#include "features.h"
+#include "features/features.h"
 
-#include "../core/log.h"
-#include "../core/patch.h"
-#include "../core/settings.h"
-#include "overlay.h"
-#include "../generated/patch_tables.h"
+#include "core/log.h"
+#include "core/patch.h"
+#include "kit/kit.h"
+#include "features/overlay.h"
+#include "generated/patch_tables.h"
 
 #include <windows.h>
 
@@ -185,7 +185,7 @@ void SetRow(int row, bool on) {
 void SaveUnlocked() {
     if (g_registryUnlocked) return;
     g_registryUnlocked = true;
-    settings::WriteDword(false, "CheatsUnlocked", 1);
+    kit::SetInt("CheatsUnlocked", 1);   // dsfix.photo's own key (copied once from DesertStormFix's)
 }
 
 // --- screen -----------------------------------------------------------------------------------------------------------
@@ -481,15 +481,13 @@ void features::ApplyCheats() {
     static bool done = false;
     if (done) return;
     done = true;
-    if (!settings::Get().featCheats) {
+    if (!kit::Services()->DsfixSetting("FeatCheats")) {   // DesertStormFix's setting (restart)
         dslog::Write("[off]  Cheats: extended CHEATS menu, free camera, DEVELOPER page off - the game's own cheats");
         if (!patch::HookCall(kFrameCall, reinterpret_cast<const void*>(&FrameLite), kFrameThunk))
             dslog::Write("[fail] Photo mode: frame hook at 0x%08X not recognised", kFrameCall);
         return;
     }
-    uint32_t v = 0;
-    if (settings::ReadDword(false, "CheatsUnlocked", v) && v)
-        g_unlocked = 1, g_registryUnlocked = true;
+    if (kit::GetInt("CheatsUnlocked")) g_unlocked = 1, g_registryUnlocked = true;
 
     for (uint32_t site : kFlagOperands) {
         const uint32_t game = kGameFlag;

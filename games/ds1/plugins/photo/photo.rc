@@ -1,0 +1,2 @@
+// the photo frames' atlas (scripts/gen_photo_frames.py), read by photoframes.cpp through overlay::LoadTexture(303)
+303 RCDATA "../../src/generated/photo_frames.png"

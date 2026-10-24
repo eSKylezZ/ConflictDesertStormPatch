@@ -173,7 +173,7 @@ wasn't given, so both share the key.
 | --- | --- | --- | --- |
 | MigratedFromEnhancements | DWORD | settings.cpp | 1 = the old key was copied |
 | StartPending | DWORD | launcher.cpp | 1 from launcher OK until 300 frames ran (start failed → launcher shown) |
-| CheatsUnlocked | DWORD | cheats.cpp | 1 = CHEATS menu unlocked |
+| CheatsUnlocked | DWORD | **moved 2026-10-24** to plugin `dsfix.photo`'s own key (hidden int, copied once from here) | 1 = CHEATS menu unlocked |
 | CoopProgress | DWORD | coop.cpp | bit per finished co-op mission |
 | KeyProfile1 … 4 | binary 960 B | controls.cpp | int32[80][3] keyboard / mouse bindings (pad entries −1) |
 | PadPreset1 … 4 | DWORD | padlayout.cpp | 0 Default, 1 Classic, 2 Southpaw, 3 Custom |

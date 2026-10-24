@@ -41,7 +41,7 @@ ALWAYS = [
     (0x456040, "function", "dsfix.textfit"),       # choice row draw (was a hand trampoline)
     (0x5230D0, "function", "dsfix.shadows"),       # object shadow volume builder
     (0x5D97D0, "pointer", "dsfix.menus"),          # YES / NO screen enter vtable slot
-    (0x5D9214, "pointer", "dsfix.pausemenu"),      # pause menu set-up vtable slot
+    (0x5D9214, "pointer", "dsfix.photo"),          # pause menu set-up vtable slot (dsfix.photo since 2026-10-24)
     (0x486FDE, "bytes", "dsfix.overview"),         # call@ MovieEnd message 0x12
 ]
 
@@ -144,8 +144,7 @@ def test_split_screen_two_players_mission(c):
     old = _set_split(2)
     try:
         t0 = time.time()
-        c.console("level Mission1.dll")
-        p = c.wait_for_play(timeout=180)
+        p = c.start_level("Mission1.dll")   # (waits for the load to begin first: we may be in Mission 1 already)
         # The briefing / loadout screen (customise.cpp) shows one full view while it is up: close it (Enter).
         renderer = c.read(0x63C924)
         views = 0

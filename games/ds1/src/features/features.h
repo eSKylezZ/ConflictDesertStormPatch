@@ -22,6 +22,8 @@ enum CoopAction : uint32_t { kCoopJoin = 1, kCoopLeave = 2, kCoopStart = 4, kCoo
 // services.cpp).
 void RegisterServices();                 // services.cpp: publishes dsfix.services (before the external plugins load)
 void RegisterOverlayInterface();         // overlay_iface.cpp: publishes dsfix.overlay (overlay.h for the plugin DLLs)
+void RegisterHostInterface();            // host_iface.cpp: publishes dsfix.host (core/dsfix_host.spec)
+bool PluginsLoaded();                    // services.cpp: PSE_MSG_POST_LOAD seen (every plugin is loaded)
 const char* ServiceText(uint32_t hash);  // the plugins' text providers (the Lookup hook asks them first), or nullptr
 void* ServiceScreen(uint32_t state);     // the plugins' front-end screens (coop.cpp's state -> screen hook), or nullptr
 void ServiceSettingsChanged();           // the plugins' settings listeners (OnSettingsChanged: the launcher saved)
@@ -564,7 +566,10 @@ void PhotoAfterPresent(void* device);
 bool CustomisePending();                // customise.cpp: the loadout screen is still to open in this level
 bool ScriptHidesHud();                  // scripthost.cpp: Lua game.hud(false)
 void SetScriptHud(bool on);             // the same switch from C++ (dev.hud); reset at every level start
-bool HudHidden();                       // customise screen or free camera: the HUD wrappers draw nothing                  // freecam.cpp: F6 / L3 + R3 in a mission once cheats are unlocked
+bool FreeCamFlying();                   // dsfix.photo (freecam.cpp): player 1 is flying our free camera
+// services.cpp: the loadout screen, the free camera (freecam.cpp: F6 / L3 + R3 once cheats are unlocked), Lua
+// hud(false) or the peek window is up - the HUD wrappers draw nothing
+bool HudHidden();
 const char* CheatsText(uint32_t hash);  // the cheat rows' own texts (Lookup hook)
 void OnFrameHotplug();
 void SetPadsBackground(bool on);   // hotplug.cpp: joysticks keep working without focus (online sessions)

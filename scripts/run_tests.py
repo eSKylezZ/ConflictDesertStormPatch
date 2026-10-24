@@ -63,6 +63,10 @@ def main():
         return 104
 
     failures = run([exe] + ([a.filter] if a.filter else []), cwd=ROOT)
+    # generated cross-DLL tables (games/ds1/scripts/gen_host_calls.py) must match their specs
+    if run([sys.executable, os.path.join(ROOT, "games", "ds1", "scripts", "gen_host_calls.py"), "--check"], cwd=ROOT):
+        print("gen_host_calls: generated files are stale - run games/ds1/scripts/gen_host_calls.py")
+        failures += 1
 
     if a.live:
         live = os.path.join(ROOT, "tests", "live")

@@ -150,6 +150,8 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/multikbm.cpp
     games/ds1/src/features/services.cpp
     games/ds1/src/features/overlay_iface.cpp
+    games/ds1/src/features/host_iface.cpp
+    games/ds1/src/features/plugin_links.cpp
     games/ds1/src/features/skinapply.cpp
     games/ds1/src/features/loadout.cpp
     games/ds1/src/features/diagnostics.cpp
@@ -174,17 +176,12 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/weaponicons.cpp
     games/ds1/src/features/overview.cpp
     games/ds1/src/features/versus.cpp
-    games/ds1/src/features/cheats.cpp
-    games/ds1/src/features/freecam.cpp
     games/ds1/src/features/modsmenu.cpp
     games/ds1/src/features/fixmenu.cpp
     games/ds1/src/features/videomenu.cpp
     games/ds1/src/features/pluginsmenu.cpp
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
-    games/ds1/src/features/pausemenu.cpp
-    games/ds1/src/features/photomode.cpp
-    games/ds1/src/features/photoframes.cpp
     games/ds1/src/features/online.cpp
     games/ds1/src/features/determinism.cpp
     games/ds1/src/features/lockstep.cpp
@@ -242,7 +239,12 @@ target_compile_options(dsfix_kit PRIVATE /W4 /permissive- /utf-8 $<$<NOT:$<BOOL:
 function(dsfix_add_plugin target folder description)
     file(GLOB manifest "${CMAKE_SOURCE_DIR}/games/ds1/plugins/${folder}/*.pse")
     file(GLOB sources "${CMAKE_SOURCE_DIR}/games/ds1/plugins/${folder}/*.cpp")
-    pse_add_plugin(${target} SOURCES ${sources} ${ARGN} MANIFEST ${manifest})
+    # the kit's host client (dsfix.dll's functions through dsfix.host) is compiled per plugin: its own_functions.h
+    # (plugins/<folder>/generated, from its .spec) leaves out what the plugin implements itself
+    pse_add_plugin(${target} SOURCES ${sources} ${CMAKE_SOURCE_DIR}/games/ds1/plugins/kit/host_client.cpp ${ARGN}
+                   MANIFEST ${manifest})
+    target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/games/ds1/plugins/${folder}/generated)
+    target_compile_options(${target} PRIVATE /FS)   # host_client.cpp: compiled in many targets at once
     target_link_libraries(${target} PRIVATE dsfix_kit)
     target_include_directories(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated)
     target_link_options(${target} PRIVATE /SAFESEH:NO)
@@ -278,6 +280,10 @@ dsfix_add_plugin(dsfix_fontsharp fontsharp "Sharper text")
 dsfix_add_plugin(dsfix_developer developer "Developer page + debug keys")
 dsfix_add_plugin(dsfix_cinematics cinematics "Intro / cutscene skip")
 dsfix_add_plugin(dsfix_display display "Display mode")
+dsfix_add_plugin(dsfix_photo photo "Photo mode, free camera, cheats menu" games/ds1/plugins/photo/photo.rc)
+set_source_files_properties(games/ds1/plugins/photo/photo.rc PROPERTIES OBJECT_DEPENDS
+                            ${CMAKE_SOURCE_DIR}/games/ds1/src/generated/photo_frames.png)
+target_link_libraries(dsfix_photo PRIVATE shlwapi)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

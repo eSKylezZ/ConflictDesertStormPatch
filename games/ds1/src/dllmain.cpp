@@ -51,12 +51,9 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.graphics", "MSAA / anisotropy / V-Sync", kClient, &features::ApplyGraphics},
     {"dsfix.coop", "Co-op set-up + saves", kSim, &features::ApplyCoop},
     {"dsfix.versus", "Versus", kSim, &features::ApplyVersus},
-    {"dsfix.cheats", "Cheats menu", kSim, &features::ApplyCheats},
     // before WinMain registers the debug bindings (0x4108F9)
-    {"dsfix.freecam", "Free camera", kClient, &features::ApplyFreeCam},
     {"dsfix.modsmenu", "MODS menu", kClient, &features::ApplyModsMenu},
     {"dsfix.fixmenu", "DESERTSTORMFIX menu", kClient, &features::ApplyFixMenu},
-    {"dsfix.pausemenu", "Pause menu items", kClient, &features::ApplyPauseMenu},
     {"dsfix.barcolour", "Menu bar / HUD colour", kClient, &features::ApplyBarColour},
     {"dsfix.controls", "Controls menu", kClient, &features::ApplyControls},
     {"dsfix.multikbm", "Several keyboards and mice", kClient, &features::ApplyMultiKbm},
@@ -126,6 +123,7 @@ bool Init(const PSELoadInterface* pse) {
     // them query dsfix.services in their Load.
     features::RegisterServices();
     features::RegisterOverlayInterface();
+    features::RegisterHostInterface();
     return true;
 }
 

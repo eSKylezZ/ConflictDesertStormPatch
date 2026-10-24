@@ -185,7 +185,10 @@ const DsfixServicesV1 kServices = {sizeof(DsfixServicesV1), 1,
                                    &MissionCutsceneSkip,    &DevBackground,
                                    &QuickStartLevel};
 
+bool g_pluginsLoaded = false;
+
 void PSE_CALL OnLoaderMessage(const PSEMessage* msg, void*) {
+    if (msg && msg->type == PSE_MSG_POST_LOAD) g_pluginsLoaded = true;
     if (msg && msg->type == PSE_MSG_EXIT) {   // the plugins are unloaded after this message
         g_text.clear();
         g_screens.clear();
@@ -215,6 +218,14 @@ void* features::ServiceScreen(uint32_t state) {
     for (const ScreenProvider& p : g_screens)
         if (void* s = p.fn(state)) return s;
     return nullptr;
+}
+
+bool features::PluginsLoaded() { return g_pluginsLoaded; }
+
+// The HUD wrappers (splitscreen.cpp), prompts and nameplates draw nothing while one of these is up.
+bool features::HudHidden() {
+    return features::FreeCamFlying() || features::CustomiseHidesHud() || features::ScriptHidesHud() ||
+           features::ViewPeekPass();
 }
 
 const char* features::ServiceText(uint32_t hash) {
