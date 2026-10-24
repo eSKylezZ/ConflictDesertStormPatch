@@ -21,7 +21,7 @@ option(DS2_PSE_PLUGIN "Also build ds2fix.dll, DesertStorm2Fix as a PSE host plug
 
 configure_file(src/version.rc.in ${CMAKE_BINARY_DIR}/version.rc @ONLY)
 
-# Features ported from DesertStormFix (games/ds1-reference/ds1-features) are added here once their addresses are mapped
+# Features ported from DesertStormFix (games/ds1/src/features, games/ds1/plugins) are added here once their addresses are mapped
 # (PORTING.md).
 add_library(dinput8 SHARED
     src/dllmain.cpp

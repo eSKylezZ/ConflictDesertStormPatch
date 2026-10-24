@@ -1,7 +1,7 @@
 # Porting DesertStormFix features to Conflict: Vietnam
 
-VietnamFix starts from DesertStormFix's plugin frame. The DS1 feature sources are kept unbuilt in
-[games/ds1-reference/ds1-features/](../ds1-reference/ds1-features/) (DS1 byte patches: [games/ds1-reference/patch_defs.py](../ds1-reference/patch_defs.py)).
+VietnamFix starts from DesertStormFix's plugin frame. The DS1 feature sources to port from are DesertStormFix's own:
+[games/ds1/src/features/](../ds1/src/features/) and [games/ds1/plugins/](../ds1/plugins/) (DS1 byte patches: [games/ds1/scripts/patch_defs.py](../ds1/scripts/patch_defs.py)).
 Each feature moves into `src/features/` and `CMakeLists.txt` once its DS2 addresses are mapped and checked.
 
 ## What carried over as-is
@@ -58,4 +58,4 @@ Direct3D 8 and needs rework for DS2's Direct3D 9 renderer.
 ## Verify each port
 
 - Patch sites verified byte-for-byte by `patch::ApplyGroup` (a different exe skips the feature).
-- Launch `H:\SCI Games\Conflict Vietnam\CDS II.exe`, read `VietnamFix.log`, kill the process afterwards.
+- Launch the game's exe in the install, read `VietnamFix.log`, kill the process afterwards.

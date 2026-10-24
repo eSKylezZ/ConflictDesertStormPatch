@@ -26,8 +26,8 @@ One repository for the Pivotal Games "Conflict" series patches. They share the P
 | Conflict: Global Storm (`cgs`) | GlobalStormFix | [games/cgs](games/cgs/README.md) | widescreen, high-res fonts, menus kept 4:3 on wide screens |
 
 Each `games/<id>` is its own CMake project (`cmake -S games/<id> --preset x86`), or build it from the repo root with
-the presets `ds2`, `cv`, `cgs` (+ `-dist`; `ds2-pse` = `ds2fix.dll`). `games/ds1-reference` = the DesertStormFix
-feature sources the ports started from.
+the presets `ds2`, `cv`, `cgs` (+ `-dist`; `ds2-pse` = `ds2fix.dll`). The ports start from DesertStormFix's own
+sources in `games/ds1`.
 
 ## Install
 Copy `dinput8.dll` into the game folder (next to `DesertStorm.exe`). The exe itself is not modified;

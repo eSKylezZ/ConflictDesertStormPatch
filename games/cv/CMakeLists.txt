@@ -16,7 +16,7 @@ option(DS_DIST "Build the release package (no diagnostics)" OFF)
 
 configure_file(src/version.rc.in ${CMAKE_BINARY_DIR}/version.rc @ONLY)
 
-# Features ported from DesertStormFix (games/ds1-reference/ds1-features) are added here once their addresses are mapped
+# Features ported from DesertStormFix (games/ds1/src/features, games/ds1/plugins) are added here once their addresses are mapped
 # (PORTING.md).
 add_library(dinput8 SHARED
     src/dllmain.cpp

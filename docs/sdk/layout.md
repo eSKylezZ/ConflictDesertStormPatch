@@ -191,7 +191,6 @@ forks of DesertStormFix's template and moved in without history.
     cv\                   VietnamFix (dinput8.dll)
     cgs\                  GlobalStormFix (dinput8.dll)
     tge\                  GreatEscapeFix (PSE only: tgefix.dll host plugin + the shim / loader / pse_tge tree)
-    ds1-reference\        DesertStormFix feature sources the ports started from (not built; one shared copy)
   scripts\                PSE scripts: gen_ids.py (every game's ids), the records / translator gates, run_tests.py
   assets\, third_party\   shared by every game (Kenney input prompts; Lua 5.4.7, Zydis)
   docs\sdk\               this documentation (local)

@@ -70,8 +70,19 @@ std::wstring FindGame() {
             }
         }
     }
-    for (const wchar_t* gog : {L"H:\\GOG\\Games\\Conflict - Desert Storm", L"C:\\GOG Games\\Conflict - Desert Storm"})
-        cands.push_back(gog);
+    // GOG Galaxy / the GOG installer: one key per game under GOG.com\Games with its folder in "path"
+    HKEY games = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\GOG.com\\Games", 0, KEY_READ | KEY_WOW64_32KEY, &games) ==
+        ERROR_SUCCESS) {
+        wchar_t id[64];
+        for (DWORD i = 0, n = 64; RegEnumKeyExW(games, i, id, &n, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+             ++i, n = 64) {
+            std::wstring path = RegString(HKEY_LOCAL_MACHINE, (L"SOFTWARE\\GOG.com\\Games\\" + std::wstring(id)).c_str(),
+                                          L"path", KEY_WOW64_32KEY);
+            if (!path.empty()) cands.push_back(path);
+        }
+        RegCloseKey(games);
+    }
     for (const std::wstring& c : cands)
         if (HasArchives(c)) return c;
     return {};

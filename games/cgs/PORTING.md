@@ -1,7 +1,7 @@
 # Porting DesertStormFix / DesertStorm2Fix features to Conflict: Global Storm
 
-GlobalStormFix started from VietnamFix's frame (itself from DS2). DS1 feature sources are kept unbuilt in
-[games/ds1-reference/ds1-features/](../ds1-reference/ds1-features/). GT port map with addresses from static analysis:
+GlobalStormFix started from VietnamFix's frame (itself from DS2). The DS1 feature sources to port from are DesertStormFix's own:
+[games/ds1/src/features/](../ds1/src/features/) and [games/ds1/plugins/](../ds1/plugins/). GT port map with addresses from static analysis:
 the Global Terror analysis notes (`GlobalTerror.md`, not in the repo) (section 5). SecuROM's VM runs ~1080 of
 the game's functions, so hooks go through import slots / D3D / DirectInput objects where the code is virtualised.
 
@@ -29,8 +29,8 @@ presence, launcher settings column (dialogs 110 / 111 via the DialogBoxParamA im
 
 # Porting DesertStormFix features to Conflict: Vietnam
 
-VietnamFix starts from DesertStormFix's plugin frame. The DS1 feature sources are kept unbuilt in
-[games/ds1-reference/ds1-features/](../ds1-reference/ds1-features/) (DS1 byte patches: [games/ds1-reference/patch_defs.py](../ds1-reference/patch_defs.py)).
+VietnamFix starts from DesertStormFix's plugin frame. The DS1 feature sources to port from are DesertStormFix's own:
+[games/ds1/src/features/](../ds1/src/features/) and [games/ds1/plugins/](../ds1/plugins/) (DS1 byte patches: [games/ds1/scripts/patch_defs.py](../ds1/scripts/patch_defs.py)).
 Each feature moves into `src/features/` and `CMakeLists.txt` once its DS2 addresses are mapped and checked.
 
 ## What carried over as-is
@@ -87,4 +87,4 @@ Direct3D 8 and needs rework for DS2's Direct3D 9 renderer.
 ## Verify each port
 
 - Patch sites verified byte-for-byte by `patch::ApplyGroup` (a different exe skips the feature).
-- Launch `H:\SCI Games\Conflict Vietnam\CDS II.exe`, read `VietnamFix.log`, kill the process afterwards.
+- Launch the game's exe in the install, read `VietnamFix.log`, kill the process afterwards.

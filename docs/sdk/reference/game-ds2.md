@@ -21,8 +21,7 @@ Header: [`pse/include/pse/pse_game_ds2.h`](../../../pse/include/pse/pse_game_ds2
 | Log | the loader's `PSE\Logs\loader.log` (every loader / plugin line) while no host plugin takes the lines |
 | Host plugin | the layer allows `ds2fix` (DesertStorm2Fix as a host plugin = the DS2 product, [below](#desertstorm2fix-as-a-host-plugin)) |
 
-Verified 2026-10-19 – pse_tests (9 DS2 tests, below) and live runs on the user's install (`H:\SCI Games\Conflict Desert
-Storm II`, DesertStorm2Fix's `dinput8.dll` backed up and put back after each run):
+Verified 2026-10-19 – pse_tests (9 DS2 tests, below) and live runs on a retail install (disc-free exe, DesertStorm2Fix's `dinput8.dll` backed up and put back after each run):
 
 - `-d Mission01.dll` boot (test harness, off-screen): the three example plugins load (`hello_client: example.hello says
   2 + 3 = 5`), `DEVICE_CREATED`, `FRAME`, `NEW_GAME mission01.dll`, `LEVEL_LOAD_BEGIN / END mission01.dll`,

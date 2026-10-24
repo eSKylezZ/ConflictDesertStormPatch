@@ -29,7 +29,7 @@ Copy `CMakeUserPresets.example.json` to `CMakeUserPresets.json` and set `DS_GAME
 - `src/dllmain.cpp` – proxy exports + entry-point hook, `Init()`.
 - `src/core/` – byte patching, registry settings (`HKLM\SOFTWARE\SCi Games\CDS II\Enhancements`), log, pad reading.
 - `src/features/` – DS2 features (so far: exe identification).
-- `../ds1-reference/ds1-features/` – DesertStormFix's features (DS1 addresses, snapshot shared by all games), the source to port from. Not built.
+- `../ds1/src/features/`, `../ds1/plugins/` – DesertStormFix's features (DS1 addresses), the source to port from.
 - `scripts/`, `src/generated/` – input prompt icons and their generators (sources: the repo root's `assets/`).
 
 ## License

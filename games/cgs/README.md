@@ -29,7 +29,7 @@ Copy `CMakeUserPresets.example.json` to `CMakeUserPresets.json` and set `DS_GAME
 - `src/dllmain.cpp` – proxy exports + entry-point hook, `Init()`.
 - `src/core/` – byte patching, registry settings (`HKLM\SOFTWARE\Pivotal\Conflict Global\Enhancements`), log, pad reading.
 - `src/features/` – Global Storm features (exe identification, widescreen modes, fonts / menu aspect, D3D9 hooks, frame hook, dev background test mode).
-- `../ds1-reference/ds1-features/` – DesertStormFix's features (DS1 addresses, snapshot shared by all games), the source to port from. Not built.
+- `../ds1/src/features/`, `../ds1/plugins/` – DesertStormFix's features (DS1 addresses), the source to port from.
 - `scripts/`, `src/generated/` – input prompt icons and their generators (sources: the repo root's `assets/`).
 
 ## License
