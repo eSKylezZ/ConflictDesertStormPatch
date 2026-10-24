@@ -16,7 +16,8 @@ target_link_libraries(pse_core PUBLIC advapi32 bcrypt)   # bcrypt: SHA-256 (comp
 # pse_hostlink: what a host plugin / game layer links INSTEAD of pse_core (never both). hostlink.cpp forwards the
 # stateful loader.h functions through pse.host; the pure loader files are compiled in as they are.
 add_library(pse_hostlink STATIC ${CMAKE_CURRENT_SOURCE_DIR}/hostlink/hostlink.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/loader/compat.cpp ${CMAKE_CURRENT_SOURCE_DIR}/loader/x86len.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/loader/compat.cpp ${CMAKE_CURRENT_SOURCE_DIR}/loader/compat_local.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/loader/x86len.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/settings_migrate.cpp ${CMAKE_CURRENT_SOURCE_DIR}/loader/util.cpp)
 target_include_directories(pse_hostlink PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/loader
     ${CMAKE_CURRENT_SOURCE_DIR}/hostlink)

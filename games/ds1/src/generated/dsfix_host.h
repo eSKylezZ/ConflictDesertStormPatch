@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0xC3FCDF88u
+#define DSFIX_HOST_LAYOUT 0x7AE5C6BEu
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -39,4 +39,43 @@ typedef struct DsfixHostV1 {
     const char* (PSE_CALL* PhotoWeaponChoices)(void);
     int (PSE_CALL* RestartLevel)(void);
     int (PSE_CALL* LocalPlayer)(void);
+    const settings::Values* (PSE_CALL* DsfixSettingsValues)(void);
+    int (PSE_CALL* ReadString)(const char*, char*);
+    int (PSE_CALL* WriteString)(const char*, const char*);
+    int (PSE_CALL* PluginBool)(const char*, const char*, int);
+    void (PSE_CALL* AxisParts)(uint8_t*, int, float*, int*, int*, float*);
+    float (PSE_CALL* LookScale)(int);
+    void (PSE_CALL* SplitHudReset)(void);
+    void (PSE_CALL* SplitHudView)(int, float, float, float, float);
+    int (PSE_CALL* SplitScreenPlayers)(void);
+    void (PSE_CALL* BeginOnlineSession)(int, int);
+    uint32_t (PSE_CALL* CoopDeviceActions)(int, int32_t*, char*);
+    int (PSE_CALL* CoopPlayers)(void);
+    void (PSE_CALL* SetPadsBackground)(int);
+    int (PSE_CALL* UiCaptureKeys)(int);
+    int (PSE_CALL* UiNextKey)(int*, uint32_t*);
+    int (PSE_CALL* DevBackground)(void);
+    void (PSE_CALL* ConsoleStartLevel)(const char*);
+    int (PSE_CALL* LastFrontEndResult)(void);
+    void (PSE_CALL* EnsureDormancyHook)(void);
+    void (PSE_CALL* ScriptReseed)(uint32_t);
+    uint32_t (PSE_CALL* RenderCount)(void);
+    int (PSE_CALL* OverviewSkipPending)(void);
+    int (PSE_CALL* LoadoutCommand)(int, const char*);
+    int (PSE_CALL* ModsFolderEnabled)(void);
+    int (PSE_CALL* ReloadMods)(void);
+    const char* (PSE_CALL* LoadedMods)(void);
+    const char* (PSE_CALL* LoadedPorts)(void);
+    const char* (PSE_CALL* CompatLocalPluginsText)(void);
+    int (PSE_CALL* CoopVoiceChoice)(int);
+    int (PSE_CALL* VoicesInstalled)(void);
+    int (PSE_CALL* TimeOfDayInstalled)(void);
+    int (PSE_CALL* TimeOfDay)(void);
+    int (PSE_CALL* TimeFlow)(void);
+    const char* (PSE_CALL* TimeOfDayLabel)(int);
+    const char* (PSE_CALL* TimeFlowLabel)(int);
+    const ::DsfixWeatherV1* (PSE_CALL* WeatherPlugin)(void);
+    uint32_t (PSE_CALL* CheatFlags)(void);
+    void (PSE_CALL* SetCheatFlags)(uint32_t);
+    int (PSE_CALL* PhotoModeOpen)(void);
 } DsfixHostV1;

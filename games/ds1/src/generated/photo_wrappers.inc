@@ -24,7 +24,9 @@ uint32_t features::CheatFlags() {
 }
 void features::SetCheatFlags(uint32_t flags) {
     const auto* t = Table();
-    if (t) t->SetCheatFlags(flags);
+    if (t) {
+        t->SetCheatFlags(flags);
+    }
 }
 bool features::CheatsActive() {
     const auto* t = Table();
@@ -44,11 +46,15 @@ bool features::FreeCamFlying() {
 }
 void features::PhotoBeforePresent(void* device) {
     const auto* t = Table();
-    if (t) t->PhotoBeforePresent(device);
+    if (t) {
+        t->PhotoBeforePresent(device);
+    }
 }
 void features::PhotoAfterPresent(void* device) {
     const auto* t = Table();
-    if (t) t->PhotoAfterPresent(device);
+    if (t) {
+        t->PhotoAfterPresent(device);
+    }
 }
 bool features::PhotoAnimate(const void* instance, float& dt) {
     const auto* t = Table();
@@ -68,5 +74,7 @@ const char* features::PhotoText(uint32_t hash) {
 }
 void features::ReloadPhotoFrames() {
     const auto* t = Table();
-    if (t) t->ReloadPhotoFrames();
+    if (t) {
+        t->ReloadPhotoFrames();
+    }
 }

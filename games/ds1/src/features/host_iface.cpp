@@ -9,10 +9,26 @@
 #include "core/log.h"
 #include "core/net.h"
 #include "core/pse_host.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/padio.h"
 #include "generated/dsfix_host.h"
 #include "loader.h"
+
+// Not plain C as they are, so through these (dsfix_host.spec): DesertStormFix's settings struct (plain data) and the
+// online check's list of loaded plugins (lines "name<TAB>version<TAB>flags<TAB>hash"; dsfix.online parses them back).
+const settings::Values* features::DsfixSettingsValues() { return &settings::Get(); }
+
+std::string features::CompatLocalPluginsText() {
+    std::string out;
+    for (const pse::compat::PluginEntry& e : pse::compat::LocalPlugins()) {
+        char num[32];
+        snprintf(num, sizeof num, "\t%u\t%u\t", e.version, e.flags);
+        if (!out.empty()) out += '\n';
+        out += e.name + num + e.hash;
+    }
+    return out;
+}
 
 #include "generated/dsfix_host_impl.inc"
 

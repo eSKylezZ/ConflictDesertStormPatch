@@ -69,54 +69,99 @@ def split_params(s):
     return out
 
 
+STRING_OUT = 1024   # buffer size for a std::string& out parameter
+
+
 class Type:
-    """One parameter / return type and how it crosses."""
+    """One parameter / return type and how it crosses: its C type, and per side the C expression for the call plus
+    statements before / after it (out parameters copied back)."""
 
     def __init__(self, text, pods, enums, is_return):
         t = " ".join(text.replace("*", " * ").replace("&", " & ").split())
+        t = re.sub(r"\s*([<>])\s*", r"\1", t)
         self.cpp = t.replace(" *", "*").replace(" &", "&")
-        self.kind = None
         base = t.replace("const ", "").replace("*", "").replace("&", "").strip()
-        if t in ("std::string",) and is_return:
+        self.base = base
+        if t == "std::string" and is_return:
             self.kind, self.c = "string_ret", "const char*"
         elif t == "const std::string &" and not is_return:
             self.kind, self.c = "string_in", "const char*"
-        elif re.sub(r"\s*([<>])\s*", r"\1", t) == "std::vector<std::string>" and is_return:
-            self.kind, self.c, self.cpp = "strings_ret", "const char*", "std::vector<std::string>"
+        elif t == "std::string &" and not is_return:
+            self.kind, self.c = "string_out", "char*"
+        elif t == "std::vector<std::string>" and is_return:
+            self.kind, self.c = "strings_ret", "const char*"
+        elif t in ("const std::vector<std::string> &", "const std::vector<std::string>&") and is_return:
+            self.kind, self.c = "strings_cref", "const char*"
         elif t == "bool":
             self.kind, self.c = "bool", "int"
+        elif t == "bool &" and not is_return:
+            self.kind, self.c = "boolref", "int*"
+        elif base in enums and t.endswith("&") and not t.startswith("const") and not is_return:
+            self.kind, self.c = "enumref", "int32_t*"
         elif t.endswith("&") and not is_return:
             if base not in SCALARS and base not in pods:
                 raise SpecError("reference to '%s' (not a plain type - declare it 'pod' if it is one)" % base)
             self.kind, self.c = "ref", t[:-1].strip().replace(" *", "*") + "*"
-            if base == "bool":
-                raise SpecError("bool& can't cross (write it by hand)")
-        elif base in enums and "*" not in t:
+        elif base in enums and "*" not in t and "&" not in t:
             self.kind, self.c = "enum", "int32_t"
-        elif "*" in t:
+        elif "*" in t and "&" not in t:
             if base not in SCALARS and base not in pods:
                 raise SpecError("pointer to '%s' (not a plain type - declare it 'pod' if it is one)" % base)
             self.kind, self.c = "plain", t.replace(" *", "*")
-        elif base in SCALARS and t == base:
-            self.kind, self.c = "plain", t
-        elif base in pods and t == base:
+        elif (base in SCALARS or base in pods) and t == base:
             self.kind, self.c = "plain", t
         else:
             raise SpecError("type '%s' can't cross as plain C (write this call by hand)" % text)
 
-    def to_c(self, expr):   # host-side value -> C value (thunk returning / client passing)
-        return {"bool": "(%s) ? 1 : 0", "string_in": "(%s).c_str()", "ref": "&(%s)",
-                "enum": "static_cast<int32_t>(%s)"}.get(self.kind, "%s") % expr
+    # client side (C++ value `name` -> C argument): (statements before, argument, statements after)
+    def client_arg(self, name, i):
+        k = self.kind
+        if k == "bool":
+            return [], "(%s) ? 1 : 0" % name, []
+        if k == "string_in":
+            return [], "(%s).c_str()" % name, []
+        if k == "ref":
+            return [], "&(%s)" % name, []
+        if k == "enum":
+            return [], "static_cast<int32_t>(%s)" % name, []
+        if k == "boolref":
+            return ["int b%d = %s ? 1 : 0;" % (i, name)], "&b%d" % i, ["%s = b%d != 0;" % (name, i)]
+        if k == "enumref":
+            return (["int32_t e%d = static_cast<int32_t>(%s);" % (i, name)], "&e%d" % i,
+                    ["%s = static_cast<%s>(e%d);" % (name, self.base, i)])
+        if k == "string_out":
+            return ["char s%d[%d] = {};" % (i, STRING_OUT)], "s%d" % i, ["%s = s%d;" % (name, i)]
+        return [], name, []
 
-    def from_c(self, expr):   # C value -> C++ value (client returning / thunk passing)
+    # thunk side (C argument `a<i>` -> C++ value): (statements before, argument, statements after)
+    def thunk_arg(self, i):
+        a, k = "a%d" % i, self.kind
+        if k == "bool":
+            return [], "%s != 0" % a, []
+        if k == "string_in":
+            return [], "std::string(%s ? %s : \"\")" % (a, a), []
+        if k == "ref":
+            return [], "*%s" % a, []
+        if k == "enum":
+            return [], "static_cast<%s>(%s)" % (self.base, a), []
+        if k == "boolref":
+            return ["bool b%d = %s && *%s != 0;" % (i, a, a)], "b%d" % i, ["if (%s) *%s = b%d ? 1 : 0;" % (a, a, i)]
+        if k == "enumref":
+            return (["%s e%d = static_cast<%s>(%s ? *%s : 0);" % (self.base, i, self.base, a, a)], "e%d" % i,
+                    ["if (%s) *%s = static_cast<int32_t>(e%d);" % (a, a, i)])
+        if k == "string_out":
+            return (["std::string s%d;" % i], "s%d" % i,
+                    ["if (%s) strncpy_s(%s, %d, s%d.c_str(), _TRUNCATE);" % (a, a, STRING_OUT, i)])
+        return [], a, []
+
+    def ret_to_c(self, expr):    # thunk: C++ result -> C
+        return {"bool": "(%s) ? 1 : 0", "enum": "static_cast<int32_t>(%s)"}.get(self.kind, "%s") % expr
+
+    def ret_from_c(self, expr):  # client: C result -> C++
         if self.kind == "bool":
             return "(%s) != 0" % expr
-        if self.kind == "string_in":
-            return "std::string((%s) ? (%s) : \"\")" % (expr, expr)
-        if self.kind == "ref":
-            return "*(%s)" % expr
         if self.kind == "enum":
-            return "static_cast<%s>(%s)" % (self.cpp.replace("const ", ""), expr)
+            return "static_cast<%s>(%s)" % (self.base, expr)
         return expr
 
 
@@ -194,46 +239,74 @@ def header(iface, funcs, layout, guard):
     return s
 
 
+JOIN = ("    static thread_local std::string s;\n    s.clear();\n    for (const std::string& v : r) {\n"
+        "        if (!s.empty()) s += '%s';\n        s += v;\n    }\n" % SEP)
+SPLIT = ("    if (j && *j)\n        for (const char* p = j;; ++p) {\n            const char* e = p;\n"
+         "            while (*e && *e != '%s') ++e;\n            out.emplace_back(p, e);\n            if (!*e) break;\n"
+         "            p = e;\n        }\n" % SEP)
+
+
+def lines(stmts, indent):
+    return "".join("%s%s\n" % (indent, x) for x in stmts)
+
+
 def thunks(funcs, call_target):
     """C thunks: C arguments -> the real C++ function -> C result."""
     out = ""
     for f in funcs:
         args = ", ".join("%s a%d" % (t.c, i) for i, (t, _) in enumerate(f.params)) or "void"
-        call = "%s(%s)" % (call_target(f), ", ".join(t.from_c("a%d" % i) for i, (t, _) in enumerate(f.params)))
+        pre, call_args, post = [], [], []
+        for i, (t, _) in enumerate(f.params):
+            a, b, c = t.thunk_arg(i)
+            pre += a
+            call_args.append(b)
+            post += c
+        call = "%s(%s)" % (call_target(f), ", ".join(call_args))
         out += "%s PSE_CALL t_%s(%s) {\n" % (f.ret.c, f.member, args)
+        out += lines(pre, "    ")
         k = f.ret.kind
         if f.ret.cpp == "void":
-            out += "    %s;\n" % call
+            out += "    %s;\n" % call + lines(post, "    ")
         elif k == "string_ret":
-            out += "    static thread_local std::string s;\n    s = %s;\n    return s.c_str();\n" % call
-        elif k == "strings_ret":
-            out += ("    static thread_local std::string s;\n    s.clear();\n    for (const std::string& v : %s) {\n"
-                    "        if (!s.empty()) s += '%s';\n        s += v;\n    }\n    return s.c_str();\n") % (call, SEP)
+            out += "    static thread_local std::string s;\n    s = %s;\n" % call
+            out += lines(post, "    ") + "    return s.c_str();\n"
+        elif k in ("strings_ret", "strings_cref"):
+            out += "    const std::vector<std::string>& r = %s;\n" % call + JOIN
+            out += lines(post, "    ") + "    return s.c_str();\n"
         else:
-            out += "    return %s;\n" % f.ret.to_c(call)
+            out += "    auto r = %s;\n" % call + lines(post, "    ")
+            out += "    return %s;\n" % f.ret.ret_to_c("r")
         out += "}\n"
     return out
 
 
 def client_body(f, getter, default):
     """features::X() calling the C table (or the default when there is none)."""
-    args = ", ".join(t.to_c(n) for t, n in f.params)
-    call = "t->%s(%s)" % (f.member, args)
+    pre, call_args, post = [], [], []
+    for i, (t, n) in enumerate(f.params):
+        a, b, c = t.client_arg(n, i)
+        pre += a
+        call_args.append(b)
+        post += c
+    call = "t->%s(%s)" % (f.member, ", ".join(call_args))
     k, cpp = f.ret.kind, f.ret.cpp
-    b = "    const auto* t = %s();\n" % getter
+    b = "    const auto* t = %s();\n" % getter + lines(pre, "    ")
+    P = lines(post, "        ")
     if cpp == "void":
-        return b + "    if (t) %s;\n" % call
+        return b + "    if (t) {\n        %s;\n%s    }\n" % (call, P)
     if k == "string_ret":
         d = default or "\"\""
-        return b + "    const char* r = t ? %s : nullptr;\n    return r ? std::string(r) : std::string(%s);\n" % (call, d)
-    if k == "strings_ret":
-        return (b + "    std::vector<std::string> out;\n    const char* r = t ? %s : nullptr;\n"
-                "    if (!r || !*r) return out;\n    for (const char* p = r;; ++p) {\n"
-                "        const char* e = p;\n        while (*e && *e != '%s') ++e;\n        out.emplace_back(p, e);\n"
-                "        if (!*e) break;\n        p = e;\n    }\n    return out;\n") % (call, SEP)
+        return (b + "    const char* r = nullptr;\n    if (t) {\n        r = %s;\n%s    }\n" % (call, P) +
+                "    return r ? std::string(r) : std::string(%s);\n" % d)
+    if k in ("strings_ret", "strings_cref"):
+        v = ("    static thread_local std::vector<std::string> out;\n    out.clear();\n" if k == "strings_cref"
+             else "    std::vector<std::string> out;\n")
+        return b + v + "    const char* j = nullptr;\n    if (t) {\n        j = %s;\n%s    }\n" % (call, P) + SPLIT + "    return out;\n"
     d = default if default is not None else ("false" if k == "bool" else
                                              ("nullptr" if "*" in cpp else cpp.replace("const ", "") + "{}"))
-    return b + "    return t ? %s : %s;\n" % (f.ret.from_c(call), d)
+    if not post:
+        return b + "    return t ? %s : %s;\n" % (f.ret.ret_from_c(call), d)
+    return b + "    if (!t) return %s;\n    auto r = %s;\n%s    return %s;\n" % (d, call, lines(post, "    "), f.ret.ret_from_c("r"))
 
 
 def definition(f, body):

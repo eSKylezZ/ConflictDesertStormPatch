@@ -3,6 +3,8 @@
 #include <vector>
 #include <cstdint>
 
+namespace settings { struct Values; }   // core/settings.h
+
 // Each Apply* brings the game in line with the current settings (patch or un-patch). Called once before
 // WinMain, and again when the launcher saves new settings (before any game code uses the patched sites).
 struct lua_State;  // Lua (third_party/lua), for the script host's registrations
@@ -24,6 +26,16 @@ void RegisterServices();                 // services.cpp: publishes dsfix.servic
 void RegisterOverlayInterface();         // overlay_iface.cpp: publishes dsfix.overlay (overlay.h for the plugin DLLs)
 void RegisterHostInterface();            // host_iface.cpp: publishes dsfix.host (core/dsfix_host.spec)
 bool PluginsLoaded();                    // services.cpp: PSE_MSG_POST_LOAD seen (every plugin is loaded)
+const settings::Values* DsfixSettingsValues();   // host_iface.cpp: for the kit's settings::Get() in the plugins
+std::string CompatLocalPluginsText();     // host_iface.cpp: pse::compat::LocalPlugins() as text lines (dsfix.online)
+// dsfix.online (plugins/online/glue.cpp): the lobby name of a player ("" = no such player), the connected PCs (bit =
+// PC number) / peers, the console's "net ..." command and the connection's news (lines to print), goodbye at exit
+std::string LobbyPlayerName(int player);
+uint32_t OnlineConnectedPcMask();
+int OnlineConnectedPeers();
+std::vector<std::string> OnlineConsoleNet(const std::string& arg);
+std::vector<std::string> OnlineConsoleEvents();
+void OnlineShutdown();
 const char* ServiceText(uint32_t hash);  // the plugins' text providers (the Lookup hook asks them first), or nullptr
 void* ServiceScreen(uint32_t state);     // the plugins' front-end screens (coop.cpp's state -> screen hook), or nullptr
 void ServiceSettingsChanged();           // the plugins' settings listeners (OnSettingsChanged: the launcher saved)

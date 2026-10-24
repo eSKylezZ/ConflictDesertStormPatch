@@ -70,14 +70,20 @@ const char* features::ModText(uint32_t hash) {
 #ifndef DSFIX_OWN_LevelDisplayName
 std::string features::LevelDisplayName(const char* level) {
     const auto* t = Table();
-    const char* r = t ? t->LevelDisplayName(level) : nullptr;
+    const char* r = nullptr;
+    if (t) {
+        r = t->LevelDisplayName(level);
+    }
     return r ? std::string(r) : std::string("");
 }
 #endif
 #ifndef DSFIX_OWN_LevelTitleText
 std::string features::LevelTitleText(const char* level) {
     const auto* t = Table();
-    const char* r = t ? t->LevelTitleText(level) : nullptr;
+    const char* r = nullptr;
+    if (t) {
+        r = t->LevelTitleText(level);
+    }
     return r ? std::string(r) : std::string("");
 }
 #endif
@@ -157,15 +163,18 @@ void* features::PhotoSpawnSoldier(int index, const float* pos, float yaw) {
 std::vector<std::string> features::PhotoSpawnUnits() {
     const auto* t = Table();
     std::vector<std::string> out;
-    const char* r = t ? t->PhotoSpawnUnits() : nullptr;
-    if (!r || !*r) return out;
-    for (const char* p = r;; ++p) {
-        const char* e = p;
-        while (*e && *e != '\x1E') ++e;
-        out.emplace_back(p, e);
-        if (!*e) break;
-        p = e;
+    const char* j = nullptr;
+    if (t) {
+        j = t->PhotoSpawnUnits();
     }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
     return out;
 }
 #endif
@@ -173,15 +182,18 @@ std::vector<std::string> features::PhotoSpawnUnits() {
 std::vector<std::string> features::PhotoWeaponChoices() {
     const auto* t = Table();
     std::vector<std::string> out;
-    const char* r = t ? t->PhotoWeaponChoices() : nullptr;
-    if (!r || !*r) return out;
-    for (const char* p = r;; ++p) {
-        const char* e = p;
-        while (*e && *e != '\x1E') ++e;
-        out.emplace_back(p, e);
-        if (!*e) break;
-        p = e;
+    const char* j = nullptr;
+    if (t) {
+        j = t->PhotoWeaponChoices();
     }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
     return out;
 }
 #endif
@@ -195,5 +207,306 @@ bool features::RestartLevel() {
 int net::LocalPlayer() {
     const auto* t = Table();
     return t ? t->LocalPlayer() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_DsfixSettingsValues
+const settings::Values* features::DsfixSettingsValues() {
+    const auto* t = Table();
+    return t ? t->DsfixSettingsValues() : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_ReadString
+bool settings::ReadString(const char* name, std::string& value) {
+    const auto* t = Table();
+    char s1[1024] = {};
+    if (!t) return false;
+    auto r = t->ReadString(name, s1);
+    value = s1;
+    return (r) != 0;
+}
+#endif
+#ifndef DSFIX_OWN_WriteString
+bool settings::WriteString(const char* name, const std::string& value) {
+    const auto* t = Table();
+    return t ? (t->WriteString(name, (value).c_str())) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_PluginBool
+bool features::PluginBool(const char* plugin, const char* key, bool fallback) {
+    const auto* t = Table();
+    return t ? (t->PluginBool(plugin, key, (fallback) ? 1 : 0)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_AxisParts
+void features::AxisParts(uint8_t* block, int action, float& pad, bool& touched, bool& key, float& gyro) {
+    const auto* t = Table();
+    int b3 = touched ? 1 : 0;
+    int b4 = key ? 1 : 0;
+    if (t) {
+        t->AxisParts(block, action, &(pad), &b3, &b4, &(gyro));
+        touched = b3 != 0;
+        key = b4 != 0;
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LookScale
+float features::LookScale(int player) {
+    const auto* t = Table();
+    return t ? t->LookScale(player) : float{};
+}
+#endif
+#ifndef DSFIX_OWN_SplitHudReset
+void features::SplitHudReset() {
+    const auto* t = Table();
+    if (t) {
+        t->SplitHudReset();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SplitHudView
+void features::SplitHudView(int view, float x, float y, float w, float h) {
+    const auto* t = Table();
+    if (t) {
+        t->SplitHudView(view, x, y, w, h);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SplitScreenPlayers
+int features::SplitScreenPlayers() {
+    const auto* t = Table();
+    return t ? t->SplitScreenPlayers() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_BeginOnlineSession
+void features::BeginOnlineSession(int players, bool host) {
+    const auto* t = Table();
+    if (t) {
+        t->BeginOnlineSession(players, (host) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_CoopDeviceActions
+uint32_t features::CoopDeviceActions(int device, features::PadType& type, std::string& name) {
+    const auto* t = Table();
+    int32_t e1 = static_cast<int32_t>(type);
+    char s2[1024] = {};
+    if (!t) return uint32_t{};
+    auto r = t->CoopDeviceActions(device, &e1, s2);
+    type = static_cast<features::PadType>(e1);
+    name = s2;
+    return r;
+}
+#endif
+#ifndef DSFIX_OWN_CoopPlayers
+int features::CoopPlayers() {
+    const auto* t = Table();
+    return t ? t->CoopPlayers() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_SetPadsBackground
+void features::SetPadsBackground(bool on) {
+    const auto* t = Table();
+    if (t) {
+        t->SetPadsBackground((on) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_UiCaptureKeys
+bool features::UiCaptureKeys(bool on) {
+    const auto* t = Table();
+    return t ? (t->UiCaptureKeys((on) ? 1 : 0)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_UiNextKey
+bool features::UiNextKey(bool& isChar, uint32_t& code) {
+    const auto* t = Table();
+    int b0 = isChar ? 1 : 0;
+    if (!t) return false;
+    auto r = t->UiNextKey(&b0, &(code));
+    isChar = b0 != 0;
+    return (r) != 0;
+}
+#endif
+#ifndef DSFIX_OWN_DevBackground
+bool features::DevBackground() {
+    const auto* t = Table();
+    return t ? (t->DevBackground()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ConsoleStartLevel
+void features::ConsoleStartLevel(const std::string& level) {
+    const auto* t = Table();
+    if (t) {
+        t->ConsoleStartLevel((level).c_str());
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LastFrontEndResult
+int features::LastFrontEndResult() {
+    const auto* t = Table();
+    return t ? t->LastFrontEndResult() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_EnsureDormancyHook
+void features::EnsureDormancyHook() {
+    const auto* t = Table();
+    if (t) {
+        t->EnsureDormancyHook();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ScriptReseed
+void features::ScriptReseed(uint32_t seed) {
+    const auto* t = Table();
+    if (t) {
+        t->ScriptReseed(seed);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_RenderCount
+uint32_t features::RenderCount() {
+    const auto* t = Table();
+    return t ? t->RenderCount() : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_OverviewSkipPending
+bool features::OverviewSkipPending() {
+    const auto* t = Table();
+    return t ? (t->OverviewSkipPending()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LoadoutCommand
+bool features::LoadoutCommand(int from, const std::string& text) {
+    const auto* t = Table();
+    return t ? (t->LoadoutCommand(from, (text).c_str())) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ModsFolderEnabled
+bool features::ModsFolderEnabled() {
+    const auto* t = Table();
+    return t ? (t->ModsFolderEnabled()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ReloadMods
+bool features::ReloadMods() {
+    const auto* t = Table();
+    return t ? (t->ReloadMods()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LoadedMods
+const std::vector<std::string>& features::LoadedMods() {
+    const auto* t = Table();
+    static thread_local std::vector<std::string> out;
+    out.clear();
+    const char* j = nullptr;
+    if (t) {
+        j = t->LoadedMods();
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
+}
+#endif
+#ifndef DSFIX_OWN_LoadedPorts
+std::vector<std::string> features::LoadedPorts() {
+    const auto* t = Table();
+    std::vector<std::string> out;
+    const char* j = nullptr;
+    if (t) {
+        j = t->LoadedPorts();
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
+}
+#endif
+#ifndef DSFIX_OWN_CompatLocalPluginsText
+std::string features::CompatLocalPluginsText() {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->CompatLocalPluginsText();
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_CoopVoiceChoice
+int features::CoopVoiceChoice(int role) {
+    const auto* t = Table();
+    return t ? t->CoopVoiceChoice(role) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_VoicesInstalled
+bool features::VoicesInstalled() {
+    const auto* t = Table();
+    return t ? (t->VoicesInstalled()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_TimeOfDayInstalled
+bool features::TimeOfDayInstalled() {
+    const auto* t = Table();
+    return t ? (t->TimeOfDayInstalled()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_TimeOfDay
+int features::TimeOfDay() {
+    const auto* t = Table();
+    return t ? t->TimeOfDay() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_TimeFlow
+int features::TimeFlow() {
+    const auto* t = Table();
+    return t ? t->TimeFlow() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_TimeOfDayLabel
+const char* features::TimeOfDayLabel(int i) {
+    const auto* t = Table();
+    return t ? t->TimeOfDayLabel(i) : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_TimeFlowLabel
+const char* features::TimeFlowLabel(int i) {
+    const auto* t = Table();
+    return t ? t->TimeFlowLabel(i) : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_WeatherPlugin
+const ::DsfixWeatherV1* features::WeatherPlugin() {
+    const auto* t = Table();
+    return t ? t->WeatherPlugin() : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_CheatFlags
+uint32_t features::CheatFlags() {
+    const auto* t = Table();
+    return t ? t->CheatFlags() : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_SetCheatFlags
+void features::SetCheatFlags(uint32_t flags) {
+    const auto* t = Table();
+    if (t) {
+        t->SetCheatFlags(flags);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_PhotoModeOpen
+bool features::PhotoModeOpen() {
+    const auto* t = Table();
+    return t ? (t->PhotoModeOpen()) != 0 : false;
 }
 #endif

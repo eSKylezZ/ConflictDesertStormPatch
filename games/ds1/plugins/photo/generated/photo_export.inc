@@ -2,22 +2,27 @@
 // The plugin: C thunks over its own functions + the table it publishes.
 namespace {
 uint32_t PSE_CALL t_CheatFlags(void) {
-    return features::CheatFlags();
+    auto r = features::CheatFlags();
+    return r;
 }
 void PSE_CALL t_SetCheatFlags(uint32_t a0) {
     features::SetCheatFlags(a0);
 }
 int PSE_CALL t_CheatsActive(void) {
-    return (features::CheatsActive()) ? 1 : 0;
+    auto r = features::CheatsActive();
+    return (r) ? 1 : 0;
 }
 const char* PSE_CALL t_CheatsText(uint32_t a0) {
-    return features::CheatsText(a0);
+    auto r = features::CheatsText(a0);
+    return r;
 }
 int PSE_CALL t_FreeCamActive(void) {
-    return (features::FreeCamActive()) ? 1 : 0;
+    auto r = features::FreeCamActive();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_FreeCamFlying(void) {
-    return (features::FreeCamFlying()) ? 1 : 0;
+    auto r = features::FreeCamFlying();
+    return (r) ? 1 : 0;
 }
 void PSE_CALL t_PhotoBeforePresent(void* a0) {
     features::PhotoBeforePresent(a0);
@@ -26,16 +31,20 @@ void PSE_CALL t_PhotoAfterPresent(void* a0) {
     features::PhotoAfterPresent(a0);
 }
 int PSE_CALL t_PhotoAnimate(const void* a0, float* a1) {
-    return (features::PhotoAnimate(a0, *(a1))) ? 1 : 0;
+    auto r = features::PhotoAnimate(a0, *a1);
+    return (r) ? 1 : 0;
 }
 float PSE_CALL t_PhotoFov(void) {
-    return features::PhotoFov();
+    auto r = features::PhotoFov();
+    return r;
 }
 int PSE_CALL t_PhotoModeOpen(void) {
-    return (features::PhotoModeOpen()) ? 1 : 0;
+    auto r = features::PhotoModeOpen();
+    return (r) ? 1 : 0;
 }
 const char* PSE_CALL t_PhotoText(uint32_t a0) {
-    return features::PhotoText(a0);
+    auto r = features::PhotoText(a0);
+    return r;
 }
 void PSE_CALL t_ReloadPhotoFrames(void) {
     features::ReloadPhotoFrames();

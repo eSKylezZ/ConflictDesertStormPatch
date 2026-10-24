@@ -5,10 +5,13 @@
 // them out here, so its own definitions don't clash.
 #include <windows.h>
 
+#include <cstdarg>
+#include <cstdio>
 #include <string>
 #include <vector>
 
 #include "core/net.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "features/padio.h"
 #include "generated/dsfix_host.h"
@@ -19,3 +22,21 @@
 #endif
 
 #include "generated/dsfix_host_client.inc"
+
+// Written by hand (not plain C as they are):
+// DesertStormFix's settings, read straight from dsfix.dll's copy (a plain struct; the defaults without dsfix.dll).
+const settings::Values& settings::Get() {
+    static const settings::Values defaults{};
+    const settings::Values* v = features::DsfixSettingsValues();
+    return v ? *v : defaults;
+}
+
+// A mod message (printf-style) - log + Mods\DesertStormFix-report.txt through dsfix.services ModReport.
+void features::ModLog(const char* fmt, ...) {
+    char line[2048];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(line, sizeof line, fmt, a);
+    va_end(a);
+    if (const DsfixServicesV1* s = kit::Services()) s->ModReport(line);
+}

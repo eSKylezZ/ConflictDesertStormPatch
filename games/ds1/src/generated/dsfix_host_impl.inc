@@ -2,28 +2,36 @@
 // dsfix.dll: the C thunks and the table (included by features/host_iface.cpp).
 namespace {
 int PSE_CALL t_GameFocused(void) {
-    return (features::GameFocused()) ? 1 : 0;
+    auto r = features::GameFocused();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_KeyHeld(int a0) {
-    return (features::KeyHeld(a0)) ? 1 : 0;
+    auto r = features::KeyHeld(a0);
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_KeyboardInUse(void) {
-    return (features::KeyboardInUse()) ? 1 : 0;
+    auto r = features::KeyboardInUse();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_PadStyleXbox(void) {
-    return (features::PadStyleXbox()) ? 1 : 0;
+    auto r = features::PadStyleXbox();
+    return (r) ? 1 : 0;
 }
 uint32_t PSE_CALL t_ReadJoystick(int a0) {
-    return features::ReadJoystick(a0);
+    auto r = features::ReadJoystick(a0);
+    return r;
 }
 int PSE_CALL t_Fill(int a0, padio::JoyState* a1) {
-    return (padio::Fill(a0, *(a1))) ? 1 : 0;
+    auto r = padio::Fill(a0, *a1);
+    return (r) ? 1 : 0;
 }
 const char* PSE_CALL t_GameTextHash(uint32_t a0) {
-    return features::GameText(a0);
+    auto r = features::GameText(a0);
+    return r;
 }
 const char* PSE_CALL t_ModText(uint32_t a0) {
-    return features::ModText(a0);
+    auto r = features::ModText(a0);
+    return r;
 }
 const char* PSE_CALL t_LevelDisplayName(const char* a0) {
     static thread_local std::string s;
@@ -36,64 +44,252 @@ const char* PSE_CALL t_LevelTitleText(const char* a0) {
     return s.c_str();
 }
 void* PSE_CALL t_ServiceScreen(uint32_t a0) {
-    return features::ServiceScreen(a0);
+    auto r = features::ServiceScreen(a0);
+    return r;
 }
 int PSE_CALL t_HudHidden(void) {
-    return (features::HudHidden()) ? 1 : 0;
+    auto r = features::HudHidden();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_CustomiseHidesHud(void) {
-    return (features::CustomiseHidesHud()) ? 1 : 0;
+    auto r = features::CustomiseHidesHud();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_CustomiseOpen(void) {
-    return (features::CustomiseOpen()) ? 1 : 0;
+    auto r = features::CustomiseOpen();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_CustomisePending(void) {
-    return (features::CustomisePending()) ? 1 : 0;
+    auto r = features::CustomisePending();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_OverviewPlaying(void) {
-    return (features::OverviewPlaying()) ? 1 : 0;
+    auto r = features::OverviewPlaying();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_ScriptFilmPlaying(void) {
-    return (features::ScriptFilmPlaying()) ? 1 : 0;
+    auto r = features::ScriptFilmPlaying();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_ScriptHidesHud(void) {
-    return (features::ScriptHidesHud()) ? 1 : 0;
+    auto r = features::ScriptHidesHud();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_ViewPeekPass(void) {
-    return (features::ViewPeekPass()) ? 1 : 0;
+    auto r = features::ViewPeekPass();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_KitSlotOf(const char* a0) {
-    return features::KitSlotOf(a0);
+    auto r = features::KitSlotOf(a0);
+    return r;
 }
 int PSE_CALL t_KitSwap(void* a0, void* a1, const char* a2, int a3, int a4) {
-    return (features::KitSwap(a0, a1, std::string((a2) ? (a2) : ""), a3, a4)) ? 1 : 0;
+    auto r = features::KitSwap(a0, a1, std::string(a2 ? a2 : ""), a3, a4);
+    return (r) ? 1 : 0;
 }
 void* PSE_CALL t_PhotoSpawnSoldier(int a0, const float* a1, float a2) {
-    return features::PhotoSpawnSoldier(a0, a1, a2);
+    auto r = features::PhotoSpawnSoldier(a0, a1, a2);
+    return r;
 }
 const char* PSE_CALL t_PhotoSpawnUnits(void) {
+    const std::vector<std::string>& r = features::PhotoSpawnUnits();
     static thread_local std::string s;
     s.clear();
-    for (const std::string& v : features::PhotoSpawnUnits()) {
+    for (const std::string& v : r) {
         if (!s.empty()) s += '\x1E';
         s += v;
     }
     return s.c_str();
 }
 const char* PSE_CALL t_PhotoWeaponChoices(void) {
+    const std::vector<std::string>& r = features::PhotoWeaponChoices();
     static thread_local std::string s;
     s.clear();
-    for (const std::string& v : features::PhotoWeaponChoices()) {
+    for (const std::string& v : r) {
         if (!s.empty()) s += '\x1E';
         s += v;
     }
     return s.c_str();
 }
 int PSE_CALL t_RestartLevel(void) {
-    return (features::RestartLevel()) ? 1 : 0;
+    auto r = features::RestartLevel();
+    return (r) ? 1 : 0;
 }
 int PSE_CALL t_LocalPlayer(void) {
-    return net::LocalPlayer();
+    auto r = net::LocalPlayer();
+    return r;
+}
+const settings::Values* PSE_CALL t_DsfixSettingsValues(void) {
+    auto r = features::DsfixSettingsValues();
+    return r;
+}
+int PSE_CALL t_ReadString(const char* a0, char* a1) {
+    std::string s1;
+    auto r = settings::ReadString(a0, s1);
+    if (a1) strncpy_s(a1, 1024, s1.c_str(), _TRUNCATE);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_WriteString(const char* a0, const char* a1) {
+    auto r = settings::WriteString(a0, std::string(a1 ? a1 : ""));
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_PluginBool(const char* a0, const char* a1, int a2) {
+    auto r = features::PluginBool(a0, a1, a2 != 0);
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_AxisParts(uint8_t* a0, int a1, float* a2, int* a3, int* a4, float* a5) {
+    bool b3 = a3 && *a3 != 0;
+    bool b4 = a4 && *a4 != 0;
+    features::AxisParts(a0, a1, *a2, b3, b4, *a5);
+    if (a3) *a3 = b3 ? 1 : 0;
+    if (a4) *a4 = b4 ? 1 : 0;
+}
+float PSE_CALL t_LookScale(int a0) {
+    auto r = features::LookScale(a0);
+    return r;
+}
+void PSE_CALL t_SplitHudReset(void) {
+    features::SplitHudReset();
+}
+void PSE_CALL t_SplitHudView(int a0, float a1, float a2, float a3, float a4) {
+    features::SplitHudView(a0, a1, a2, a3, a4);
+}
+int PSE_CALL t_SplitScreenPlayers(void) {
+    auto r = features::SplitScreenPlayers();
+    return r;
+}
+void PSE_CALL t_BeginOnlineSession(int a0, int a1) {
+    features::BeginOnlineSession(a0, a1 != 0);
+}
+uint32_t PSE_CALL t_CoopDeviceActions(int a0, int32_t* a1, char* a2) {
+    features::PadType e1 = static_cast<features::PadType>(a1 ? *a1 : 0);
+    std::string s2;
+    auto r = features::CoopDeviceActions(a0, e1, s2);
+    if (a1) *a1 = static_cast<int32_t>(e1);
+    if (a2) strncpy_s(a2, 1024, s2.c_str(), _TRUNCATE);
+    return r;
+}
+int PSE_CALL t_CoopPlayers(void) {
+    auto r = features::CoopPlayers();
+    return r;
+}
+void PSE_CALL t_SetPadsBackground(int a0) {
+    features::SetPadsBackground(a0 != 0);
+}
+int PSE_CALL t_UiCaptureKeys(int a0) {
+    auto r = features::UiCaptureKeys(a0 != 0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_UiNextKey(int* a0, uint32_t* a1) {
+    bool b0 = a0 && *a0 != 0;
+    auto r = features::UiNextKey(b0, *a1);
+    if (a0) *a0 = b0 ? 1 : 0;
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_DevBackground(void) {
+    auto r = features::DevBackground();
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_ConsoleStartLevel(const char* a0) {
+    features::ConsoleStartLevel(std::string(a0 ? a0 : ""));
+}
+int PSE_CALL t_LastFrontEndResult(void) {
+    auto r = features::LastFrontEndResult();
+    return r;
+}
+void PSE_CALL t_EnsureDormancyHook(void) {
+    features::EnsureDormancyHook();
+}
+void PSE_CALL t_ScriptReseed(uint32_t a0) {
+    features::ScriptReseed(a0);
+}
+uint32_t PSE_CALL t_RenderCount(void) {
+    auto r = features::RenderCount();
+    return r;
+}
+int PSE_CALL t_OverviewSkipPending(void) {
+    auto r = features::OverviewSkipPending();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_LoadoutCommand(int a0, const char* a1) {
+    auto r = features::LoadoutCommand(a0, std::string(a1 ? a1 : ""));
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ModsFolderEnabled(void) {
+    auto r = features::ModsFolderEnabled();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ReloadMods(void) {
+    auto r = features::ReloadMods();
+    return (r) ? 1 : 0;
+}
+const char* PSE_CALL t_LoadedMods(void) {
+    const std::vector<std::string>& r = features::LoadedMods();
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
+const char* PSE_CALL t_LoadedPorts(void) {
+    const std::vector<std::string>& r = features::LoadedPorts();
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
+const char* PSE_CALL t_CompatLocalPluginsText(void) {
+    static thread_local std::string s;
+    s = features::CompatLocalPluginsText();
+    return s.c_str();
+}
+int PSE_CALL t_CoopVoiceChoice(int a0) {
+    auto r = features::CoopVoiceChoice(a0);
+    return r;
+}
+int PSE_CALL t_VoicesInstalled(void) {
+    auto r = features::VoicesInstalled();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_TimeOfDayInstalled(void) {
+    auto r = features::TimeOfDayInstalled();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_TimeOfDay(void) {
+    auto r = features::TimeOfDay();
+    return r;
+}
+int PSE_CALL t_TimeFlow(void) {
+    auto r = features::TimeFlow();
+    return r;
+}
+const char* PSE_CALL t_TimeOfDayLabel(int a0) {
+    auto r = features::TimeOfDayLabel(a0);
+    return r;
+}
+const char* PSE_CALL t_TimeFlowLabel(int a0) {
+    auto r = features::TimeFlowLabel(a0);
+    return r;
+}
+const ::DsfixWeatherV1* PSE_CALL t_WeatherPlugin(void) {
+    auto r = features::WeatherPlugin();
+    return r;
+}
+uint32_t PSE_CALL t_CheatFlags(void) {
+    auto r = features::CheatFlags();
+    return r;
+}
+void PSE_CALL t_SetCheatFlags(uint32_t a0) {
+    features::SetCheatFlags(a0);
+}
+int PSE_CALL t_PhotoModeOpen(void) {
+    auto r = features::PhotoModeOpen();
+    return (r) ? 1 : 0;
 }
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
@@ -121,5 +317,44 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_PhotoSpawnUnits,
     &t_PhotoWeaponChoices,
     &t_RestartLevel,
-    &t_LocalPlayer};
+    &t_LocalPlayer,
+    &t_DsfixSettingsValues,
+    &t_ReadString,
+    &t_WriteString,
+    &t_PluginBool,
+    &t_AxisParts,
+    &t_LookScale,
+    &t_SplitHudReset,
+    &t_SplitHudView,
+    &t_SplitScreenPlayers,
+    &t_BeginOnlineSession,
+    &t_CoopDeviceActions,
+    &t_CoopPlayers,
+    &t_SetPadsBackground,
+    &t_UiCaptureKeys,
+    &t_UiNextKey,
+    &t_DevBackground,
+    &t_ConsoleStartLevel,
+    &t_LastFrontEndResult,
+    &t_EnsureDormancyHook,
+    &t_ScriptReseed,
+    &t_RenderCount,
+    &t_OverviewSkipPending,
+    &t_LoadoutCommand,
+    &t_ModsFolderEnabled,
+    &t_ReloadMods,
+    &t_LoadedMods,
+    &t_LoadedPorts,
+    &t_CompatLocalPluginsText,
+    &t_CoopVoiceChoice,
+    &t_VoicesInstalled,
+    &t_TimeOfDayInstalled,
+    &t_TimeOfDay,
+    &t_TimeFlow,
+    &t_TimeOfDayLabel,
+    &t_TimeFlowLabel,
+    &t_WeatherPlugin,
+    &t_CheatFlags,
+    &t_SetCheatFlags,
+    &t_PhotoModeOpen};
 }  // namespace
