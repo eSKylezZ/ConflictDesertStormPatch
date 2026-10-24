@@ -27,8 +27,8 @@ Set Base() {
         {"dsfix", PSE_MAKE_VERSION(3, 3, 0), (uint32_t(PSE_PLUGIN_SIMULATION) | uint32_t(PSE_PLUGIN_INTERNAL)), "="},
         {"dsfix.hud", PSE_MAKE_VERSION(3, 3, 0), (uint32_t(PSE_PLUGIN_CLIENT_ONLY) | uint32_t(PSE_PLUGIN_INTERNAL)), "="},
         {"dsfix.limits", PSE_MAKE_VERSION(3, 3, 0), (uint32_t(PSE_PLUGIN_SIMULATION) | uint32_t(PSE_PLUGIN_INTERNAL)), "="},
-        {"kyle.alienfaction", PSE_MAKE_VERSION(1, 2, 0), PSE_PLUGIN_SIMULATION, kHashA},
-        {"kyle.hudcolour", PSE_MAKE_VERSION(2, 0, 0), PSE_PLUGIN_CLIENT_ONLY, ""},
+        {"myname.alienfaction", PSE_MAKE_VERSION(1, 2, 0), PSE_PLUGIN_SIMULATION, kHashA},
+        {"myname.hudcolour", PSE_MAKE_VERSION(2, 0, 0), PSE_PLUGIN_CLIENT_ONLY, ""},
     };
     s.mods = {{"GoldShades", kHashA}, {"Mission Custom", kHashB}};
     return s;
@@ -127,7 +127,7 @@ PSE_TEST("compat: assembler - other lines, restarts, damage") {
 PSE_TEST("compat: identical sets match; client-only plugins may differ") {
     Set a = Base(), b = Base();
     PSE_CHECK(Diff(a, b).empty());
-    b.plugins.erase(b.plugins.begin() + 4);                                         // kyle.hudcolour missing
+    b.plugins.erase(b.plugins.begin() + 4);                                         // myname.hudcolour missing
     b.plugins[1].version = PSE_MAKE_VERSION(9, 0, 0);                                // client-only, other version
     b.plugins.push_back({"other.photomode", 1, PSE_PLUGIN_CLIENT_ONLY, ""});        // only there
     PSE_CHECK_STR(All(Diff(a, b)).c_str(), "");
@@ -135,11 +135,11 @@ PSE_TEST("compat: identical sets match; client-only plugins may differ") {
 
 PSE_TEST("compat: simulation plugin missing / extra / version / file / kind") {
     Set a = Base(), b = Base();
-    b.plugins.erase(b.plugins.begin() + 3);   // the host lacks kyle.alienfaction
+    b.plugins.erase(b.plugins.begin() + 3);   // the host lacks myname.alienfaction
     std::vector<std::string> d = pse::compat::Compare(a, b, "the host");
-    PSE_CHECK(Has(d, "the host is missing kyle.alienfaction 1.2.0"));
+    PSE_CHECK(Has(d, "the host is missing myname.alienfaction 1.2.0"));
     d = pse::compat::Compare(b, a, "player 2");
-    PSE_CHECK(Has(d, "missing kyle.alienfaction 1.2.0 (player 2 has it)"));
+    PSE_CHECK(Has(d, "missing myname.alienfaction 1.2.0 (player 2 has it)"));
 
     b = Base();
     b.plugins[2].version = PSE_MAKE_VERSION(1, 0, 0);
@@ -150,7 +150,7 @@ PSE_TEST("compat: simulation plugin missing / extra / version / file / kind") {
     a = Base(), b = Base();
     b.plugins[3].hash = kHashB;
     d = Diff(a, b);
-    PSE_CHECK(Has(d, "kyle.alienfaction 1.2.0: a different file here than on the host (SHA-256 aaaaaaaa vs bbbbbbbb)"));
+    PSE_CHECK(Has(d, "myname.alienfaction 1.2.0: a different file here than on the host (SHA-256 aaaaaaaa vs bbbbbbbb)"));
 
     a = Base(), b = Base();
     b.plugins[3].hash = "=";   // built in on the other side
@@ -159,7 +159,7 @@ PSE_TEST("compat: simulation plugin missing / extra / version / file / kind") {
     a = Base(), b = Base();   // unflagged = simulation; flags disagree
     b.plugins[3].flags = PSE_PLUGIN_CLIENT_ONLY;
     b.plugins[3].hash.clear();
-    PSE_CHECK(Has(Diff(a, b), "kyle.alienfaction 1.2.0: simulation here, client-only on the host"));
+    PSE_CHECK(Has(Diff(a, b), "myname.alienfaction 1.2.0: simulation here, client-only on the host"));
     a.plugins[3].flags = 0;   // no flag at all: still simulation
     PSE_CHECK(Has(Diff(a, b), "simulation here, client-only"));
     PSE_CHECK(pse::compat::Simulation(0));

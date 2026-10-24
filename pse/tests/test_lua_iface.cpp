@@ -195,13 +195,13 @@ PSE_TEST("lua: interface served, namespace and name rules") {
     PSE_CHECK_EQ(lua->RegisterNamespace(a, std::string(65, 'a').c_str()), PSE_E_INVALID_ARG);
     PSE_CHECK_EQ(lua->RegisterNamespace(0, "fine"), PSE_E_INVALID_ARG);
     // "game" is reserved only as the first part
-    PSE_CHECK_EQ(lua->RegisterNamespace(a, "kyle.game"), PSE_OK);
-    PSE_CHECK_EQ(lua->RegisterNamespace(a, "kyle.game"), PSE_OK);              // own namespace again
+    PSE_CHECK_EQ(lua->RegisterNamespace(a, "myname.game"), PSE_OK);
+    PSE_CHECK_EQ(lua->RegisterNamespace(a, "myname.game"), PSE_OK);              // own namespace again
     PSE_CHECK_EQ(lua->RegisterNamespace(a, "other"), PSE_E_CONFLICT);          // one per plugin
-    PSE_CHECK_EQ(lua->RegisterNamespace(b, "kyle.game"), PSE_E_CONFLICT);      // taken
-    PSE_CHECK_EQ(lua->RegisterNamespace(b, "kyle"), PSE_E_CONFLICT);           // prefix of a's
-    PSE_CHECK_EQ(lua->RegisterNamespace(b, "kyle.game.x"), PSE_E_CONFLICT);    // inside a's
-    PSE_CHECK_EQ(lua->RegisterNamespace(b, "kyle.gamer"), PSE_OK);             // not a dotted prefix
+    PSE_CHECK_EQ(lua->RegisterNamespace(b, "myname.game"), PSE_E_CONFLICT);      // taken
+    PSE_CHECK_EQ(lua->RegisterNamespace(b, "myname"), PSE_E_CONFLICT);           // prefix of a's
+    PSE_CHECK_EQ(lua->RegisterNamespace(b, "myname.game.x"), PSE_E_CONFLICT);    // inside a's
+    PSE_CHECK_EQ(lua->RegisterNamespace(b, "myname.gamer"), PSE_OK);             // not a dotted prefix
     // functions
     PSE_CHECK_EQ(lua->RegisterFunction(c, "alien", "spawn", &NAdd, nullptr), PSE_OK);   // claims "alien"
     PSE_CHECK_EQ(lua->RegisterFunction(c, "alien", "spawn", &NAdd, nullptr), PSE_E_EXISTS);

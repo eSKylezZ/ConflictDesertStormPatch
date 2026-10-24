@@ -68,7 +68,7 @@ inline void InitCall(PSELuaCall* c, const Backend* backend, void* state, int bas
 
 struct FunctionRecord {
     uint32_t id;            // never reused; the binding's closures keep it (an upvalue)
-    char ns[72];            // "example" / "kyle.aliens"
+    char ns[72];            // "example" / "myname.aliens"
     char name[72];          // "add"
     PSEPluginHandle owner;
 };

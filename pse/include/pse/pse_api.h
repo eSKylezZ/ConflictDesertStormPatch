@@ -62,7 +62,7 @@ enum {
 typedef struct PSEPluginInfo {
     uint32_t size;               /* sizeof(PSEPluginInfo) */
     uint32_t infoVersion;        /* 1 */
-    const char* name;            /* unique id: [a-z0-9_.-], e.g. "dsfix.discord", "kyle.alienfaction" */
+    const char* name;            /* unique id: [a-z0-9_.-], e.g. "dsfix.discord", "myname.alienfaction" */
     const char* displayName;
     const char* author;
     uint32_t version;            /* PSE_MAKE_VERSION */

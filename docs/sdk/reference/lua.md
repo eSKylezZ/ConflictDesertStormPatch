@@ -50,14 +50,14 @@ Table access is raw (no metamethods run, so no script code - and no script error
 One namespace per plugin, claimed by `RegisterNamespace` (or the first `RegisterFunction`). Scripts see it as a global
 table: `alienfaction.spawn(...)`. Rules:
 
-- `name` or dotted `a.b.c` (nested tables: `kyle.aliens.spawn(...)`); each part `[a-z][a-z0-9_]*` (lower case, no
+- `name` or dotted `a.b.c` (nested tables: `myname.aliens.spawn(...)`); each part `[a-z][a-z0-9_]*` (lower case, no
   leading `_`), not a Lua keyword; at most 64 characters in all.
 - **Reserved** as the first part: `game`, `dev`, `pse`; Lua's libraries (`string table math utf8 coroutine io os
   package debug bit32`) and base functions (`print pairs ipairs type error pcall select next load require …`); the
   mission callbacks `init`, `update`, `on_message`; any name starting with `_` (the prelude's `_frame`, `_save_state`
   …) → `PSE_E_INVALID_ARG`.
 - **Collisions are refused** (`PSE_E_CONFLICT`, logged): another plugin's namespace, a dotted prefix of it or an
-  extension of it (`kyle` vs `kyle.aliens`), or a second namespace of the same plugin. Claiming your own again is
+  extension of it (`myname` vs `myname.aliens`), or a second namespace of the same plugin. Claiming your own again is
   `PSE_OK`.
 - Function names: `[A-Za-z_][A-Za-z0-9_]*`, not a keyword, ≤ 64 characters. Registering one twice → `PSE_E_EXISTS`.
 - A crashed / failed / unloaded plugin's namespace is freed.

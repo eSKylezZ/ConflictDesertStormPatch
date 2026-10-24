@@ -41,7 +41,7 @@ PSE_TEST("loader: Init needs a game id - no default game") {
 PSE_TEST("loader: register plugins, names checked, duplicates refused") {
     Fresh();
     PSEPluginHandle a = AddPlugin("dsfix.alpha");
-    PSEPluginHandle b = AddPlugin("kyle.beta-2_x");
+    PSEPluginHandle b = AddPlugin("myname.beta-2_x");
     PSE_CHECK(a != 0 && b != 0 && a != b);
     PSE_CHECK_EQ(pse::FindPlugin("dsfix.alpha"), a);
     PSE_CHECK_EQ(pse::PluginCount(), 3u);

@@ -49,7 +49,7 @@ DLL in `build/pse_plugins/<config>/` (`OUTPUT_DIR` to change that).
 name = example.hello
 ```
 
-The name is the plugin's identity: lower case, `[a-z0-9_.-]`, use a prefix of your own (`kyle.alienfaction`). A
+The name is the plugin's identity: lower case, `[a-z0-9_.-]`, use a prefix of your own (`myname.alienfaction`). A
 plugin that needs another one says so here, and the loader loads that one first or refuses yours with a reason
 (see `example.hello_client.pse`: `requires = example.hello >= 1.0`).
 
@@ -267,7 +267,7 @@ g_lua->RegisterFunction(g_self, "alienfaction", "spawn", &Spawn, nullptr);
 ```lua
 function init()
     local n = alienfaction.spawn("Alien_Grunt", 6)
-    local ok, err = pcall(alienfaction.spawn, "Alien_Grunt", 99)   -- err: "...: alienfaction.spawn: count 99 out of range (plugin kyle.alienfaction)"
+    local ok, err = pcall(alienfaction.spawn, "Alien_Grunt", 99)   -- err: "...: alienfaction.spawn: count 99 out of range (plugin myname.alienfaction)"
 end
 ```
 

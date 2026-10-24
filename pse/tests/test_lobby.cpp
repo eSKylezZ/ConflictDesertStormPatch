@@ -6,7 +6,7 @@ using namespace lobby;
 
 PSE_TEST("lobby: players join packed, per-PC masks, a pad joins once, kDeviceAny is a PC's only player") {
     Table t;
-    PSE_CHECK_EQ(Add(t, 1, kDeviceKeyboard, "Kyle"), 0);
+    PSE_CHECK_EQ(Add(t, 1, kDeviceKeyboard, "Alex"), 0);
     PSE_CHECK_EQ(Add(t, 1, 0, "Pad"), 1);
     PSE_CHECK_EQ(Add(t, 1, 0, "Again"), -1);           // that pad is already in
     PSE_CHECK_EQ(Add(t, 1, kDeviceAny, "Any"), -1);    // "any" conflicts with the PC's other players
@@ -44,8 +44,8 @@ PSE_TEST("lobby: leaving packs the later players down; a PC that left loses all 
 
 PSE_TEST("lobby: names cleaned and capped, colours unique, ready / view, every change bumps the version") {
     Table t;
-    Add(t, 1, kDeviceAny, "  \x01Kyle\t ");
-    PSE_CHECK_EQ(t.slots[0].name, std::string("Kyle"));
+    Add(t, 1, kDeviceAny, "  \x01" "Alex\t ");
+    PSE_CHECK_EQ(t.slots[0].name, std::string("Alex"));
     Add(t, 2, kDeviceAny, "");
     PSE_CHECK_EQ(t.slots[1].name, std::string("Player 2"));
     const uint32_t v = t.version;
@@ -64,7 +64,7 @@ PSE_TEST("lobby: names cleaned and capped, colours unique, ready / view, every c
 
 PSE_TEST("lobby: table round-trips through the wire format; bad text refused") {
     Table t;
-    Add(t, 1, kDeviceKeyboard, "Kyle K");
+    Add(t, 1, kDeviceKeyboard, "Alex B");
     Add(t, 3, 2, "a,b|c 9");
     SetView(t, 1, View::Own);
     SetReady(t, 0, true);
@@ -72,7 +72,7 @@ PSE_TEST("lobby: table round-trips through the wire format; bad text refused") {
     PSE_REQUIRE(Decode(Encode(t), back));
     PSE_CHECK_EQ(back.version, t.version);
     PSE_CHECK_EQ(back.Count(), 2);
-    PSE_CHECK_EQ(back.slots[0].name, std::string("Kyle K"));
+    PSE_CHECK_EQ(back.slots[0].name, std::string("Alex B"));
     PSE_CHECK_EQ(back.slots[1].name, std::string("a,b|c 9"));
     PSE_CHECK_EQ(int(back.slots[1].device), 2);
     PSE_CHECK_EQ(int(back.slots[1].pc), 3);

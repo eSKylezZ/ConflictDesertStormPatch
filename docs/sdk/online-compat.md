@@ -52,11 +52,11 @@ Each PC sends a `pse::compat::Set`:
 A plugin counts as **simulation** when it has `PSE_PLUGIN_SIMULATION`, or neither flag (the safe
 default). For every plugin that is simulation **on either side**:
 
-- it must exist on both sides (`missing kyle.alienfaction 1.2.0 (the host has it)` /
-  `player 2 is missing kyle.alienfaction 1.2.0`);
+- it must exist on both sides (`missing myname.alienfaction 1.2.0 (the host has it)` /
+  `player 2 is missing myname.alienfaction 1.2.0`);
 - same version (`dsfix.limits 1.0.1 here vs 1.0.0 on the host`);
 - same kind: simulation on both (`… simulation here, client-only on the host`), built in on both or a DLL on both;
-- **external DLL**: the same **SHA-256 of the DLL file** (`kyle.alienfaction 1.2.0: a different file here than on the
+- **external DLL**: the same **SHA-256 of the DLL file** (`myname.alienfaction 1.2.0: a different file here than on the
   host (SHA-256 1a2b3c4d vs 9f8e7d6c)`). Two builds of one version with different code would desync – the version
   alone isn't enough. A DLL that declares a simulation fingerprint is compared by that instead (below).
 - **built in** (`PSE_PLUGIN_INTERNAL`, the `dsfix.*` features + `pse`, `pse.game.ds1`): name + version only; their code

@@ -174,6 +174,6 @@ cancellable); `Raise` then returns 1, else 0. An event without subscribers retur
 static int OnFrame(PSEEventId e, void* data, void* ctx) { UpdateOverlay(); return 0; }
 msg->Subscribe(me, PSE_EVENT_FRAME, OnFrame, NULL, 0);
 
-PSEEventId spawned = msg->EventId("kyle.aliens.spawned");   /* own event */
+PSEEventId spawned = msg->EventId("myname.aliens.spawned");   /* own event */
 msg->Raise(me, spawned, alien);
 ```

@@ -133,7 +133,7 @@ Every call the loader makes into an **external** plugin's code runs inside SEH (
 | Call | Reported as "crashed in ..." |
 | --- | --- |
 | `PSEPlugin_Load` | "PSEPlugin_Load" (see Failure handling) |
-| message listeners, incl. `PSE_MSG_POST_LOAD` / `PSE_MSG_POST_POST_LOAD` | "its PSE_MSG_POST_LOAD listener", "a message listener (type 0x4242 from kyle.x)" |
+| message listeners, incl. `PSE_MSG_POST_LOAD` / `PSE_MSG_POST_POST_LOAD` | "its PSE_MSG_POST_LOAD listener", "a message listener (type 0x4242 from myname.x)" |
 | event subscribers (`pse.frame`, `pse.present`, plugin events ...) | "a pse.frame event subscriber" |
 | `pse.tasks` tasks | "a pse.tasks task" |
 | `pse.settings` `OnChange` callbacks | "a settings change callback (Key)" |
@@ -145,7 +145,7 @@ A fault in any of them (access violation, stack overflow, an escaping C++ except
 plugin is **disabled exactly like a failed `Load`**: its hooks and byte groups are removed, its listeners,
 subscriptions, registered interfaces, queued tasks, settings rows / change callbacks and co-save callbacks dropped, its
 handle disabled; `PluginResults()` shows it `failed` with the reason ("crashed in a pse.frame event subscriber:
-exception 0xC0000005 at kyle.x.dll+0x1A2B"), the log has an ERROR line and the mod report a `[fail]` line. The game
+exception 0xC0000005 at myname.x.dll+0x1A2B"), the log has an ERROR line and the mod report a `[fail]` line. The game
 continues:
 
 - the delivery in progress goes on: the other subscribers of that event / listeners of that message / due tasks still
@@ -172,7 +172,7 @@ frame-based SEH: an exception registration record pushed and popped).
   it. A fault there is a game crash - keep detours small and tested, use an event where one exists;
 - **cross-plugin interface calls** (`QueryInterface` tables): plugin A calls plugin B's function directly. A fault
   inside B unwinds to the guard around A's callback, so **A is blamed and disabled** (the reason names the faulting
-  module, e.g. "at kyle.b.dll+0x40"). Plugins that offer interfaces should check their inputs;
+  module, e.g. "at myname.b.dll+0x40"). Plugins that offer interfaces should check their inputs;
 - threads a plugin starts itself.
 
 SEH unwinding skips C++ destructors in the frames between the fault and the guard, so a fault can leak memory the
