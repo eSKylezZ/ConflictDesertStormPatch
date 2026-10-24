@@ -65,7 +65,6 @@ Every field of `settings::Values` is declared through `pse.settings` (`Declare` 
 | SkipCutscenes | bool | | 0 | L W | SKIP CUTSCENES |
 | Antialiasing | int | 0–16 (MSAA samples) | 0 | L W (APPLY NOW) | ANTI-ALIASING |
 | Anisotropy | int | 0–16 | 16 | L W | TEXTURE FILTERING |
-| MouseAcceleration | bool | | 0 | L | MOUSE ACCELERATION |
 | VSync | bool | | 1 | L W (APPLY NOW) | V-SYNC |
 | PerfOverlay | bool | | 0 | L W | PERFORMANCE OVERLAY |
 | SkipLauncher | bool | | 0 | L W | LAUNCHER AT START |
@@ -84,10 +83,36 @@ Every field of `settings::Values` is declared through `pse.settings` (`Declare` 
 
 Optional features (`g_toggles`, OPTIONS > DESERTSTORMFIX, group "OPTIONAL FEATURES"), all bool, L unless marked R:
 FeatLoadout (1), FeatUniformSelect (0), FeatTimeOfDay (1), FeatFreeGear (0), FeatLoadoutSpin (1),
-FeatLoadoutLookAhead (1), FeatVoices (1), FeatPlayerVoice (0), FeatFollowers (1), FeatVeryHard (1, R), FeatJpFixes
-(1), FeatRumble (1), FeatTooltips (1), FeatAimAudio (1), FeatShadowFix (1), FeatSharpText (1), FeatMods (1, R),
+FeatLoadoutLookAhead (1), FeatVoices (1), FeatPlayerVoice (0), FeatNameplates (1), FeatStreamerMode (1: join / reply codes and IP addresses hidden on the online screens), FeatMultiKbm (1), FeatCoopScripts (1), FeatMods (1, R),
 FeatCustomMissions (1), FeatVersus (1, R), FeatCheats (1, R), FeatWeather (1), FeatFootprintsAll (0),
 FeatFootprintsWeather (1), FeatRunInBackground (0), FeatDevConsole (0).
+
+## FeatShadowFix / FeatAimAudio / MouseAcceleration (and four more) moved to their plugins
+
+Since 2026-10-23 the shadow fix, the aiming audio fix and the mouse acceleration fix are their own plugin DLLs
+([ds1-plugins.md](ds1-plugins.md#external-plugins)), and their settings are those plugins' own:
+`HKCU\Software\PSE\ds1\Plugins\dsfix.shadows` value `FeatShadowFix` (menu SHADOW FIX, group GRAPHICS, default 1),
+`...\dsfix.audio` value `FeatAimAudio` (AIMING AUDIO FIX, group AUDIO, default 1) and `...\dsfix.mouse` value
+`MouseAcceleration` (MOUSE ACCELERATION, group CONTROLS, default 0; the game's MOUSE OPTIONS > ACCELERATION writes it) –
+bool, REG_DWORD, LIVE. OPTIONS > DESERTSTORMFIX keeps both rows (they read / write through `pse.settings`; OFF and
+fixed when the DLL is missing); each also has a page under PLUGINS. No longer `settings::Values` fields. One-time
+import, done by the dsfix kit before the plugin declares the setting: a value missing from the plugin's key is copied
+from plugin `dsfix`'s key while the plugin's `ImportedFromDsfix` marker is absent; the marker is written at
+`PSE_MSG_POST_LOAD`. Log: `dsfix.shadows: FeatShadowFix 0 copied from plugin dsfix's settings`.
+
+The same since 2026-10-24 for six more (bool, REG_DWORD, default 1, imported the same way):
+
+| Plugin key `...\Plugins\<plugin>` | Value | Menu row (group) | Flags |
+| --- | --- | --- | --- |
+| `dsfix.difficulty` | `FeatVeryHard` | VERY EASY & VERY HARD (GAMEPLAY) | restart (not LIVE): the DIFFICULTY menu is built once per front-end load |
+| `dsfix.jpfixes` | `FeatJpFixes` | JAPANESE RELEASE FIXES (GAMEPLAY) | LIVE; online the host's value (dsfix.dll's hostsync reads it from this key for the `.J` field; no plugin = off) |
+| `dsfix.rumble` | `FeatRumble` | ENHANCED RUMBLE (CONTROLS) | LIVE (the weapon rows are rewritten at once) |
+| `dsfix.tooltips` | `FeatTooltips` | INVENTORY HINTS (HUD) | LIVE |
+| `dsfix.followers` | `FeatFollowers` | PLAYABLE FOLLOWERS (GAMEPLAY) | LIVE; online the host's value (hostsync `.F` and coopscripts' player cap read it from this key; no plugin = off) |
+| `dsfix.fontsharp` | `FeatSharpText` | SHARPER TEXT (GRAPHICS) | LIVE; only with DesertStormFix's `HudScaling` on (the plugin re-reads it when the launcher saves) |
+
+A restart row counts as changed against the value it had at `PSE_MSG_POST_LOAD` (the plugins exist then), not the one
+OPTIONS > DESERTSTORMFIX saw at its own Apply.
 
 ## DiscordPresence moved to dsfix.discord
 
@@ -159,9 +184,9 @@ wasn't given, so both share the key.
 | Loadout\<SP\|Coop\>\<role\> | REG_SZ | customise.cpp | remembered loadout "uniform;face;main;sidearm;launcher;grenades;gear…" |
 | Carry\<SP\|Coop\>\<role\>, Carry\<SP\|Coop\>From | REG_SZ | customise.cpp | kit carried into the next linked mission + the level it came from |
 | UnlockedWeaponsSP, UnlockedWeaponsCoop | REG_SZ | loadout.cpp | "id;id;…" |
-| TimeOfDay, TimeFlow | DWORD | timeofday.cpp | 0–4 each |
-| Voice\<SP\|Coop\>\<role\> | DWORD | voices.cpp | 0 auto, 1 SAS, 2 Delta, 3 own |
-| Weather | DWORD | weather.cpp | 0–12 (MISSION DEFAULT … RANDOM) |
+| TimeOfDay, TimeFlow | DWORD | **moved 2026-10-24** to plugin `dsfix.timeofday`'s own key (hidden int settings, copied once from here) | 0–4 each |
+| Voice\<SP\|Coop\>\<role\> | DWORD | **moved 2026-10-24** to plugin `dsfix.voices`'s own key (hidden int settings, copied once from here) | 0 auto, 1 SAS, 2 Delta, 3 own |
+| Weather | DWORD | **moved 2026-10-24** to plugin `dsfix.weather`'s own key (hidden int setting, copied once from here) | 0–12 (MISSION DEFAULT … RANDOM) |
 | Vehicles\<SP\|Coop\>\<Level\> | REG_SZ | vehicles.cpp | "ORIGINAL=NEW;…" vehicle swaps |
 
 ## Testing

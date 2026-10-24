@@ -1,0 +1,3 @@
+# Playable followers (the Emir, Franklin) for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services.
+name     = dsfix.followers
+requires = dsfix >= 3.3

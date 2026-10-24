@@ -1,0 +1,3 @@
+# HUD / menu scaling for Conflict: Desert Storm (DesertStormFix): the HUD and menus sized to the resolution.
+name     = dsfix.hud
+requires = dsfix >= 3.3

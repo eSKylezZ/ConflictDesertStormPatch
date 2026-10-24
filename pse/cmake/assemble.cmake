@@ -1,8 +1,15 @@
 # cmake -DDEST=<dir> -DFILES="<src>|<relative dest>@<src>|<relative dest>..." [-DCLEAN=1] -P assemble.cmake
+# cmake -DDEST=<dir> -DFILES_FROM=<file holding that list> [-DCLEAN=1] -P assemble.cmake
 #
 # Copies files into an install-shaped tree (docs/sdk/layout.md): dinput8.dll, PSE\pse_loader.dll, PSE\Games\...,
 # PSE\Plugins\... A source starting with "?" is optional (skipped when missing - PDBs). Files are copied only when they
 # differ, so a deploy into a game folder never rewrites an unchanged DLL. CLEAN=1 empties DEST first (package).
+# FILES_FROM: the list in a file (file(GENERATE)) - with many plugins the -DFILES command line passed cmd.exe's 8191
+# characters (2026-10-24: 8827) and the build step broke at a '|'.
+if(FILES_FROM)
+    file(READ "${FILES_FROM}" FILES)
+    string(STRIP "${FILES}" FILES)
+endif()
 if(NOT DEST OR NOT FILES)
     message(FATAL_ERROR "assemble.cmake: DEST and FILES are required")
 endif()

@@ -1,0 +1,3 @@
+# Developer page + debug keys for Conflict: Desert Storm (DesertStormFix): CHEATS > DEVELOPER (needs EXTENDED CHEATS).
+name     = dsfix.developer
+requires = dsfix >= 3.3

@@ -9,6 +9,7 @@
 
 #include "games/ds1/ds1_events.cpp"   // NOLINT: units under test (pse/games/ds1)
 #include "games/ds1/ds1_saves.cpp"    // NOLINT
+#include "games/ds1/ds1_originals.cpp"   // NOLINT
 #include "exe_image.h"
 #include "loader_fixture.h"
 #include "pse_test.h"
@@ -230,6 +231,12 @@ PSE_TEST("ds1 layer image: event hooks on the original exe - sites, kinds, prior
         {ds1_events::kSaveGame, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
         {ds1_events::kLoadGame, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
         {ds1_events::kIatDirect3DCreate8, PSE_HOOK_POINTER, PSE_DS1_LAYER_PRIORITY_OUTER, 4},
+        {ds1_events::kTakeDamage, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
+        {ds1_events::kVehicleDamage, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
+        {ds1_events::kPickUp, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
+        {ds1_events::kObjectiveComplete, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 10},
+        {ds1_events::kMissionEnd, PSE_HOOK_FUNCTION, PSE_DS1_LAYER_PRIORITY_OUTER, 7},
+        {ds1_events::kPickUpAddItemCall, PSE_HOOK_CALL_SITE, PSE_DS1_LAYER_PRIORITY_OUTER, 5},
     };
     for (const Want& w : wants) {
         const PSEHookInfo* i = At(list, w.va, layer);
@@ -245,6 +252,21 @@ PSE_TEST("ds1 layer image: event hooks on the original exe - sites, kinds, prior
     PSE_CHECK(memcmp(orig.data(), ds1_events::kSavePrologue, 5) == 0);
     PSE_REQUIRE(exe::OriginalBytes(ds1_events::kLoadGame, orig.data(), 5));
     PSE_CHECK(memcmp(orig.data(), ds1_events::kLoadPrologue, 5) == 0);
+    PSE_REQUIRE(exe::OriginalBytes(ds1_events::kTakeDamage, orig.data(), 5));
+    PSE_CHECK(memcmp(orig.data(), ds1_events::kTakeDamagePrologue, 5) == 0);
+    const struct {
+        uint32_t va;
+        const uint8_t* bytes;
+        size_t n;
+    } prologues[] = {{ds1_events::kVehicleDamage, ds1_events::kVehicleDamagePrologue, 5},
+                     {ds1_events::kPickUp, ds1_events::kPickUpPrologue, 5},
+                     {ds1_events::kObjectiveComplete, ds1_events::kObjectivePrologue, 10},
+                     {ds1_events::kMissionEnd, ds1_events::kMissionEndPrologue, 7}};
+    for (const auto& p : prologues) {
+        std::vector<uint8_t> b(p.n);
+        PSE_REQUIRE(exe::OriginalBytes(p.va, b.data(), static_cast<uint32_t>(p.n)));
+        PSE_CHECK(memcmp(b.data(), p.bytes, p.n) == 0);
+    }
     PSE_CHECK_EQ(exe::Read<uint8_t>(ds1_events::kSaveGame), uint8_t{0xE9});
 
     // DesertStormFix on the same sites (its own priorities, 0): framecap runs FIRST at the frame call and reaches the
@@ -271,5 +293,273 @@ PSE_TEST("ds1 layer image: event hooks on the original exe - sites, kinds, prior
     pse::hooks::ResetForTests();
     ds1_events::ResetForTests();
     exe::Restore();
+    DeleteTestKey();
+}
+
+PSE_TEST("ds1 layer originals: a game-folder file that isn't there opens its PSE\\Originals copy") {
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    const std::string game = std::string(tmp) + "pse_originals_test", orig = game + "\\PSE\\Originals";
+    CreateDirectoryA(game.c_str(), nullptr);
+    CreateDirectoryA((game + "\\PSE").c_str(), nullptr);
+    CreateDirectoryA(orig.c_str(), nullptr);
+    auto touch = [](const std::string& p) {
+        CloseHandle(CreateFileA(p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr));
+    };
+    touch(orig + "\\mission1.dat");   // moved
+    touch(orig + "\\catalog.dat");    // moved, but back in the game folder too
+    touch(game + "\\catalog.dat");
+    ds1_originals::SetFoldersForTests(game);
+    PSE_CHECK_EQ(ds1_originals::Redirect((game + "\\mission1.dat").c_str()), orig + "\\mission1.dat");
+    PSE_CHECK_EQ(ds1_originals::Redirect((game + "\\MISSION1.DAT").c_str()), orig + "\\MISSION1.DAT");
+    PSE_CHECK(ds1_originals::Redirect((game + "\\catalog.dat").c_str()).empty());       // the game folder's wins
+    PSE_CHECK(ds1_originals::Redirect((game + "\\nothing.dat").c_str()).empty());       // in neither
+    PSE_CHECK(ds1_originals::Redirect((game + "\\*.dat").c_str()).empty());             // wildcards untouched
+    PSE_CHECK(ds1_originals::Redirect((game + "\\Data\\mission1.dat").c_str()).empty());   // other folders too
+    PSE_CHECK(ds1_originals::Redirect("").empty());
+    for (const std::string& f : {orig + "\\mission1.dat", orig + "\\catalog.dat", game + "\\catalog.dat"})
+        DeleteFileA(f.c_str());
+    RemoveDirectoryA(orig.c_str());
+    RemoveDirectoryA((game + "\\PSE").c_str());
+    RemoveDirectoryA(game.c_str());
+    ds1_originals::ResetForTests();
+}
+
+PSE_TEST("ds1 layer image: the originals redirect hooks the exe's five file imports, owned by the layer") {
+    PSE_REQUIRE_EXE();
+    exe::Restore();
+    Fresh();
+    ds1_originals::ResetForTests();
+    const PSEPluginHandle layer = AddPlugin("pse.game.ds1");
+    PSE_CHECK_EQ(ds1_originals::Install(layer), 0);
+    const auto list = Hooks();
+    for (uint32_t slot : {ds1_originals::kIatCreateFileA, ds1_originals::kIatCreateFileW,
+                          ds1_originals::kIatGetFileAttributesA, ds1_originals::kIatFindFirstFileA,
+                          ds1_originals::kIatLoadLibraryA}) {
+        const PSEHookInfo* i = At(list, slot, layer);
+        PSE_REQUIRE(i);
+        PSE_CHECK_EQ(static_cast<int>(i->kind), static_cast<int>(PSE_HOOK_POINTER));
+        PSE_CHECK_EQ(i->priority, PSE_DS1_LAYER_PRIORITY_OUTER);
+    }
+    pse::hooks::ResetForTests();
+    ds1_originals::ResetForTests();
+    exe::Restore();
+    DeleteTestKey();
+}
+
+namespace {
+// A made-up soldier: health at +0x54, script id at +8. The game's damage function stand-in takes the amount off.
+struct FakeSoldier {
+    uint8_t bytes[0x80] = {};   // (items: owner at +0x6C)
+    void Set(int32_t id, float health) { memcpy(bytes + 8, &id, 4); memcpy(bytes + 0x54, &health, 4); }
+    float Health() const { float h; memcpy(&h, bytes + 0x54, 4); return h; }
+};
+float g_gameGot = -1;
+void __fastcall FakeTakeDamage(void* soldier, void*, float amount, void*) {
+    g_gameGot = amount;
+    float h;
+    memcpy(&h, static_cast<uint8_t*>(soldier) + 0x54, 4);
+    h -= amount;
+    memcpy(static_cast<uint8_t*>(soldier) + 0x54, &h, 4);
+}
+std::vector<std::string> g_damageSeen;
+float g_scale = 1.0f;
+int PSE_CALL OnDamage(PSEEventId, void* data, void* ctx) {
+    auto* e = static_cast<PSEDs1DamageEvent*>(data);
+    char b[160];
+    snprintf(b, sizeof b, "%s id %d by %d amount %.1f health %.1f -> %.1f", static_cast<const char*>(ctx), e->victimId,
+             e->attackerId, e->amount, e->healthBefore, e->healthAfter);
+    g_damageSeen.push_back(b);
+    if (!strcmp(static_cast<const char*>(ctx), "damage")) e->amount *= g_scale;
+    return 0;
+}
+}  // namespace
+
+PSE_TEST("ds1 layer events: soldier damage - a subscriber changes or cancels it, killed on the way to 0") {
+    Fresh();
+    const PSEPluginHandle plugin = AddPlugin("test.damage");
+    const PSEMessagingInterface* m = pse::MessagingInterface();
+    ds1_events::g_evDamage = m->EventId(PSE_DS1_EVENT_SOLDIER_DAMAGE);
+    ds1_events::g_evDamaged = m->EventId(PSE_DS1_EVENT_SOLDIER_DAMAGED);
+    ds1_events::g_evKilled = m->EventId(PSE_DS1_EVENT_SOLDIER_KILLED);
+    ds1_events::g_damageNext = reinterpret_cast<void*>(&FakeTakeDamage);
+    static char kDamage[] = "damage", kDamaged[] = "damaged", kKilled[] = "killed";
+    m->Subscribe(plugin, ds1_events::g_evDamage, &OnDamage, kDamage, 0);
+    m->Subscribe(plugin, ds1_events::g_evDamaged, &OnDamage, kDamaged, 0);
+    m->Subscribe(plugin, ds1_events::g_evKilled, &OnDamage, kKilled, 0);
+    FakeSoldier victim, shooter;
+    victim.Set(31, 100.0f);
+    shooter.Set(7, 150.0f);
+    g_damageSeen.clear();
+    g_scale = 0.5f;   // half damage
+    ds1_events::DamageHook(victim.bytes, nullptr, 40.0f, shooter.bytes);
+    PSE_CHECK(g_gameGot == 20.0f);
+    PSE_CHECK(victim.Health() == 80.0f);
+    g_scale = 0.0f;   // cancelled: the game isn't called
+    g_gameGot = -1;
+    ds1_events::DamageHook(victim.bytes, nullptr, 40.0f, nullptr);
+    PSE_CHECK(g_gameGot == -1.0f);
+    g_scale = 1.0f;   // the killing blow
+    ds1_events::DamageHook(victim.bytes, nullptr, 90.0f, shooter.bytes);
+    g_gameGot = -1;
+    ds1_events::DamageHook(victim.bytes, nullptr, 10.0f, shooter.bytes);   // already dead: straight to the game
+    PSE_CHECK(g_gameGot == 10.0f);
+    const std::vector<std::string> want = {
+        "damage id 31 by 7 amount 40.0 health 100.0 -> 100.0",
+        "damaged id 31 by 7 amount 20.0 health 100.0 -> 80.0",
+        "damage id 31 by -1 amount 40.0 health 80.0 -> 80.0",
+        "damage id 31 by 7 amount 90.0 health 80.0 -> 80.0",
+        "damaged id 31 by 7 amount 90.0 health 80.0 -> -10.0",
+        "killed id 31 by 7 amount 90.0 health 80.0 -> -10.0",
+    };
+    PSE_CHECK_EQ(g_damageSeen.size(), want.size());
+    for (size_t i = 0; i < want.size() && i < g_damageSeen.size(); ++i) PSE_CHECK_EQ(g_damageSeen[i], want[i]);
+    ds1_events::g_damageNext = nullptr;
+    DeleteTestKey();
+}
+
+namespace {
+std::vector<std::string> g_more;
+int PSE_CALL OnMore(PSEEventId, void* data, void* ctx) {
+    const char* name = static_cast<const char*>(ctx);
+    char b[160];
+    if (!strcmp(name, "picked")) {
+        auto* e = static_cast<PSEDs1PickUpEvent*>(data);
+        snprintf(b, sizeof b, "picked %d took %d", e->soldierId, e->itemId);
+    } else if (!strcmp(name, "end")) {
+        snprintf(b, sizeof b, "end %u", static_cast<PSEDs1MissionEndEvent*>(data)->result);
+    } else {
+        auto* e = static_cast<PSEDs1DamageEvent*>(data);
+        snprintf(b, sizeof b, "%s %d amount %.1f health %.1f -> %.1f", name, e->victimId, e->amount, e->healthBefore,
+                 e->healthAfter);
+        if (!strcmp(name, "vdamage")) e->amount *= g_scale;
+    }
+    g_more.push_back(b);
+    return 0;
+}
+int g_finishSeen = -1;
+void __fastcall FakeVehicleDamage(void* v, void*, float amount, void*, int, float, int finish) {
+    g_finishSeen = finish;
+    float h;
+    memcpy(&h, static_cast<uint8_t*>(v) + 0x54, 4);
+    h -= amount;
+    memcpy(static_cast<uint8_t*>(v) + 0x54, &h, 4);
+}
+int __fastcall FakeAddItem(void*, void*, void* item, int, int) {   // takes it unless the item's id is 99 (refused)
+    int32_t id;
+    memcpy(&id, static_cast<uint8_t*>(item) + 8, 4);
+    return id != 99;
+}
+void __fastcall FakePickUp(void* soldier, void*, void* item) {   // the game's pick-up: AddItem through its call site
+    ds1_events::AddItemHook(soldier, nullptr, item, 0, 0);
+}
+uint32_t g_resultSet = 0;
+void __fastcall FakeSetResult(void*, void*, uint32_t result) { g_resultSet = result; }
+}  // namespace
+
+PSE_TEST("ds1 layer events: vehicles (finish calls can't be cancelled), pick-ups, mission end") {
+    Fresh();
+    const PSEPluginHandle plugin = AddPlugin("test.more");
+    const PSEMessagingInterface* m = pse::MessagingInterface();
+    ds1_events::g_evVehDamage = m->EventId(PSE_DS1_EVENT_VEHICLE_DAMAGE);
+    ds1_events::g_evVehDamaged = m->EventId(PSE_DS1_EVENT_VEHICLE_DAMAGED);
+    ds1_events::g_evVehDestroyed = m->EventId(PSE_DS1_EVENT_VEHICLE_DESTROYED);
+    ds1_events::g_evPickUp = m->EventId(PSE_DS1_EVENT_ITEM_PICKED_UP);
+    ds1_events::g_evMissionEnd = m->EventId(PSE_DS1_EVENT_MISSION_END);
+    ds1_events::g_vehicleNext = reinterpret_cast<void*>(&FakeVehicleDamage);
+    ds1_events::g_pickUpNext = reinterpret_cast<void*>(&FakePickUp);
+    ds1_events::g_addItemNext = reinterpret_cast<void*>(&FakeAddItem);
+    ds1_events::g_missionEndNext = reinterpret_cast<void*>(&FakeSetResult);
+    static char kV1[] = "vdamage", kV2[] = "vdamaged", kV3[] = "destroyed", kP[] = "picked", kE[] = "end";
+    m->Subscribe(plugin, ds1_events::g_evVehDamage, &OnMore, kV1, 0);
+    m->Subscribe(plugin, ds1_events::g_evVehDamaged, &OnMore, kV2, 0);
+    m->Subscribe(plugin, ds1_events::g_evVehDestroyed, &OnMore, kV3, 0);
+    m->Subscribe(plugin, ds1_events::g_evPickUp, &OnMore, kP, 0);
+    m->Subscribe(plugin, ds1_events::g_evMissionEnd, &OnMore, kE, 0);
+    g_more.clear();
+    FakeSoldier tank, soldier, item, refused;
+    tank.Set(309, 500.0f);
+    soldier.Set(0, 150.0f);
+    item.Set(245, 0.0f);
+    refused.Set(99, 0.0f);
+    g_scale = 0.0f;   // cancelled
+    ds1_events::VehicleDamageHook(tank.bytes, nullptr, 100.0f, nullptr, 1, 1.0f, 0);
+    PSE_CHECK(tank.Health() == 500.0f);
+    g_scale = 1.0f;
+    ds1_events::VehicleDamageHook(tank.bytes, nullptr, 600.0f, nullptr, 1, 1.0f, 0);   // destroyed
+    PSE_CHECK(g_finishSeen == 0);
+    tank.Set(309, 50.0f);
+    g_scale = 0.0f;   // a finish call: no before-event, so no cancel
+    ds1_events::VehicleDamageHook(tank.bytes, nullptr, 100.0f, nullptr, 1, 1.0f, 1);
+    PSE_CHECK(g_finishSeen == 1 && tank.Health() == -50.0f);
+    ds1_events::PickUpHook(soldier.bytes, nullptr, item.bytes);
+    ds1_events::PickUpHook(soldier.bytes, nullptr, refused.bytes);   // the game refused: no event
+    ds1_events::MissionEndHook(nullptr, nullptr, 2);
+    PSE_CHECK(g_resultSet == 2);
+    const std::vector<std::string> want = {
+        "vdamage 309 amount 100.0 health 500.0 -> 500.0",
+        "vdamage 309 amount 600.0 health 500.0 -> 500.0",
+        "vdamaged 309 amount 600.0 health 500.0 -> -100.0",
+        "destroyed 309 amount 600.0 health 500.0 -> -100.0",
+        "vdamaged 309 amount 100.0 health 50.0 -> -50.0",
+        "destroyed 309 amount 100.0 health 50.0 -> -50.0",
+        "picked 0 took 245",
+        "end 2",
+    };
+    PSE_CHECK_EQ(g_more.size(), want.size());
+    for (size_t i = 0; i < want.size() && i < g_more.size(); ++i) PSE_CHECK_EQ(g_more[i], want[i]);
+    ds1_events::g_vehicleNext = ds1_events::g_pickUpNext = ds1_events::g_missionEndNext = nullptr;
+    ds1_events::g_addItemNext = nullptr;
+    DeleteTestKey();
+}
+
+namespace {
+// A made-up script object: message records what reached the script; an "online" wrapper like authority.cpp's.
+std::vector<std::string> g_scriptSeen;
+int __cdecl FakeScriptMessage(int id, uint32_t* p) {
+    g_scriptSeen.push_back("script " + std::to_string(id) + " " + std::to_string(p ? p[0] : 0));
+    return 7;
+}
+int PSE_CALL OnScriptMessage(PSEEventId, void* data, void*) {
+    auto* e = static_cast<PSEDs1ScriptMessageEvent*>(data);
+    g_scriptSeen.push_back("event " + std::to_string(e->id) + " " + std::to_string(e->params ? e->params[0] : 0));
+    return 0;
+}
+ds1_events::ScriptObject g_onlineCopy{};
+ds1_events::ScriptObject* g_onlineOriginal = nullptr;
+int __cdecl OnlineMessage(int id, uint32_t* p) {
+    g_scriptSeen.push_back("online " + std::to_string(id));
+    return reinterpret_cast<int(__cdecl*)(int, uint32_t*)>(g_onlineOriginal->fn[2])(id, p);
+}
+}  // namespace
+
+PSE_TEST("ds1 layer image: script messages - the layer's copy of the script object raises them, chains stay one-way") {
+    PSE_REQUIRE_EXE();
+    Fresh();
+    const PSEPluginHandle plugin = AddPlugin("test.messages");
+    const PSEMessagingInterface* m = pse::MessagingInterface();
+    ds1_events::g_evScriptMessage = m->EventId(PSE_DS1_EVENT_SCRIPT_MESSAGE);
+    m->Subscribe(plugin, ds1_events::g_evScriptMessage, &OnScriptMessage, nullptr, 0);
+    auto& slot = *reinterpret_cast<ds1_events::ScriptObject**>(exe::Ptr(ds1_events::kScriptObject));
+    ds1_events::ScriptObject* const saved = slot;
+    ds1_events::ScriptObject script{};
+    script.fn[2] = reinterpret_cast<void*>(&FakeScriptMessage);
+    slot = &script;
+    ds1_events::WrapScriptObject();
+    ds1_events::WrapScriptObject();   // once: a second level-init call doesn't wrap the copy again
+    PSE_CHECK(slot == &ds1_events::g_scriptProxy && ds1_events::g_scriptOriginal == &script);
+    g_onlineOriginal = slot;           // online mode wraps whatever is there (the layer's copy)
+    g_onlineCopy = *slot;
+    g_onlineCopy.fn[2] = reinterpret_cast<void*>(&OnlineMessage);
+    slot = &g_onlineCopy;
+    g_scriptSeen.clear();
+    uint32_t params[8] = {37, 2};
+    const int r = reinterpret_cast<int(__cdecl*)(int, uint32_t*)>(slot->fn[2])(0x15, params);   // door 37 opening
+    PSE_CHECK_EQ(r, 7);
+    const std::vector<std::string> want = {"online 21", "event 21 37", "script 21 37"};
+    PSE_CHECK_EQ(g_scriptSeen.size(), want.size());
+    for (size_t i = 0; i < want.size() && i < g_scriptSeen.size(); ++i) PSE_CHECK_EQ(g_scriptSeen[i], want[i]);
+    slot = saved;
+    ds1_events::g_evScriptMessage = 0;
     DeleteTestKey();
 }

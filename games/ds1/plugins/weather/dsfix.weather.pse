@@ -1,0 +1,4 @@
+# Weather, weather sounds, footprints + puddles for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services,
+# publishes dsfix.weather v1 (dsfix_weather.h).
+name     = dsfix.weather
+requires = dsfix >= 3.3

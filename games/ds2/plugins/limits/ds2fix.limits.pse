@@ -1,0 +1,5 @@
+# DesertStorm2Fix's engine limits (games/ds2/plugins/limits): bigger physics / collision / particle / projectile / event /
+# decal / render pools, more A* searches, AI think budgets and sound voices for big battles; saves stay readable by the
+# unmodified game. Changes the simulation: online peers must run the same version (SIMULATION).
+name     = ds2fix.limits
+requires = pse.game.ds2 >= 1.0, ds2fix >= 0.1

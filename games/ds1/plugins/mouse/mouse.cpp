@@ -1,0 +1,90 @@
+// Mouse acceleration off by default. The mouse settings live in each player's input block (0x60F5B8 + i*0x478):
+// +0x43C/+0x440 sensitivity, +0x444 invert, +0x448 acceleration (read by the mouse look at 0x44FA69 / 0x44FB93).
+// The block set-up gives every player acceleration: `mov dword ptr [esi+0x448], 1` at 0x44AAA6 (immediate at
+// 0x44AAAC). MOUSE OPTIONS -> ACCELERATION (item 0xFEA, selection FUN_0045c7a0) edits player 1's (0x60FA00 =
+// block 0 +0x448), saved in the game's settings data (0x415AD2) and applied when that is loaded (0x415F44).
+// Our setting MouseAcceleration (default 0) owns the value: the set-up's immediate is it, and
+//   0x415F44  mov [0x60fa00], ecx  -> call ApplyStub; nop   (loaded settings: our value instead)
+//   0x45C862  mov [0x60fa00], edx  -> call ChangeStub; nop  (the player's choice in MOUSE OPTIONS: stored)
+// so the game starts without acceleration and a player who turns it on keeps it.
+//
+// Its own PSE plugin since 2026-10-23 (PSE\Plugins\dsfix.mouse.dll, on the dsfix kit); MouseAcceleration lives in its
+// own pse.settings key (copied once from dsfix's).
+#include <windows.h>
+
+#include <cstdint>
+#include <cstring>
+
+#include "core/log.h"
+#include "core/patch.h"
+#include "kit/kit.h"
+
+namespace {
+constexpr char kSetting[] = "MouseAcceleration";
+constexpr uint32_t kAcceleration = 0x60FA00;
+constexpr uint32_t kApplySite = 0x415F44, kChangeSite = 0x45C862;
+constexpr uint32_t kDefaultImm = 0x44AAAC;  // mov dword ptr [esi+0x448], <1> (block set-up, at 0x44AAA6)
+constexpr uint8_t kDefaultInstr[] = {0xC7, 0x86, 0x48, 0x04, 0x00, 0x00};
+constexpr uint8_t kApplyOrig[] = {0x89, 0x0D, 0x00, 0xFA, 0x60, 0x00};
+constexpr uint8_t kChangeOrig[] = {0x89, 0x15, 0x00, 0xFA, 0x60, 0x00};
+uint32_t g_acceleration = 0;
+
+void SetDefault() {
+    if (patch::Matches(kDefaultImm - 6, kDefaultInstr, sizeof kDefaultInstr)) patch::WriteValue(kDefaultImm, g_acceleration);
+}
+
+void __cdecl Store(uint32_t on) {
+    g_acceleration = on ? 1 : 0;
+    SetDefault();
+    kit::SetBool(kSetting, g_acceleration != 0);
+}
+
+// Changed elsewhere (the PLUGINS page): the next block set-up uses it; player 1's current value follows too.
+void SettingChanged(bool on) {
+    if (g_acceleration == (on ? 1u : 0u)) return;
+    g_acceleration = on ? 1 : 0;
+    SetDefault();
+    *reinterpret_cast<volatile uint32_t*>(kAcceleration) = g_acceleration;
+}
+
+__declspec(naked) void ApplyStub() {
+    __asm {
+        push eax
+        mov eax, g_acceleration
+        mov dword ptr ds:[0x60FA00], eax  // literal: a constexpr name here would be its own address
+        pop eax
+        ret
+    }
+}
+
+__declspec(naked) void ChangeStub() {
+    __asm {
+        mov dword ptr ds:[0x60FA00], edx
+        pushad
+        push edx
+        call Store
+        add esp, 4
+        popad
+        ret
+    }
+}
+
+// call fn; nop over a 6-byte instruction the stub replays: a call@ code group.
+bool CallAt(uint32_t site, const void* fn, const uint8_t (&original)[6]) {
+    return patch::WriteCall(site, fn, sizeof original, original);
+}
+bool Load() {
+    if (!kit::DeclareBool(kSetting, false, "MOUSE ACCELERATION", "the game's MOUSE OPTIONS > ACCELERATION", "CONTROLS",
+                          &SettingChanged))
+        return false;
+    g_acceleration = kit::GetBool(kSetting) ? 1 : 0;
+    const bool ok = patch::Matches(kDefaultImm - 6, kDefaultInstr, sizeof kDefaultInstr) && CallAt(kApplySite, reinterpret_cast<const void*>(&ApplyStub), kApplyOrig) &&
+                    CallAt(kChangeSite, reinterpret_cast<const void*>(&ChangeStub), kChangeOrig);
+    if (ok) SetDefault();
+    dslog::Write(ok ? "[ok]   Mouse acceleration: %s (MOUSE OPTIONS)" : "[fail] Mouse acceleration: unexpected code (%s)",
+                 g_acceleration ? "on" : "off");
+    return true;
+}
+}  // namespace
+
+DSFIX_KIT_PLUGIN("dsfix.mouse", "Mouse acceleration", PSE_PLUGIN_CLIENT_ONLY, Load)

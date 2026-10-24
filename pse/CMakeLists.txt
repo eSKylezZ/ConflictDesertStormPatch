@@ -37,7 +37,9 @@ target_link_libraries(pse_build_lib PUBLIC bcrypt shell32 ole32)
 # pse_records (DESIGN.md §13.3-13.4): PSE data files (Lua-table literals, canonical writer) - the records layer's
 # format. Byte-identical with the ModKit's conflict_ds_tools/pse_data.py (scripts/records_gate.py).
 add_library(pse_records STATIC ${CMAKE_CURRENT_SOURCE_DIR}/records/data.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/data.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/forms.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/records/placed.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/placed.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/records/scenepatch.cpp ${CMAKE_CURRENT_SOURCE_DIR}/records/scenepatch.h)
 target_include_directories(pse_records PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/records)
 target_compile_options(pse_records PRIVATE /W4 /permissive- /utf-8 /EHsc $<$<NOT:$<BOOL:${DS_DIST}>>:/Zi>)
 target_link_libraries(pse_build_lib PUBLIC pse_records)
@@ -85,8 +87,9 @@ add_library(pse_ds1 SHARED ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_layer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/pse_game_ds1_host.h
     ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_events.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_events.h
     ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_saves.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_saves.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_originals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1/ds1_originals.h
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)   # pse.ids: the layer registers the DS1 ID database (also in pse_core)
-target_include_directories(pse_ds1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1 ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(pse_ds1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/ds1 ${CMAKE_CURRENT_SOURCE_DIR}/ids)   # generated/pse_ids_ds1.h
 target_link_libraries(pse_ds1 PRIVATE pse_hostlink)
 set_target_properties(pse_ds1 PROPERTIES OUTPUT_NAME pse_ds1)
 target_link_options(pse_ds1 PRIVATE /SAFESEH:NO)
@@ -95,18 +98,28 @@ target_link_options(pse_ds1 PRIVATE /SAFESEH:NO)
 # pse_tree_ds2 below (into DS2_GAME_DIR when set) - never into the DS1 install.
 file(GLOB PSE_DS2_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2/*.h)
 add_library(pse_ds2 SHARED ${PSE_DS2_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)
-target_include_directories(pse_ds2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2 ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(pse_ds2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/ds2 ${CMAKE_CURRENT_SOURCE_DIR}/ids)   # generated/pse_ids_ds2.h
 target_link_libraries(pse_ds2 PRIVATE pse_hostlink)
 set_target_properties(pse_ds2 PROPERTIES OUTPUT_NAME pse_ds2)
 target_link_options(pse_ds2 PRIVATE /SAFESEH:NO)
+
+# PSE\Games\pse_cv.dll: the Conflict: Vietnam game layer (docs/sdk/reference/game-cv.md). Deployed only by games/cv's
+# own CMakeLists.txt (CV_PSE_PLUGIN) - built here only so pse_tests can load it (test_game_cv.cpp).
+file(GLOB PSE_CV_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/games/cv/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/cv/*.h)
+add_library(pse_cv SHARED ${PSE_CV_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)
+target_include_directories(pse_cv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/cv ${CMAKE_CURRENT_SOURCE_DIR}/ids)   # generated/pse_ids_cv.h
+target_link_libraries(pse_cv PRIVATE pse_hostlink)
+set_target_properties(pse_cv PROPERTIES OUTPUT_NAME pse_cv)
+target_link_options(pse_cv PRIVATE /SAFESEH:NO)
 
 if(COMMAND ds_ship_target)
     ds_ship_target(pse_loader "Pivotal Script Extender loader" pse_loader.dll)
     ds_ship_target(pse_shim "Pivotal Script Extender shim (dinput8 proxy)" dinput8.dll)
     ds_ship_target(pse_ds1 "Pivotal Script Extender - Conflict: Desert Storm game layer" pse_ds1.dll)
     ds_ship_target(pse_ds2 "Pivotal Script Extender - Conflict: Desert Storm II game layer" pse_ds2.dll)
+    ds_ship_target(pse_cv "Pivotal Script Extender - Conflict: Vietnam game layer" pse_cv.dll)
 else()
-    foreach(t pse_loader pse_shim pse_ds1 pse_ds2)
+    foreach(t pse_loader pse_shim pse_ds1 pse_ds2 pse_cv)
         target_compile_definitions(${t} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
     endforeach()
@@ -137,8 +150,11 @@ if(NOT DS_DIST)
     # A SIMULATION-flagged plugin for the online plugin-set check (docs/sdk/online-compat.md).
     pse_add_plugin(pse_example_sim_rules SOURCES examples/sim_rules/sim_rules.cpp
         MANIFEST examples/sim_rules/example.sim_rules.pse)
+    pse_add_plugin(pse_example_sim_fingerprint SOURCES examples/sim_fingerprint/sim_fingerprint.cpp
+        MANIFEST examples/sim_fingerprint/example.sim_fingerprint.pse)
     set(PSE_EXAMPLE_PLUGINS pse_example_hello pse_example_hello_client pse_example_bad_crash pse_example_crash_postload
-        pse_example_crash_frame pse_example_crash_task pse_example_crash_callbacks pse_example_sim_rules)
+        pse_example_crash_frame pse_example_crash_task pse_example_crash_callbacks pse_example_sim_rules
+        pse_example_sim_fingerprint)
     foreach(t IN LISTS PSE_EXAMPLE_PLUGINS)
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
     endforeach()
@@ -228,7 +244,7 @@ if(NOT DS_DIST)
     file(GLOB PSE_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
     add_executable(pse_tests ${PSE_TEST_SOURCES})
     target_include_directories(pse_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/loader ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/generated)
+        ${CMAKE_SOURCE_DIR}/games/ds1/src ${CMAKE_CURRENT_SOURCE_DIR}/ids ${CMAKE_BINARY_DIR}/generated)
     target_compile_definitions(pse_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_compile_options(pse_tests PRIVATE /W4 /permissive- /utf-8 /Zi /EHsc)
     target_link_libraries(pse_tests PRIVATE pse_core lua_static)   # lua_static: test_lua_iface.cpp (pse/loader/lua_bridge.h)

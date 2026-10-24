@@ -34,6 +34,9 @@ typedef struct PSEShimInfo {
  * lock. Returns 1 = PSE runs (a game layer recognised the exe), 0 = vanilla (nothing patched). */
 typedef int(PSE_CALL* PSELoaderStartFn)(const PSEShimInfo* info);
 #define PSE_LOADER_START_EXPORT "PSELoader_Start"
+/* After a start that left PSE off: why, in English ("" when running). The shim shows it to the player once. */
+typedef const char*(PSE_CALL* PSELoaderReasonFn)(void);
+#define PSE_LOADER_REASON_EXPORT "PSELoader_Reason"
 
 /* ---- loader -> game layer (PSE\Games\pse_<game>.dll) -------------------------------------------------------------- */
 

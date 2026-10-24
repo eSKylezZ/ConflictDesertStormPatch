@@ -1,0 +1,3 @@
+# VERY HARD / VERY EASY difficulties for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services.
+name     = dsfix.difficulty
+requires = dsfix >= 3.3

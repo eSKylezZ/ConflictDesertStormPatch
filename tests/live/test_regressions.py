@@ -11,6 +11,17 @@ def test_level_change_while_loadout_screen_is_open(c):
     """2026-10-19: a level load while the briefing / loadout screen was up crashed at 0x569FD7 (the screen's late draw
     asked the game's text lookup for the level title while the load had freed the text tables). Now the draw pauses
     during a load and the lookup is fault-safe."""
+    # the screen this test needs is the optional briefing / loadout screen (FeatLoadout, applies at the next level
+    # start): on for the test, the player's value put back
+    was = c.run('return dev.setting("FeatLoadout")')
+    c.run('return dev.set_setting("FeatLoadout", 1)')
+    try:
+        _level_change_while_loadout_screen_is_open(c)
+    finally:
+        if was is not None: c.run('return dev.set_setting("FeatLoadout", %d)' % was)
+
+
+def _level_change_while_loadout_screen_is_open(c):
     before = _log_text(c, 20000).count("Customise: opened in")
     c.console("level Mission1.dll")
     c.wait_for_play(timeout=180)

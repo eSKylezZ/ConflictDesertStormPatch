@@ -1,0 +1,3 @@
+# Soldier bodies from mods' .skin files (DesertStormFix). Uses dsfix.services.
+name     = dsfix.bodies
+requires = dsfix >= 3.3

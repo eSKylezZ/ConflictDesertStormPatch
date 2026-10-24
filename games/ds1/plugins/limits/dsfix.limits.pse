@@ -1,0 +1,2 @@
+# Engine limits raised for big battles (DesertStormFix). Publishes interface dsfix.limits v1 (dsfix_limits.h).
+name     = dsfix.limits

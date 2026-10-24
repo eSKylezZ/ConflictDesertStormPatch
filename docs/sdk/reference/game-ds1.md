@@ -131,7 +131,9 @@ uint32_t LookupText(uint32_t hash, char* buf, uint32_t bufLen);
 
 One text in the game's current language, whatever the game's own menus would show: the catalog lookup `FUN_004f6730`
 (thiscall on the text table `[0x60EDCC]`) – in DesertStormFix that entry is its `Lookup` hook, so mod `.strings`
-texts, the level's `MnnStrs.loc` texts while loaded and DesertStormFix's own menu texts are included. Converted from
+texts, the level's `MnnStrs.loc` texts while loaded and DesertStormFix's own menu texts are included. (The mission
+text lookup `FUN_004f5e80` used by movie texts and subtitles also falls back to the `.strings` texts of the level's
+section.) Converted from
 the game's ANSI code page to UTF-8, otherwise as stored (no case change; icon control characters kept). Returns 0 and
 `""` for an unknown hash, an empty text or before the text table exists (start-up, launcher). Also `""` while a level
 load has the table's search arrays freed; the lookup runs fault-guarded, so asking mid-load is safe (it used to crash
@@ -261,6 +263,12 @@ hooks broker, owner `pse.game.ds1` - so **every plugin gets them with or without
 | `0x40DF18` (level change) / `0x411404` (window destroyed) call `Level_Unload` | call site | OUTER | `PSE_EVENT_LEVEL_UNLOAD` (the loaded level's name) before the unload; nothing when no level is loaded |
 | `0x415650` `Save_Game` entry | function | OUTER | `PSE_MSG_SAVE_BEGIN` / co-save / `PSE_MSG_SAVE_END` |
 | `0x415B60` `Save_Load` entry | function | OUTER | `PSE_MSG_LOAD_BEGIN` / co-save / `PSE_MSG_LOAD_END` |
+| `0x424200` `Soldier_TakeDamage` entry | function | OUTER | `ds1.soldier_damage` / `_damaged` / `_killed` ([below](#game-events-soldier-damage-and-deaths)) |
+| `0x43E1F0` `Vehicle_ApplyDamage` entry | function | OUTER | `ds1.vehicle_damage` / `_damaged` / `_destroyed` |
+| `0x432070` `Soldier_PickUp` entry + `0x432082` its `AddItem` call | function + call site | OUTER | `ds1.item_picked_up` |
+| `0x4819E0` complete-objective (script API +0x4C0) entry | function | OUTER | `ds1.objective_completed` |
+| `0x4578A0` `Campaign_SetResult` entry | function | OUTER | `ds1.mission_end` |
+| `0x5D8138` `CreateFileA`, `0x5D80B0` `CreateFileW`, `0x5D810C` `GetFileAttributesA`, `0x5D8104` `FindFirstFileA`, `0x5D8070` `LoadLibraryA` import slots | pointer | OUTER | none - the game's files in `PSE\Originals` (below) |
 | `0x5D8308` import slot `Direct3DCreate8` → `IDirect3D8::CreateDevice` (vtable 15, per COM class) | pointer | OUTER | `PSE_MSG_DEVICE_CREATED` after a successful CreateDevice; hooks the device's slots below |
 | device `TestCooperativeLevel` (3) | pointer | INNER | `PSE_MSG_DEVICE_LOST` once when it starts answering DEVICELOST / DEVICENOTRESET |
 | device `Reset` (14) | pointer | OUTER | `PSE_MSG_DEVICE_RESET` after a successful reset (also after OPTIONS > VIDEO's live mode change) |
@@ -291,14 +299,84 @@ messages: "pse". A hook the broker refuses costs only its event (a `[fail]` line
 
 **Without DesertStormFix**: everything above still runs (`tests/live/test_layer_without_dsfix.py`: an example plugin
 logs frames, render / EndScene / Present, device created, NEW_GAME, level load / unload, save / load with its own
-co-save chunk round trip). Not sent without it: `PSE_MSG_EXIT` (DesertStormFix's window procedure sends it). No frame
-cap either - the game then runs as fast as it can.
+co-save chunk round trip, `PSE_MSG_EXIT` when the game closes). No frame cap - the game then runs as fast as it can.
+
+**Exit**: the layer's hook on the level unload inside `WM_DESTROY` (`0x411404`) sends `PSE_LEVEL_UNLOAD`, then calls
+`pse.host` `Shutdown` (`PSE_MSG_EXIT`, plugins unloaded - once; DesertStormFix's window procedure may call it first),
+then the game's own clean-up runs.
+
+**Game files** (`ds1_originals.cpp`, since 2026-10-22): DesertStormFix moves the original archives, sound caches and level
+script DLLs into `PSE\Originals`; the layer's pointer hooks on the exe's `CreateFileA` `0x5D8138`, `CreateFileW`
+`0x5D80B0`, `GetFileAttributesA` `0x5D810C`, `FindFirstFileA` `0x5D8104` and `LoadLibraryA` `0x5D8070` (priority OUTER)
+open the `PSE\Originals` copy of a game-folder file that isn't there (a bare DLL name counts as the game folder), so the
+game runs with or without DesertStormFix. Before, these hooks were DesertStormFix's: without it the game stopped at
+"Couldn't open GenStrs.loc".
+
+**Paths in messages**: `PSE_MSG_SAVE_*` / `PSE_MSG_LOAD_*` carry the save path in UTF-8 (the game's ANSI path
+converted; DS2 sends UTF-8 too), and the co-save is found with it - a save folder with non-ASCII letters keeps its
+`.pse`.
+
+## Game events: soldier damage and deaths
+
+Named events (`pse.messaging`; the id from `EventId(name)`, names as macros in `pse_game_ds1.h`), raised by the layer on
+the game thread from one entry hook on the soldiers' damage function `Soldier_TakeDamage` `0x424200` (owner
+pse.game.ds1, priority OUTER). Every damage of a soldier goes through it: bullets, explosions, falls, a script's kill.
+`data` = `PSEDs1DamageEvent*`:
+
+| Event | When | What a subscriber may do |
+| --- | --- | --- |
+| `ds1.soldier_damage` | before the game applies the damage | change `amount`: the game applies what is left after every subscriber; 0 or less = nothing happens (no damage, no hit reaction) |
+| `ds1.soldier_damaged` | after it: `healthAfter` = the health now | read |
+| `ds1.soldier_killed` | right after `ds1.soldier_damaged` when health went from above 0 to 0 or below | read |
+
+`PSEDs1DamageEvent`: `size`, `victim` (soldier handle), `victimId` (script id - the object id mission scripts use),
+`attacker` (object address, 0 = none) and `attackerId` (-1 = none), `amount`, `healthBefore`, `healthAfter` (soldier
++0x54; squad soldiers start near 150). `amount` is what is passed to the game - difficulty and the like are applied
+inside it, so compare the two healths for what was really lost. A soldier that is already dead gets no events (the game
+ignores the call). Online, each PC raises them for the damage its own game applies; changing `amount` changes the
+simulation - do it only in a SIMULATION plugin.
+
+```c
+static int PSE_CALL HalfDamage(PSEEventId e, void* data, void* ctx) {
+    PSEDs1DamageEvent* d = (PSEDs1DamageEvent*)data;
+    d->amount *= 0.5f;   /* everyone takes half damage */
+    return 0;            /* let later subscribers see it */
+}
+/* in PSEPlugin_Load: */
+messaging->Subscribe(self, messaging->EventId(PSE_DS1_EVENT_SOLDIER_DAMAGE), &HalfDamage, NULL, 0);
+```
+
+### Vehicles, pick-ups, objectives, mission end
+
+| Event | Data | Raised from | When |
+| --- | --- | --- | --- |
+| `ds1.vehicle_damage` / `ds1.vehicle_damaged` / `ds1.vehicle_destroyed` | `PSEDs1DamageEvent` (`victim` = the vehicle) | `Vehicle_ApplyDamage` `0x43E1F0` entry - every vehicle damage (the damage slot `0x43F3B0`, zone hits, scripts) | as the soldier events; `_destroyed` = the vehicle is a wreck now. The game's own "finish off a wreck" calls get no before-event (they can't be cancelled) |
+| `ds1.item_picked_up` | `PSEDs1PickUpEvent` (soldier, item + script ids) | `Soldier_PickUp` `0x432070` entry, taken = its `AddItem` call `0x432082` answering non-zero | after the whole pick-up; not when the game refused it. A stackable item (medikit, ammo) is merged into the soldier's stack: `item` is the picked-up object |
+| `ds1.objective_completed` | `PSEDs1ObjectiveEvent` (`index`, `titleHash` → `LookupText`) | the script API's complete-objective function `0x4819E0` (+0x4C0) - DLL, Lua and editor missions alike | once per objective (not for one already done) |
+| `ds1.mission_end` | `PSEDs1MissionEndEvent` (`result` 2 = success, 1 = failure) | `Campaign_SetResult` `0x4578A0` (script API +0x48C, debug "complete mission") | the game shows MISSION SUCCESSFUL / FAILED next |
+
+### Every message to the mission script: `ds1.script_message`
+
+`PSEDs1ScriptMessageEvent` (`id`, `params` = the message's parameter dwords) for every message the game sends the level's
+mission script - about 70 kinds: kills, pick-ups, doors, switches, enemies spotted, shots, combat alerts, waypoints
+reached, explosions, mounting vehicles … (`pse_game_ds1.h` lists the common ids and their parameters). Raised just
+before the script gets it, for DLL, Lua and editor missions alike; read-only (a query message is still answered by the
+script). How: right after each level init the layer puts a copy of the script object (`[0x60F578]`, 6 callbacks) in its
+place whose message callback raises the event first - once per level, never again mid-level, so online mode's own
+wrapper wraps the copy and the chain stays one-way. Seen in Mission 1: doors, enemies spotted both ways, a kill for
+each death, the pick-up (`0x03 0 52`).
+
+`example.events_logger` logs them all (`pse/examples/events_logger`). Tests: `pse/tests/test_ds1_layer_events.cpp` (the
+hooks on the exe, subscribers halving / cancelling, killed / destroyed only on the way to 0, finish calls not
+cancellable, a refused pick-up), `tests/live/test_soldier_events.py` (Mission 1: real enemy fire on Bradley, six kills
+through both kill paths; the fuel truck wrecked, Bradley picking up Foley's medikit, objective 0, the mission's end -
+each through the game's own function).
 
 ## What is not here (yet)
 
-Writing anything (spawning, damage, levels, settings of the game), game events (killed, damaged …),
-cameras, renderer, script API calls, IDs instead of addresses. Those come with later versions;
-until then plugins that need them use PSELib-style raw addresses and set `PSE_PLUGIN_USES_RAW_ADDRESSES`.
+Writing other things (spawning, levels, settings of the game), events the mission script never hears about (squad
+orders, inventory use …), cameras, renderer, script API calls, IDs instead of addresses. Those come with later versions; until
+then plugins that need them use PSELib-style raw addresses and set `PSE_PLUGIN_USES_RAW_ADDRESSES`.
 
 ## First user
 

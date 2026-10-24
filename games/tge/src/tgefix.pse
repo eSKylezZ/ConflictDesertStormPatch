@@ -1,0 +1,5 @@
+# GreatEscapeFix as a PSE host plugin (src/tgefix.cpp). The TGE game layer (PSE\Games\pse_tge.dll) allows "tgefix" as a
+# host plugin: it gets pse.host and loads before every other plugin.
+name = tgefix
+host = true
+requires = pse.game.tge >= 1.0

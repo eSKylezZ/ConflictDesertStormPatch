@@ -114,7 +114,7 @@ game layer `PSE\Games\pse_ds1.dll` does this (`pse/games/ds1/ds1_saves.cpp`; ent
 `FUN_00415650` and loader `FUN_00415B60` in `ds1_events.cpp`, owner `pse.game.ds1`, priority
 `PSE_DS1_LAYER_PRIORITY_OUTER`) - with or without DesertStormFix installed:
 
-| Game action | What plugins get | Messages (`sender` "pse", `data` = the save path, NUL-terminated) |
+| Game action | What plugins get | Messages (`sender` "pse", `data` = the save path in UTF-8, NUL-terminated) |
 | --- | --- | --- |
 | SAVE GAME (save menu, overwrite confirmation; any call of the saver with a path and flag 0) | right after the game wrote the `.sav`: every save callback, then the `.pse` is written | `PSE_MSG_SAVE_BEGIN` before the game writes, `PSE_MSG_SAVE_END` after (also when the save failed - then no `.pse`) |
 | LOAD GAME (any call of the loader with a path) | right after the game read the `.sav` (before the level loads): load / revert callbacks | `PSE_MSG_LOAD_BEGIN` before the game reads, `PSE_MSG_LOAD_END` after the plugins' callbacks |

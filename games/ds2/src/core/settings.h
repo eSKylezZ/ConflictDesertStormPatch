@@ -22,6 +22,7 @@ struct Values {
     bool mouseAcceleration = false;  // the game's MOUSE OPTIONS -> ACCELERATION (its own default was on)
     bool vsync = true;               // fullscreen: present on the monitor's refresh (no tearing / uneven frames)
     bool perfOverlay = false;
+    bool featMods = true;            // Mods folder: files in <game>\Mods\<mod> replace / add game files (mods.cpp)
     bool menuZoom = true;            // front-end: the menu monitor fills the screen height (off = the whole 1280x1024 picture)        // performance overlay (FPS, frame times, level / zone / position); F11 toggles it
 };
 

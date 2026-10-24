@@ -1,0 +1,3 @@
+# Fixes from the Japanese PS2 release for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services.
+name     = dsfix.jpfixes
+requires = dsfix >= 3.3

@@ -1,0 +1,2 @@
+# Shadow fix for Conflict: Desert Storm (DesertStormFix): shadows stop at the floor below the caster.
+name     = dsfix.shadows

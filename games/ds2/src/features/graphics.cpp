@@ -11,6 +11,10 @@
 
 #include "core/log.h"
 #include "core/patch.h"
+#ifdef DS2_PSE_HOST
+#include "core/comhooks.h"
+#include "core/pse_host.h"
+#endif
 #include "core/settings.h"
 
 namespace graphics {
@@ -45,6 +49,42 @@ using DrawIndexedUPFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRIMIT
                                                     D3DFORMAT, const void*, UINT);
 
 CreateFn g_realCreate = nullptr;
+#ifdef DS2_PSE_HOST
+// PSE host plugin build (src/pse/ds2fix.cpp): the IDirect3D9 / device slots are broker pointer hooks per COM class
+// (core/comhooks.h = DesertStormFix's), owner ds2fix.graphics, priority 0 - chained with the DS2 game layer's own hooks
+// on the same slots (CreateDevice / Reset OUTER 1000 = before ours, Present INNER -1000 = after ours; other plugins
+// can sit in front of or behind ours). g_realX(obj, ...) = the next function in obj's class's chain.
+comhooks::Table<20> g_d3dHooks;
+comhooks::Table<90> g_devHooks;
+template <comhooks::Table<20>* T, int Index, class Fn>
+struct Next {
+    template <class Obj, class... A>
+    auto operator()(Obj* obj, A... a) const { return reinterpret_cast<Fn>(T->Next(obj, Index))(obj, a...); }
+    explicit operator bool() const { return T->AnyHooked(Index); }
+};
+template <int Index, class Fn>
+struct DevNext {
+    template <class... A>
+    auto operator()(IDirect3DDevice9* dev, A... a) const { return reinterpret_cast<Fn>(g_devHooks.Next(dev, Index))(dev, a...); }
+    explicit operator bool() const { return g_devHooks.AnyHooked(Index); }
+};
+const Next<&g_d3dHooks, 16, CreateDeviceFn> g_realCreateDevice;
+const DevNext<kReset, ResetFn> g_realReset;
+const DevNext<kPresent, PresentFn> g_realPresent;
+const DevNext<kClear, ClearFn> g_realClear;
+const DevNext<kSetViewport, SetViewportFn> g_realSetViewport;
+const DevNext<kSetScissorRect, SetScissorFn> g_realSetScissor;
+const DevNext<kSetTransform, SetTransformFn> g_realSetTransform;
+const DevNext<kGetViewport, GetViewportFn> g_realGetViewport;
+const DevNext<kSetRenderTarget, SetRenderTargetFn> g_realSetRenderTarget;
+const DevNext<kDrawPrimitive, DrawFn> g_realDraw;
+const DevNext<kDrawIndexedPrimitive, DrawIndexedFn> g_realDrawIndexed;
+const DevNext<kDrawPrimitiveUP, DrawUPFn> g_realDrawUP;
+const DevNext<kDrawIndexedPrimitiveUP, DrawIndexedUPFn> g_realDrawIndexedUP;
+#define DS2_HOOK_SLOT(table, obj, index, fn, var) (table).Hook((obj), (index), reinterpret_cast<const void*>(fn))
+// hooks made from inside CreateDevice / Direct3DCreate9 belong to ds2fix.graphics too (no feature scope is active there)
+#define DS2_GRAPHICS_OWNER patch::OwnerScope graphicsOwner(pse_host::Find("ds2fix.graphics"))
+#else
 CreateDeviceFn g_realCreateDevice = nullptr;
 ResetFn g_realReset = nullptr;
 PresentFn g_realPresent = nullptr;
@@ -58,6 +98,11 @@ DrawFn g_realDraw = nullptr;
 DrawIndexedFn g_realDrawIndexed = nullptr;
 DrawUPFn g_realDrawUP = nullptr;
 DrawIndexedUPFn g_realDrawIndexedUP = nullptr;
+void HookVtable(void* obj, int index, void* fn, void** original);
+#define DS2_GRAPHICS_OWNER (void)0
+#define DS2_HOOK_SLOT(table, obj, index, fn, var) \
+    HookVtable((obj), (index), reinterpret_cast<void*>(fn), reinterpret_cast<void**>(&(var)))
+#endif
 
 // virtual screen: x' = ox + x * f, y' = oy + y * f
 IDirect3DDevice9* g_device = nullptr;
@@ -401,6 +446,7 @@ HRESULT STDMETHODCALLTYPE HookReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS
     return hr;
 }
 
+#ifndef DS2_PSE_HOST
 void HookVtable(void* obj, int index, void* fn, void** original) {
     void** vt = *static_cast<void***>(obj);
     if (vt[index] == fn) return;
@@ -410,6 +456,7 @@ void HookVtable(void* obj, int index, void* fn, void** original) {
     vt[index] = fn;
     VirtualProtect(&vt[index], sizeof(void*), old, &old);
 }
+#endif
 
 // ---- The game window: the white box at start-up ----
 // The window (FUN_0040e970: class "CDS II", black class brush, created hidden at 800 x 600 with its client area at the
@@ -551,25 +598,19 @@ HRESULT STDMETHODCALLTYPE HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEV
         g_deviceTime = GetTickCount();
         g_firstPresentLogged = false;
         if (!pp->Windowed) SyncActive(window);
-        HookVtable(dev, kReset, reinterpret_cast<void*>(&HookReset), reinterpret_cast<void**>(&g_realReset));
-        HookVtable(dev, kPresent, reinterpret_cast<void*>(&HookPresent), reinterpret_cast<void**>(&g_realPresent));
-        HookVtable(dev, kClear, reinterpret_cast<void*>(&HookClear), reinterpret_cast<void**>(&g_realClear));
-        HookVtable(dev, kSetViewport, reinterpret_cast<void*>(&HookSetViewport),
-                   reinterpret_cast<void**>(&g_realSetViewport));
-        HookVtable(dev, kSetTransform, reinterpret_cast<void*>(&HookSetTransform),
-                   reinterpret_cast<void**>(&g_realSetTransform));
-        HookVtable(dev, kGetViewport, reinterpret_cast<void*>(&HookGetViewport),
-                   reinterpret_cast<void**>(&g_realGetViewport));
-        HookVtable(dev, kSetRenderTarget, reinterpret_cast<void*>(&HookSetRenderTarget),
-                   reinterpret_cast<void**>(&g_realSetRenderTarget));
-        HookVtable(dev, kSetScissorRect, reinterpret_cast<void*>(&HookSetScissor),
-                   reinterpret_cast<void**>(&g_realSetScissor));
-        HookVtable(dev, kDrawPrimitive, reinterpret_cast<void*>(&HookDraw), reinterpret_cast<void**>(&g_realDraw));
-        HookVtable(dev, kDrawIndexedPrimitive, reinterpret_cast<void*>(&HookDrawIndexed),
-                   reinterpret_cast<void**>(&g_realDrawIndexed));
-        HookVtable(dev, kDrawPrimitiveUP, reinterpret_cast<void*>(&HookDrawUP), reinterpret_cast<void**>(&g_realDrawUP));
-        HookVtable(dev, kDrawIndexedPrimitiveUP, reinterpret_cast<void*>(&HookDrawIndexedUP),
-                   reinterpret_cast<void**>(&g_realDrawIndexedUP));
+        DS2_GRAPHICS_OWNER;
+        DS2_HOOK_SLOT(g_devHooks, dev, kReset, &HookReset, g_realReset);
+        DS2_HOOK_SLOT(g_devHooks, dev, kPresent, &HookPresent, g_realPresent);
+        DS2_HOOK_SLOT(g_devHooks, dev, kClear, &HookClear, g_realClear);
+        DS2_HOOK_SLOT(g_devHooks, dev, kSetViewport, &HookSetViewport, g_realSetViewport);
+        DS2_HOOK_SLOT(g_devHooks, dev, kSetTransform, &HookSetTransform, g_realSetTransform);
+        DS2_HOOK_SLOT(g_devHooks, dev, kGetViewport, &HookGetViewport, g_realGetViewport);
+        DS2_HOOK_SLOT(g_devHooks, dev, kSetRenderTarget, &HookSetRenderTarget, g_realSetRenderTarget);
+        DS2_HOOK_SLOT(g_devHooks, dev, kSetScissorRect, &HookSetScissor, g_realSetScissor);
+        DS2_HOOK_SLOT(g_devHooks, dev, kDrawPrimitive, &HookDraw, g_realDraw);
+        DS2_HOOK_SLOT(g_devHooks, dev, kDrawIndexedPrimitive, &HookDrawIndexed, g_realDrawIndexed);
+        DS2_HOOK_SLOT(g_devHooks, dev, kDrawPrimitiveUP, &HookDrawUP, g_realDrawUP);
+        DS2_HOOK_SLOT(g_devHooks, dev, kDrawIndexedPrimitiveUP, &HookDrawIndexedUP, g_realDrawIndexedUP);
         if (graphics::g_onDeviceCreated)
             graphics::g_onDeviceCreated(static_cast<int>(pp->BackBufferWidth), static_cast<int>(pp->BackBufferHeight));
     }
@@ -578,8 +619,9 @@ HRESULT STDMETHODCALLTYPE HookCreateDevice(IDirect3D9* d3d, UINT adapter, D3DDEV
 
 IDirect3D9* WINAPI HookDirect3DCreate9(UINT sdk) {
     IDirect3D9* d3d = g_realCreate(sdk);
+    DS2_GRAPHICS_OWNER;
     if (d3d)
-        HookVtable(d3d, 16, reinterpret_cast<void*>(&HookCreateDevice), reinterpret_cast<void**>(&g_realCreateDevice));
+        DS2_HOOK_SLOT(g_d3dHooks, d3d, 16, &HookCreateDevice, g_realCreateDevice);
     return d3d;
 }
 }  // namespace

@@ -20,9 +20,31 @@ game starts, and what happens when a part is missing or fails.
     Plugins\
       dsfix.dll + dsfix.pse         DesertStormFix: the HOST plugin, registers the 60 dsfix.<feature> sub-plugins
       dsfix.discord.dll + .pse      DesertStormFix's Discord status (an ordinary plugin, SDK only)
+      dsfix.<feature>.dll + .pse    DesertStormFix features split out of dsfix.dll (21 so far; SDK + dsfix kit)
       <name>.dll + <name>.pse       third-party plugins
   Mods\                             content mods (unchanged)
+  PSE\Ports\<id>\                   another Conflict game's mission maps as empty levels (made from the player's copy)
+  PSE\Library\<id>\                 asset library: everything of another Conflict game, read only when a mod names it
 ```
+
+`PSE\Ports\<id>\` holds another Conflict game's mission maps converted by the ModKit (`cli/ds_convert_maps.py`) from
+the player's own copy: each map as an empty Desert Storm level (`<level>.lua`: scenery, collision, lights, AI routes,
+the squad start - no enemies, vehicles or mission logic) plus the models, weapons, vehicles and soldier types the maps
+use, and `port.txt` (source game, its exe's SHA-256, converter version). DesertStormFix indexes it like a mod folder
+(before the mods, so a mod can still replace a file). A folder that also has a `campaign.txt` would be listed under
+SINGLE PLAYER > CAMPAIGNS - the maps converter writes none (converted campaigns were dropped: their mission scripts
+kept failing on behaviour differences). Game-derived: never shipped, never sent online (online-compat.md "Converted
+campaigns").
+
+`PSE\Library\<id>\` is the asset library (ModKit `cli/ds_build_library.py`): every model, character, vehicle, weapon,
+soldier type, animation, texture and sound bank of another Conflict game, converted from the player's own copy, every
+file named with the game's prefix (`DS2_`, `GE_`, `CV_`, `CG_`, later `DO_`); `library.txt` lists what each file is,
+`not-converted.txt` what didn't convert and why. It is NOT indexed or loaded at start-up: DesertStormFix reads a file
+from it only when something asks for that exact name and nothing else has it (mods.cpp `LibraryFind`) - a mod's
+scene, model or texture reference, a `.weapon` / `.vehicle` / `.unit` / `.skin` copied out of the library into a mod,
+a sound bank by name (`<PREFIX><BANK>.SCH` packs, their samples renumbered into the game's own range: 0x51000000 DS2,
+0x52000000 GE, 0x53000000 CV, 0x54000000 CG, 0x55000000 DO - clear of Desert Storm's own ids, which are ELF hashes
+under 0x10000000). Game-derived: never shipped, never sent online.
 
 `PSE\Cache\assets\` (setting SHARED ASSET STORE) is the asset store DesertStormFix builds from the install's own
 archives at start-up: game-derived, never shipped, safe to delete (rebuilt in ~5 s). A read-only install uses
@@ -31,9 +53,10 @@ archives at start-up: game-derived, never shipped, safe to delete (rebuilt in ~5
 `.stamp`, written at start-up or by `pse_build missions`): game code made from the player's DLLs, never shipped, safe to
 delete (~1 s to remake all 18); read-only installs use `%LOCALAPPDATA%\PSE\ds1-<hash>\missions\`.
 
-`PSE\Originals\` holds the game's own archives (`*.dat`), level sound caches (`*.sch`) and mission DLLs
-(`Mission*.dll`, `Training*.dll`), moved out of the game folder at every start once processed (plugin
-`dsfix.originals`). The game finds them through a redirect of its file opens; a file back in the game folder (a game
+`PSE\Originals\` holds the game's own archives (`*.dat`), level sound caches (`*.sch`) and level script DLLs
+(`Mission*.dll`, `Training*.dll`, `MP_MISSION*.dll`, `FrontEnd.dll`, `Outro.dll`), moved out of the game folder at every start once processed (plugin
+`dsfix.originals`). The game finds them through a redirect of its file opens - in the DS1 game layer
+(`pse/games/ds1/ds1_originals.cpp`), so it works without DesertStormFix too; a file back in the game folder (a game
 update, "verify files") wins and is moved again at the next start; a read-only game folder keeps its files. Readers of
 the game's files list the game folder first, then `PSE\Originals` (`pse_build` `OriginalsDir`, DesertStormFix
 `features::GameFile` / `GameFiles`). **Never delete it**: to remove PSE, move its contents back into the game folder
@@ -48,8 +71,10 @@ into `DS_GAME_DIR` when that is set); the release zip has it without PDBs, plus 
 | `PSE\pse_loader.dll` | `pse_loader` | `pse/loader_dll/loader_main.cpp` | `pse_core` (= `pse/loader/*.cpp`) |
 | `PSE\Games\pse_ds1.dll` | `pse_ds1` | `pse/games/ds1/` + `pse/loader/ids.cpp` | `pse_hostlink` |
 | `PSE\Games\pse_ds2.dll` (Desert Storm II installs) | `pse_ds2` | `pse/games/ds2/` + `pse/loader/ids.cpp` | `pse_hostlink` |
+| `PSE\Games\pse_tge.dll` (The Great Escape installs) | `tge_pse_layer` (`games/tge`) | `pse/games/tge/` + `pse/loader/ids.cpp` | `tge_pse_hostlink` |
 | `PSE\Plugins\dsfix.dll` | `dsfix` | `src/` (all of DesertStormFix) | `pse_hostlink`, Lua |
 | `PSE\Plugins\dsfix.discord.dll` | `dsfix_discord` | `plugins/discord/` | the SDK header only |
+| `PSE\Plugins\dsfix.<feature>.dll` (shadows, audio, widescreen, textfit, mouse, menus, units, limits, difficulty, jpfixes, handling, tooltips, rumble, bodies, followers, hud, weather, timeofday, voices) | `dsfix_<feature>` (`dsfix_add_plugin`) | `plugins/<feature>/` | `dsfix_kit` (`plugins/kit/` + `src/core/patch.cpp`, on the SDK); the last eleven also dsfix.dll's interface `dsfix.services` (`src/core/dsfix_services.h`) |
 
 ## More than one game (2026-10-19)
 
@@ -60,14 +85,18 @@ every supported game's folder. Per game there is one game layer `PSE\Games\pse_<
 | Game | Layer | Exe it detects | Host plugin it allows | Reference |
 | --- | --- | --- | --- | --- |
 | `ds1` Conflict: Desert Storm | `pse_ds1.dll` | `DesertStorm.exe` (Steam = GOG) | `dsfix` (DesertStormFix) | [game-ds1.md](reference/game-ds1.md) |
-| `ds2` Conflict: Desert Storm II | `pse_ds2.dll` | `CDS II.exe` 1.0 disc-free | `ds2fix` (DesertStorm2Fix, skeleton) | [game-ds2.md](reference/game-ds2.md) |
+| `ds2` Conflict: Desert Storm II | `pse_ds2.dll` | `CDS II.exe` 1.0 disc-free | `ds2fix` (DesertStorm2Fix) | [game-ds2.md](reference/game-ds2.md) |
+| `tge` The Great Escape | `pse_tge.dll` | `GreatEscape.exe` 1.0 without the disc check | `tgefix` (GreatEscapeFix) | [game-tge.md](reference/game-tge.md) |
 
 A folder may hold several layers: the loader asks each `PSE\Games\pse_*.dll` in name order and the first whose
 `PSEGame_Detect` answers 1 wins; the others are freed again (pse_tests: both layers installed, CDS II.exe mapped →
 `pse_ds2.dll` picked). A plugin says which games it runs on in `PSEPluginInfo.games` (`{"ds1", "ds2", NULL}`; NULL =
 any) - refused elsewhere with "made for …; this game is …". The settings root follows the layer's game id
-(`HKCU\Software\PSE\ds2\Plugins\<plugin>`). The DS2 install tree is assembled by `pse_tree_ds2` into
-`build*/tree-ds2/<config>/` (deployed only into `DS2_GAME_DIR`, never into the DS1 install).
+(`HKCU\Software\PSE\ds2\Plugins\<plugin>`). Two DS2 trees: the root project's `pse_tree_ds2` (`build*/tree-ds2/<config>/`:
+shim + loader + layer + the SDK examples, for the layer's tests) and the DS2 product's `ds2_pse_tree` in `games/ds2`
+(`-DDS2_PSE_PLUGIN=ON`, root presets `ds2-pse` / `ds2-pse-dist`: `build*/tree/<config>/` = shim + loader + layer +
+`ds2fix` + every `games/ds2/plugins/<name>`, the release package + zip from it); both deploy only into `DS2_GAME_DIR`,
+never into the DS1 install.
 
 `pse_hostlink` (`pse/hostlink/`) is how a DLL that is not the loader uses the loader's internal C++ declarations
 (`pse/loader/loader.h`): every stateful function is forwarded through the private `pse.host` table; pure helpers
@@ -103,7 +132,8 @@ and game layers get `pse.host` ([reference/plugins.md](reference/plugins.md#host
 4. The stub jumps to the original entry point: the CRT, `WinMain`, the launcher. Everything above has already
    patched the game.
 
-Shutdown: DesertStormFix's window procedure (`WM_DESTROY`) calls `pse.host` `Shutdown`: `PSE_MSG_EXIT`, then external
+Shutdown: the game layer (DS1: the level unload in `WM_DESTROY`, `0x411404`; DS2 likewise) calls `pse.host` `Shutdown`
+once - DesertStormFix's window procedure calls it too, whichever comes first: `PSE_MSG_EXIT`, then external
 plugins' `PSEPlugin_Unload` in reverse order and their DLLs freed - except host plugins (their `Unload` runs, the DLL
 stays: Shutdown runs from inside it).
 
@@ -127,7 +157,7 @@ lines included) to `PSE\Logs\loader.log`, because Desert Storm II has no shipped
 | `PSELoader_Start` crashes | caught by the shim, one line; the game continues (whatever was patched before the fault stays) |
 | No `PSE\Games\pse_*.dll`, or none recognises the exe (another version, another game) | vanilla: no `pse::Init`, no plugin loaded |
 | The game layer's `PSEGame_Init` fails / crashes | logged; no plugins; the game runs unpatched |
-| No `dsfix.dll` | PSE runs (game layer, other plugins): plugins still get frames, render / D3D events, level events, NEW_GAME and the co-save (no `PSE_MSG_EXIT`, no frame cap); no DesertStormFix features, no `DesertStormFix.log` |
+| No `dsfix.dll` | PSE runs (game layer, other plugins): plugins still get frames, render / D3D events, level events, NEW_GAME, the co-save and `PSE_MSG_EXIT`; the game still finds its files in `PSE\Originals` (no frame cap); no DesertStormFix features, no `DesertStormFix.log` - every line goes to `PSE\Logs\loader.log` |
 | `dsfix.pse` without `host = true`, or a renamed host plugin not on the layer's list | refused / its Load gets no `pse.host` and fails - DesertStormFix is off, other plugins run |
 | `dsfix.dll`'s Load returns 0 or crashes | everything it and its sub-plugins registered through the broker is taken back, they are disabled; its DLL stays mapped (raw patches may point into it) |
 | A plugin requires a host plugin that didn't load | refused ("requires dsfix.hud, a host plugin that is not loaded") |
@@ -150,27 +180,34 @@ forks of DesertStormFix's template and moved in without history.
                           build/ (pse_build: asset store + mission translator - source, not output)
     games\<id>\           one game layer per game: ds1/ (pse_ds1.dll), ds2/ (pse_ds2.dll); cv / cgs: none yet
     ids\<id>.ids.txt      ID databases + <id>.published.txt (frozen lists); compiled by scripts/gen_ids.py
-  src\                    DesertStormFix = DS1's patch (host plugin dsfix + its sub-plugins); moves to games\ds1 later
-  plugins\                DesertStormFix's external plugins (dsfix.discord ...)
-  games\<id>\             the other games' patches, each its own CMake project:
-    ds2\                  DesertStorm2Fix (dinput8.dll; ds2fix.dll = the PSE host plugin, -DDS2_PSE_PLUGIN=ON)
+    ids\generated\        pse_ids_<id>.h - the compiled tables the game layers register (generated, committed)
+  games\<id>\             one folder per game's patch:
+    ds1\                  DesertStormFix (since 2026-10-22; was src\, plugins\, dist\ and the DS1 scripts at the
+                          root): src\ (host plugin dsfix + its sub-plugins, core\, features\, render\, generated\,
+                          patcher\), plugins\ (its external plugins: dsfix.discord), scripts\ (patch_defs.py + the
+                          generators of src\generated), dist\ (player readme). Built by the root CMakeLists.txt.
+    ds2\                  DesertStorm2Fix: ds2fix.dll = the PSE host plugin + plugins\<name>\ (its external plugins),
+                          packaged with the PSE runtime (-DDS2_PSE_PLUGIN=ON); the old standalone dinput8.dll too
     cv\                   VietnamFix (dinput8.dll)
     cgs\                  GlobalStormFix (dinput8.dll)
+    tge\                  GreatEscapeFix (PSE only: tgefix.dll host plugin + the shim / loader / pse_tge tree)
     ds1-reference\        DesertStormFix feature sources the ports started from (not built; one shared copy)
-  scripts\                DS1 generators (patch tables, icons, gen_ids.py for every game's ids)
+  scripts\                PSE scripts: gen_ids.py (every game's ids), the records / translator gates, run_tests.py
   assets\, third_party\   shared by every game (Kenney input prompts; Lua 5.4.7, Zydis)
   docs\sdk\               this documentation (local)
   tests\live\             live tests against the running game (DS1)
   tools\                  local, gitignored: DS1 helpers at the top, tools\ds2\, tools\cv\, tools\cgs\ per game
 ```
 
-Each `games/<id>` keeps the layout it had as a repo: `src/` (`core/`, `features/`, `generated/`, `dllmain.cpp`,
+`games/ds1` is built by the root `CMakeLists.txt` together with PSE (presets `x86` / `dist`); its own CMake project
+comes with the split of DesertStormFix into several plugin DLLs. The other `games/<id>` keep the layout they had as a
+repo: `src/` (`core/`, `features/`, `generated/`, `dllmain.cpp`,
 `dinput8.def`, `version.rc.in`), `scripts/` (its icon generators, reading the shared `assets/`), `dist/` (player
 readme), `CMakeLists.txt` + `CMakePresets.json` (+ a gitignored `CMakeUserPresets.json`), `PORTING.md`, `README.md`,
 and a local `CLAUDE.md` (gitignored like the root one) that says where its game layer, ids and tools are.
 
 Builds: `cmake -S games/<id> --preset x86` (binary dirs `games/<id>/build*`, as before the move), or from the root
-with `PSE_GAME=<id>` - presets `ds2`, `ds2-dist`, `ds2-pse`, `cv`, `cv-dist`, `cgs`, `cgs-dist` (binary dirs
+with `PSE_GAME=<id>` - presets `ds2`, `ds2-dist`, `ds2-pse`, `cv`, `cv-dist`, `cgs`, `cgs-dist`, `tge`, `tge-dist` (binary dirs
 `build-ds2`, `build-ds2-dist`, `build-ds2fix`, `build-cv` ...; outputs `<bin>/<config>/dinput8.dll`, `<bin>/package`
 + zip). With `PSE_GAME` set only that game's project is configured (no DesertStormFix / PSE targets, so no name
 clashes); the DS1 presets `x86` / `dist` are unchanged.

@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased (3.3.0-Alpha test builds after 2026-10-15)
+
+Both PCs in an online session need the same build – older ones are refused when they connect.
+
+### Added
+
+**Other Conflict games' assets**
+
+- **Asset library**: everything of Desert Storm II, The Great Escape, Vietnam and Global Storm (models, characters,
+  vehicles, weapons, soldier types, animations, textures, sound banks), converted by the ModKit from your own copies
+  into `PSE\Library\<game>`, every name with the game's prefix (`DS2_T72M1.EVO`). It is never loaded at start-up: a
+  file is read only when a mod names it, so it changes nothing until something is built on it. Library sound banks
+  have their own sample numbers and can't clash with Desert Storm's sounds
+- Other games' mission maps as empty levels for modders in `PSE\Ports\<game>` (scenery, collision, lights, AI routes,
+  the squad start - run one with `+level mission01.lua` or open it in the editor). Playable converted campaigns were
+  dropped: their mission scripts kept failing on behaviour differences (vehicles, AI)
+- SHARED ASSET STORE is now **on by default** (OPTIONS > DESERTSTORMFIX > PLUGINS)
+- Attachment models from mods no longer bring up the "FIX NOW PLEASE - Connector object ..." warning box
+- Squad vehicles can be swapped on the loadout screen in every Lua mission too (custom missions and campaigns, editor
+  levels), not only in Desert Storm's own missions
+- CUSTOM CAMPAIGNS is in the CO-OPERATIVE CAMPAIGN menu too (split screen and online); a custom campaign starts at its
+  first mission without the co-op mission list
+- Mods' `.strings` texts now also answer the mission text lookup used by cutscene / movie texts and subtitles
+
+**Online co-op**
+
+- One lobby for online and split screen: up to 4 players over any number of PCs, joining per keyboard or pad, a
+  colour and name per player, READY, and SPLIT or OWN VIEW (only your own players' views; hold Tab / D-pad right to
+  peek at the others)
+- Plugged-in pads join as a new player instead of taking over the keyboard player
+- When only the mods differ, the joiner can download the host's mods in the lobby and play without a restart
+- The briefing / loadout screen opens on every PC at once (each PC sets up its own soldiers); it follows the host's
+  BRIEFING & LOADOUT setting
+- Cutscene skip vote: Esc / A / Cross is your vote, the counter shows who has voted, the cutscene ends when everyone
+  has. The host's SKIP CUTSCENES setting applies to everyone
+- Online menu (Esc / Start; the game keeps running): RESUME, RESTART MISSION (host), BACK TO THE LOBBY (host: everyone)
+  / LEAVE THE SESSION, QUIT GAME
+- Player names over the other players' soldiers; a red "NAME - DOWN, 23 m" marker for a downed player at any
+  distance, also at the edge of the screen when they are out of view
+- A player whose soldier starts as a prisoner (Mission 1's Foley) watches another player until freed
+- OPTIONS > DESERTSTORMFIX > STREAMER MODE (on by default): join codes and IP addresses are hidden on screen
+- `DesertStormFix-sync.csv`: every soldier and vehicle once a second, to compare two PCs after a problem – send it
+  with `DesertStormFix-online.log` from every PC
+
+**Mods**
+
+- Soldier bodies in several parts (ModKit exporter 1.8): the squad shows each part's own texture; the uniform covers
+  the main part only
+
+### Fixed
+
+- Quitting after a mission with rain, snow, wind or thunder no longer crashes on the way out: the weather sound kept
+  running after its plugin was unloaded.
+- A level whose loading picture is missing (Mission 3's M3.BMP, converted Desert Storm II Mission 1) no longer stops
+  the load with two error boxes – the loading screen just has no picture (logged)
+- Cavalry Charge (and any mission restarted from the loadout screen after a vehicle change, or with the console):
+  the mission never started after the restart – the M1 stayed put and the opening scene never ended. The briefing that
+  starts every mission was gone again before it could hand over; the mission now starts either way
+- Loadout screen with a changed vehicle (e.g. a Land Rover instead of Cavalry Charge's Bradley): the squad stayed in
+  the vehicle and the CHARACTER / LOADOUT views showed the vehicle instead of the soldier
+- Props a mod adds to a level (placed `records\*.lua` copies, `.envpatch` scenes) are drawn: the level's culling data
+  is rebuilt from the edited scene at load instead of using the game's own, which didn't know them
+- Online: items picked up, weapons held, held-up / lowered weapons and destroyed vehicles (the Mission 1 bridge tank and
+  its camera shot) now match on every PC
+- Online: another player's weapon names and pick-ups showed in your own top bar
+- Online: the joiner froze when it loaded the next mission from MISSION SUCCESSFUL before the host
+- Online: vehicles driven by another PC slowly turned away from their real heading
+- Online: button prompts showed keyboard keys while playing with a pad
+- Online: the player name over your view covered objective and pick-up messages (now top left, fades after 6 s)
+- Mods: high-detail soldier bodies (more than about 4,000 triangles) cast broken shadows – tall see-through columns
+  from the arms and gun down to the ground. Soldier shadows now handle bodies up to 65,535 triangles, and parts of a
+  body that aren't closed shapes still cast a closed shadow
+
+### Needs testing
+
+- Aiming of another player's soldier as seen on your PC, and some AI behaviour, still differ between the PCs (use
+  `DesertStormFix-sync.csv` to report)
+
 ## 3.3.0-Alpha – 2026-10-15
 
 Alpha build for testers. It includes everything since 3.0.0; 3.1.0 and 3.2.0 were packaged without changelog entries.
@@ -73,6 +151,13 @@ Alpha build for testers. It includes everything since 3.0.0; 3.1.0 and 3.2.0 wer
 - `.unit` files: new soldier types (based on, type, model, health, experience, voice, items); bad table rows are left
   out and reported instead of crashing the game
 - `.vehicle` files: `grip`, `spin damping` and `engine sound` for a vehicle's own handling and sound
+- `.vehicle` files: `gun = <base vehicle's gun> -> <weapon>` puts another weapon (e.g. a `.weapon` with its own model)
+  in place of one of the base vehicle's guns - a ported tank carries its own cannon and machine gun; `-> -` leaves
+  that gun off
+- `.strings` files: `#1A2B3C4D = text` sets a text by its hash; a `[SECTION]` no game text file has is a level's
+  own texts, switched on by `game.load_strings("<SECTION>Strs.loc")`
+- `.vehicle` files: `stat column N = value` gives the vehicle its own VStat row (armour, speeds ...) - ported
+  vehicles carry the source game's values
 - `.gear` and `.pouches` files: new hats, packs, face items and pouch sets for the CHARACTER tab
 - Lua: `game.kill`, `game.explode`, `game.difficulty`, `game.hud`
 

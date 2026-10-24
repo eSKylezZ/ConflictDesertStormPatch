@@ -27,9 +27,16 @@ REPO = os.path.dirname(HERE)
 
 def find_game():
     for c in (r"H:\SteamLibrary\steamapps\common\conflict_desert_storm", r"H:\GOG\Games\Conflict - Desert Storm"):
-        if os.path.exists(os.path.join(c, "Mission1.dll")):
+        if os.path.exists(os.path.join(c, "Mission1.dll")) or os.path.exists(os.path.join(c, "PSE", "Originals")):
             return c
     return None
+
+
+def dll_folder(game):
+    """Where the mission DLLs are: the game folder, or PSE/Originals once the game layer has moved them there."""
+    if not mission_dlls(game) and mission_dlls(os.path.join(game, "PSE", "Originals")):
+        return os.path.join(game, "PSE", "Originals")
+    return game
 
 
 def find_pse_build():
@@ -119,6 +126,7 @@ def main():
     sys.path.insert(0, a.modkit)
     from conflict_ds_tools import mission2lua
 
+    a.game = dll_folder(a.game)
     dlls = mission_dlls(a.game)
     if a.only:
         want = {w.lower() for w in a.only.split(",")}

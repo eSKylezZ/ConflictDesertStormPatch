@@ -49,7 +49,12 @@ after      = dsfix.splitscreen
 __declspec(dllexport) extern const PSEPluginInfo PSEPlugin_Info;                    /* data, required */
 __declspec(dllexport) int  PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse);    /* required: non-zero = loaded */
 __declspec(dllexport) void PSE_CALL PSEPlugin_Unload(void);                         /* optional */
+__declspec(dllexport) const char* PSE_CALL PSEPlugin_SimFingerprint(void);          /* optional, simulation plugins */
 ```
+
+`PSEPlugin_SimFingerprint` is used only by the online plugin-set check: its string's SHA-256 is compared instead of
+the DLL file's ([online-compat.md](../online-compat.md#external-plugins-declared-simulation-fingerprint)). Called
+after `PSEPlugin_Load`, under SEH; NULL or "" = the file hash.
 
 In C++ put them in `extern "C" { … }` **and keep `extern` on the info**: inside a braced `extern "C"` block a
 `const` variable without `extern` has internal linkage and is silently not exported (the plugin is then refused:
@@ -207,7 +212,7 @@ link `pse_hostlink` and `pse_core` together.
 
 ## Unloading (`pse::UnloadPlugins`)
 
-At exit, after the host's `PSE_MSG_EXIT`: in **reverse load order** (dependents before their dependencies) each
+At exit, after `PSE_MSG_EXIT` (sent by the game layer, or a host plugin first): in **reverse load order** (dependents before their dependencies) each
 plugin's `PSEPlugin_Unload` runs (SEH-guarded: a crash is logged and reported and the result's reason says so), then
 everything it registered is removed as above and its DLL freed (host plugins: `Unload` only). Plugins without `PSEPlugin_Unload` are just cleaned
 up. A plugin that crashed earlier (crash guard) gets no `Unload` call and keeps its DLL mapped.

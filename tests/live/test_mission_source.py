@@ -46,7 +46,9 @@ def run_mission(mode, n, out):
             os.remove(f)
     dev = {"StartLevel": "", "SplitPlayers": 0, "MissionSource": mode, "PseRebuild": 1, "ApiTrace": n, "DetTest": 1,
            "DetRun": n, "DetFrames": 3600, "DetKeysAfterBriefing": 0}
-    enh = {"FeatLoadout": 0, "SkipCutscenes": 0, "FpsCap": 60}
+    # FeatMods 0: a mod's mission replacement (Mods\<mod>\Mission1.lua "--@replaces", e.g. RestoredMissions) wins over
+    # the translated cache - this test is about the translator (2026-10-22: the restored mission ran instead)
+    enh = {"FeatLoadout": 0, "SkipCutscenes": 0, "FpsCap": 60, "FeatMods": 0}
     res = {}
     with bg.Game(dev=dev, enh=enh) as g:
         pid = pse_client.wait_for_pipe(g.p.pid, timeout=120)
@@ -108,7 +110,12 @@ def test_lua_run_translated_and_ran_the_mission(runs):
     for l in ms:
         print("[m2l]", l)
     assert any("[ok]   Mission source: Dev\\MissionSource = lua" in l for l in lines)
-    assert any("Mission1.dll translated by mission2lua" in l for l in ms), "no translation logged"
+    # translated when the level loads (older builds), or all shipped missions at start-up (since 2026-10-20:
+    # "start-up translation by mission2lua <ver>: n translated, n unchanged, 0 failed")
+    startup = [l for l in ms if "start-up translation by mission2lua" in l]
+    assert any("Mission1.dll translated by mission2lua" in l for l in ms) or \
+        any(" 0 failed" in l and (" 0 translated" not in l or " 0 unchanged" not in l) for l in startup), \
+        "no translation logged"
     assert any("Mission1.dll runs from Lua" in l for l in ms), "the translated mission didn't start"
     assert not any("[fail] Mission source" in l for l in ms)
     assert any("DLL_PROCESS_ATTACH" in l or "running from Lua" in l for l in lines)
@@ -139,7 +146,11 @@ def test_api_trace_equals_the_dll(runs):
     same = [l for l in r.stdout.splitlines() if l.startswith("identical mission calls")][0]
     # "mission calls: dll A, lua B; anim registrations: dll X, lua Y"
     nums = [int(x.strip(",;()")) for x in counts.replace(";", " ").split() if x.strip(",;()").isdigit()]
-    assert nums[0] > 1000 and abs(nums[0] - nums[1]) <= 8, counts   # (the games are killed a frame apart)
+    # the games are killed a few frames apart: allow the calls of the frames one trace has past the other's end
+    # ("identical up to frame F (rebased; dll trace ends at frame A, lua at B)"; Mission 1 plays ~1.3 calls a frame)
+    up = [l for l in r.stdout.splitlines() if l.startswith("identical up to frame")][0]
+    f = [int(x.strip(",;()")) for x in up.split() if x.strip(",;()").lstrip("-").isdigit()]
+    assert nums[0] > 1000 and abs(nums[0] - nums[1]) <= 8 + 4 * abs(f[1] - f[2]), counts + " / " + up
     assert nums[2] == nums[3] and nums[2] >= 196, "animation registrations differ: " + counts
     assert "lua anims not in dll: []" in r.stdout
     k = [int(x) for x in same.replace("/", " ").split() if x.isdigit()]

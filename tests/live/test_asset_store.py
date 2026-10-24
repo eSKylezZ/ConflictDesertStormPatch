@@ -64,7 +64,9 @@ return units
 
 
 def archive_file(dat, name):
-    data = open(os.path.join(bg.GAME, dat), "rb").read()
+    # the game's archives moved to <game>\PSE\Originals (2026-10-22); older installs keep them in the game folder
+    path = os.path.join(bg.GAME, "PSE", "Originals", dat)
+    data = open(path if os.path.exists(path) else os.path.join(bg.GAME, dat), "rb").read()
     h = archive_hash(name)
     for hh, o, s in archive.entries(data):
         if hh == h:

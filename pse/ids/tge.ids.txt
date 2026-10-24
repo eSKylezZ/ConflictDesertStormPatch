@@ -1,0 +1,119 @@
+# PSE ID database: The Great Escape (game id tge). Source of truth - compiled by scripts/gen_ids.py into
+# pse/ids/generated/pse_ids_tge.h, pse/include/pse/pse_ids_tge.h and docs/sdk/reference/ids-tge.md.
+# Format + rules: docs/sdk/reference/ids.md. Ids listed in tge.published.txt are frozen for ever: never removed,
+# renumbered, renamed or given another kind. New ids take the next free number (never a freed one).
+# Names follow the ds1 / ds2 databases where the meaning is the same (Main_FrameDispatch, Level_Init, World ...): a
+# plugin for several games resolves the same name on each - the addresses, calling conventions and offsets differ.
+#
+# Addresses: the TGE game layer (pse/games/tge) + GreatEscapeFix (games/tge), mapped 2026-10-23. The engine is the
+# Desert Storm one between DS1 and DS2 (D3D8 like DS1, Files.cpp / texture code like DS2).
+#
+#   game <id> <title>
+#   database <n>                                  (+1 by gen_ids.py --publish)
+#   build <name> <pe timestamp> <image size> <sha256 | -> <notes>
+#   [ids]                <id> <name> <kind> <description>      kind = function | site | global | vtable | data
+#   [addresses <build>]  <id> <va> <signature>
+
+game tge The Great Escape
+database 0
+
+# GreatEscape.exe 1.0 (14 Jul 2003 build, PE time stamp 24 Jul 2003) without the SafeDisc disc check: a no-CD exe whose
+# entry point is a small stub (.mythoep) that fills SafeDisc's import slots with GetProcAddress and jumps to the
+# original entry 0x51FC72. .text is plain on disk; the retail SafeDisc exe has the same time stamp but encrypted code.
+# sha256 = the file with the 4 GB (Large Address Aware) flag cleared.
+build nocd-1.0 3F128EF0 00564000 50F4A87EA7F370BDB0F41E029351B07B752E4042B26553D1CECE0EB577702CDF GreatEscape.exe 1.0 (no disc check)
+
+[ids]
+# id  name                          kind     description
+# ---- main loop / frames ----
+1     Main_MessageLoop              function WinMain: start-up, then the message loop (frames only while Main_ActiveFlag is set)
+2     Main_FrameDispatch            function per-frame dispatcher: switch on Main_DispatchMode (0 Game_Update, 1 Level_LoadDispatch, 2..7 films / screens)
+3     Game_Update                   function dispatch mode 0: the running level's update, then Render_Frame
+4     Render_Frame                  function cdecl(int): render loop (per viewport: world, HUD)
+# ---- levels ----
+5     Level_LoadDispatch            function dispatch mode 1: loads the level-table entry Level_TableIndex (by its type) or Level_NameBuffer
+6     Level_Unload                  function unloads the current level (first thing every load does; also at WM_DESTROY)
+7     Screen_Load                   function loads a level-table entry of type 0 front end, 1 attract, 4 film / briefing, 5 logo (name: see Level_TableIndex)
+8     Mission_Load                  function loads a mission (type 3 entry or a name in Level_NameBuffer): input blocks, then Level_Init
+9     Level_Init                    function cdecl(const char* name) -> 0 = failed: mission level init (archive, scene, script DLL "*.dll")
+10    App_Shutdown                  function WM_DESTROY clean-up (after Level_Unload)
+11    Window_Proc                   function the game window's window procedure (class "The Great Escape")
+# ---- files (Files.cpp / Catalog.cpp) ----
+12    File_Resolve                  function cdecl(name, search paths, flags) -> path in File_PathBuffer, or the bare name in archive mode (0 = not found)
+13    File_InArchive                function cdecl(name) -> 1 = in the current archive (File_CurrentArchive)
+14    File_Open                     function thiscall(file object, path) ret 4 -> 1 = opened: copies File_Flags to file +0x140 (bit 0 = from the archive)
+15    File_OpenStream               function cdecl(path, mode) -> file object: takes the free file object and calls File_Open
+16    Texture_LoadFile              function cdecl(name, out path): tries .ddl / .dds / ... through the resolver
+17    Texture_Load                  function thiscall(texture): loads one texture (+8 name; +0x30 / +0x34 = a buffer the level archive handed over)
+18    Heap_Ctor                     function thiscall(heap, size, name): stack-allocator ctor (the Global Heap, 1 MB)
+# ---- launcher ----
+19    Launcher_FillResolutions      function fills the launcher's resolution list (combo 0x3FC) from the adapter's modes
+20    Launcher_ModeAllowed          function eax = width, ecx = height -> 1 for 640x480 / 800x600 / 1024x768 / 1280x1024 (no callers)
+# ---- sites ----
+21    Site_FrameDispatchCall        site     call Main_FrameDispatch in the message loop
+22    Site_RenderFrameCall          site     call Render_Frame([0x66A588]) in Game_Update
+23    Site_ShutdownCall             site     call App_Shutdown in Window_Proc's WM_DESTROY case
+24    Site_HeapCtorCall             site     call Heap_Ctor(0x100000, "Global Heap") at start-up
+25    Site_LauncherModeFilter       site     cmp eax, 0x400: start of the launcher's resolution whitelist in Launcher_FillResolutions
+26    Site_ScreenLoadCall           site     call Screen_Load in Level_LoadDispatch
+27    Site_MissionLoadCall          site     call Mission_Load in Level_LoadDispatch
+# ---- globals ----
+28    Main_DispatchMode             global   u8: 0 level running (Game_Update), 1 level load pending, 2..7 films / screens
+29    Main_ActiveFlag               global   u32: 1 = the message loop runs frames (WM_ACTIVATE)
+30    Renderer                      global   renderer object* (viewport count +0x20, D3D device as DS1)
+31    World                         global   world / environment object* (+0x1BC0 scene name char*)
+32    Window_Handle                 global   HWND of the game window
+33    File_Flags                    global   u32: file system flags (bit 0 archive mode, bit 1 archive build, 0x40 names pass through)
+34    File_PathBuffer               global   char[]: File_Resolve's result
+35    File_CurrentArchive           global   current archive object*
+36    Heap_Global                   global   the Global Heap object*
+37    Level_TableIndex              global   i32: the level-table entry being / last loaded, -1 = a name in Level_NameBuffer
+38    Level_NameBuffer              global   char[]: a level name to load when Level_TableIndex is -1
+39    Level_SceneName               global   char[]: the mission's scene name, upper case (World +0x1BC0 points here)
+# ---- data ----
+40    Level_Table                   data     level table: 0x28-byte entries {+4 name char*, +8 type (0 front end, 1 attract, 3 mission DLL, 4 film, 5 logo, 6/7 language)}
+41    Iat_Direct3DCreate8           data     IAT slot d3d8!Direct3DCreate8 (thunk 0x4FE930)
+
+[addresses nocd-1.0]
+# id  va          signature
+1     0x005D5870  83EC1C568B7424246A00E8D1
+2     0x005D5810  0FBE059CA6660083F807772A
+3     0x005D4B00  81EC900000005556576A65E8
+4     0x005D18D0  8B0D20ED79008B15A8ED7900
+5     0x005D5710  6804C36100E88998F4FFA1EC
+6     0x005CEE10  8B0D20ED790053E83434E7FF
+7     0x005D0DE0  81EC0002000053555657E821
+8     0x005D43C0  56E84AAAFFFFA15CC27D008B
+9     0x005D1DE0  558BEC81ECB0020000535657
+10    0x005CCA80  8B0D78C27D0085C974108B01
+11    0x005CFF50  83EC40568B74244C81FE0002
+12    0x004C44D0  A0DCCD7A005733FFA8407406
+13    0x004C5DF0  81EC08010000E825E3FFFF8B
+14    0x004C60E0  81EC080200005556578BF1E8
+15    0x004C6430  56E8EADCFFFF33F6EB068D9B
+16    0x004481F0  8B442404568B74240C8BD62B
+17    0x004489C0  81EC24010000568BF1E8D2F3
+18    0x004D1290  558B6C240856578BF1683C18
+19    0x005BE900  81EC1801000053555768FC03
+20    0x005BE5E0  3D00040000773A742A3D8002
+21    0x005D5988  E883FEFFFFE8CE26EEFFE94D
+22    0x005D5692  E839C2FFFF8B0D74ED790083
+23    0x005D0089  E8F2C9FFFFE8BDF1FFFF6A00
+24    0x005D2C07  E884E6EFFFA314DC7C00EB06
+25    0x005BE99F  3D000400008B0A773B742C3D
+26    0x005D5797  E844B6FFFFEB1AE8EDADFFFF
+27    0x005D57B3  E808ECFFFF833DF0DA7D0001
+28    0x0066A69C  @0x005CE00A:C6059CA6660001BE
+29    0x007DC2FC  @0x005D0017:2AA3FCC27D00E8AE
+30    0x0079ED20  @0x004225EB:8B0D20ED790083C4
+31    0x0079ED6C  @0x0040360A:8B0D6CED79008954
+32    0x007DC238  @0x0041E69C:8B1538C27D008B08
+33    0x007ACDDC  @0x0041BC7B:0BA1DCCD7A002403
+34    0x007AB6B8  @0x004C455B:08BEB8B67A008A0A
+35    0x007ACDE0  @0x004C5375:8B0DE0CD7A0033C0
+36    0x007CDC14  @0x00427282:8B0D14DC7C0068D4
+37    0x007DDAEC  @0x0054DB32:48A1ECDA7D0033C9
+38    0x007DDAFC  @0x005D06C7:07B8FCDA7D00EB1C
+39    0x007E2180  @0x005D1ED7:14BA80217E008D49
+40    0x00666B00  00000000248D6100
+41    0x005F52A4  @0x004FE930:FF25A4525F008B0D

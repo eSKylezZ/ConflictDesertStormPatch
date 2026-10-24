@@ -1,0 +1,3 @@
+# Per-weapon rumble and trigger feel for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services.
+name     = dsfix.rumble
+requires = dsfix >= 3.3

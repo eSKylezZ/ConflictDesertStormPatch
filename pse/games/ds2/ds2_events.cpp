@@ -307,9 +307,14 @@ int Install(PSEPluginHandle self) {
                           kOuter, &g_saveNext, &id), "save", kSaveGame);
     Check(h->HookFunction(self, kLoadGame, sizeof kLoadPrologue, kLoadPrologue, reinterpret_cast<void*>(&LoadHook),
                           kOuter, &g_loadNext, &id), "load", kLoadGame);
-    if (Peek32(kIatDirect3DCreate9) == 0 || Peek32(kIatDirect3DCreate9) == 0xFFFFFFFF) {
-        Log(PSE_LOG_ERROR, "[fail] Game layer: Direct3DCreate9 import slot 0x%08X is empty - no D3D events",
-            kIatDirect3DCreate9);
+    // Only when the slot holds d3d9.dll's Direct3DCreate9: another file of the 1.0 build (a no-CD exe) may lay its
+    // imports out differently, and a pointer hook checks nothing else.
+    HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
+    const uint32_t create9 = d3d9 ? reinterpret_cast<uint32_t>(GetProcAddress(d3d9, "Direct3DCreate9")) : 0;
+    if (Peek32(kIatDirect3DCreate9) == 0 || Peek32(kIatDirect3DCreate9) == 0xFFFFFFFF ||
+        (create9 && Peek32(kIatDirect3DCreate9) != create9)) {
+        Log(PSE_LOG_ERROR, "[fail] Game layer: import slot 0x%08X isn't Direct3DCreate9 (holds 0x%08X) - no D3D events",
+            kIatDirect3DCreate9, Peek32(kIatDirect3DCreate9));
         ++g_failed;
     } else {
         Check(h->HookPointer(self, kIatDirect3DCreate9, reinterpret_cast<void*>(&Direct3DCreate9Hook), kOuter,

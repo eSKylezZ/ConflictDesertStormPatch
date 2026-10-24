@@ -12,8 +12,9 @@
 #include <cstring>
 
 #include "ds1_events.h"
+#include "ds1_originals.h"
 #include "ds1_saves.h"
-#include "generated/pse_ids_ds1.h"   // src/generated (scripts/gen_ids.py)
+#include "generated/pse_ids_ds1.h"   // pse/ids/generated (scripts/gen_ids.py)
 #include "hostlink.h"
 #include "ids.h"
 #include "pse_game_ds1.h"
@@ -57,9 +58,13 @@ const PSEGameLayerInfo PSEGame_Info = {sizeof(PSEGameLayerInfo), 1, "ds1", &pse_
 
 __declspec(dllexport) int PSE_CALL PSEGame_Detect(const PSEGameDetectInfo* d) {
     if (!d || d->size < sizeof(PSEGameDetectInfo) || !d->exeSha256) return 0;
-    // Only the hash decides: DesertStormFix's patches are made for exactly this exe. (Image base 0x400000 and the
-    // PE time stamp come with it; other DS1 builds - retail CD, no-CD, other regions - need the ID database first.)
-    return _stricmp(d->exeSha256, pse_game_ds1::KnownSha256()) == 0 && d->imageBase == 0x400000 ? 1 : 0;
+    // The known exe (Steam = GOG), or another file of the same build: the same PE time stamp at the same base - a copy
+    // with other resources / a changed header (2026-10-22: a player's install showed no menus - the single-DLL
+    // releases ran on any exe whose patched bytes matched). Every patch still checks the original bytes it replaces
+    // and the ID database its signatures, so a part that differs is skipped, not written over. Other builds (retail
+    // CD, other regions) have another time stamp and need the ID database first.
+    if (d->imageBase != 0x400000) return 0;
+    return _stricmp(d->exeSha256, pse_game_ds1::KnownSha256()) == 0 || d->peTimestamp == 0x594D0000u ? 1 : 0;
 }
 
 __declspec(dllexport) int PSE_CALL PSEGame_Init(const PSELoadInterface* pse) {
@@ -72,6 +77,8 @@ __declspec(dllexport) int PSE_CALL PSEGame_Init(const PSELoadInterface* pse) {
     // The core game events (frames, render, level, D3D) and the co-save. A hook the broker refuses only costs its
     // event (logged): the layer stays up.
     ds1_events::Install(pse->plugin);
+    // The game's own files in PSE\Originals (DesertStormFix moves them there): found with or without DesertStormFix.
+    ds1_originals::Install(pse->plugin);
     return 1;
 }
 }

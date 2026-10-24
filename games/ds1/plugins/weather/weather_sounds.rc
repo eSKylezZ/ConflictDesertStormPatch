@@ -1,0 +1,17 @@
+// Weather sounds (weathersound.cpp): "Weather Elements" by Helton Yan, CC BY 4.0, re-encoded as MS-ADPCM by
+// games/ds1/scripts/gen_weather_sounds.py into assets/weather-elements (found through the target's include path).
+// Ids: 400 + the order of weathersound.cpp's kSounds.
+400 RCDATA "weather-elements/rain_light_outside.adpcm"
+401 RCDATA "weather-elements/rain_heavy_outside.adpcm"
+402 RCDATA "weather-elements/rain_light_inside.adpcm"
+403 RCDATA "weather-elements/rain_heavy_inside.adpcm"
+404 RCDATA "weather-elements/wind_light.adpcm"
+405 RCDATA "weather-elements/wind_heavy.adpcm"
+406 RCDATA "weather-elements/thunder_0.adpcm"
+407 RCDATA "weather-elements/thunder_1.adpcm"
+408 RCDATA "weather-elements/thunder_2.adpcm"
+409 RCDATA "weather-elements/thunder_3.adpcm"
+410 RCDATA "weather-elements/thunder_4.adpcm"
+411 RCDATA "weather-elements/thunder_5.adpcm"
+412 RCDATA "weather-elements/thunder_6.adpcm"
+413 RCDATA "weather-elements/thunder_7.adpcm"

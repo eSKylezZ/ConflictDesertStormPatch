@@ -1,0 +1,6 @@
+# DesertStorm2Fix's memory part (games/ds2/plugins/memory): the game's file heap sized for the mods' big files, texture
+# files too big for it read outside it, memory figures in the log, the main menu's 4 GB notice. Works without ds2fix
+# (it then only sizes the heap); with it, it runs before ds2fix.mods' heap hook. Cosmetic for online: CLIENT_ONLY.
+name     = ds2fix.memory
+requires = pse.game.ds2 >= 1.0
+after    = ds2fix

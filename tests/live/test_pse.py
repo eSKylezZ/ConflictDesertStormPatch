@@ -9,14 +9,16 @@ TOOLS = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__))
 
 SIM, CLIENT, INTERNAL = 0x1, 0x2, 0x80000000
 
-# A sample of the feature table (dllmain.cpp kFeatures) with the flag each must carry.
+# A sample of the feature table (dllmain.cpp kFeatures) with the flag each must carry. Features split into their own
+# DLLs (dsfix.widescreen, dsfix.limits, ...) are external now - test_split_plugins.py covers them.
 FEATURES = {
-    "dsfix.hud": CLIENT, "dsfix.widescreen": CLIENT, "dsfix.splitscreen": SIM, "dsfix.timing": SIM,
-    "dsfix.fontsharp": CLIENT, "dsfix.barcolour": CLIENT, "dsfix.weaponicons": CLIENT,
-    "dsfix.limits": SIM, "dsfix.coop": SIM, "dsfix.lockstep": SIM, "dsfix.authority": SIM, "dsfix.overlay": CLIENT,
+    "dsfix.splitscreen": SIM, "dsfix.timing": SIM,
+    "dsfix.barcolour": CLIENT, "dsfix.weaponicons": CLIENT,
+    "dsfix.coop": SIM, "dsfix.lockstep": SIM, "dsfix.authority": SIM, "dsfix.overlay": CLIENT,
     "dsfix.diagnostics": CLIENT, "dsfix.mods": SIM, "dsfix.scripthost": SIM,
 }
 GLYPH_BIND = 0x53CC9B   # texture bind of the plain image draw: weaponicons 200 -> barcolour 100 -> fontsharp 0
+# (dsfix.fontsharp is its own DLL since 2026-10-24; the chain spans dsfix.dll and that plugin)
 
 
 def _plugins(c):

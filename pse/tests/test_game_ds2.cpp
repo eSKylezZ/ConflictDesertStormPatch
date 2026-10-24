@@ -60,7 +60,7 @@ std::wstring W(const std::string& s) { return std::wstring(s.begin(), s.end()); 
 
 // ---- detection (tier 1: the built DLL) -------------------------------------------------------------------------------
 
-PSE_TEST("ds2 layer: pse_ds2.dll detects exactly the disc-free CDS II.exe, pse_ds1.dll doesn't") {
+PSE_TEST("ds2 layer: pse_ds2.dll detects CDS II.exe 1.0 (disc-free or another file of the build), pse_ds1.dll doesn't") {
     HMODULE m = LoadLibraryA(PSE_GAME_LAYER_DS2_DLL);
     PSE_REQUIRE(m);
     auto info = reinterpret_cast<const PSEGameLayerInfo*>(GetProcAddress(m, "PSEGame_Info"));
@@ -78,8 +78,12 @@ PSE_TEST("ds2 layer: pse_ds2.dll detects exactly the disc-free CDS II.exe, pse_d
     PSE_CHECK_EQ(detect(&d), 1);
     d.exeSha256 = kSecuromSha;   // the retail SecuROM exe: same header, other code - refused
     PSE_CHECK_EQ(detect(&d), 0);
-    d.exeSha256 = kDs1Sha;       // Desert Storm 1
+    d.exeSha256 = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";   // a no-CD exe of the 1.0 build
+    PSE_CHECK_EQ(detect(&d), 1);
+    d.exeSha256 = kDs1Sha;       // Desert Storm 1 (its own build time stamp)
+    d.peTimestamp = 0x594D0000;
     PSE_CHECK_EQ(detect(&d), 0);
+    d.peTimestamp = 0x3F4B1A8A;
     d.exeSha256 = kDs2Sha;
     d.imageBase = 0x10000000;
     PSE_CHECK_EQ(detect(&d), 0);
@@ -524,12 +528,12 @@ PSE_TEST("ds2 start-up: both game layers installed, the loader picks pse_ds2.dll
         PSE_CHECK_EQ(r.pluginsLoaded, 1u);
         PSE_CHECK(pse::FindPlugin("example.hello") != 0);
     }
-    // No host plugin: the layer's own log file has every line, the start-up ones included.
-    const std::string log = ReadText(dir + "\\Logs\\loader.log");
-    PSE_CHECK(log.find("recognises the exe: game ds2") != std::string::npos);
-    PSE_CHECK(log.find("Game layer: event hooks installed") != std::string::npos);
-    PSE_CHECK(log.find("start-up: done in") != std::string::npos);
-    if (hello) PSE_CHECK(log.find("hello: loaded (game ds2") != std::string::npos);
+    // No host plugin: every line stays on the loader's fallback (pse_loader.dll writes it to PSE\Logs\loader.log),
+    // after start-up too - the layer has no log file of its own.
+    PSE_CHECK(FallbackHas("Game layer: event hooks installed"));
+    PSE_CHECK(FallbackHas("start-up: done in"));
+    if (hello) PSE_CHECK(FallbackHas("hello: loaded (game ds2"));
+    PSE_CHECK(GetFileAttributesA((dir + "\\Logs\\loader.log").c_str()) == INVALID_FILE_ATTRIBUTES);
     pse::ResetForTests();   // frees the layer (its log file closes)
     exe::Restore();
     for (const char* f : {"\\Games\\pse_ds1.dll", "\\Games\\pse_ds2.dll", "\\Plugins\\example.hello.dll",

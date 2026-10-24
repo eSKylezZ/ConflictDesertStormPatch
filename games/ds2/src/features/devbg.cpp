@@ -332,8 +332,12 @@ void features::ApplyDevBackground() {
     patch::HookIndirectCall(0x4CB15C, reinterpret_cast<void*>(&BgSetCursorPos), 0x5DA264);
     patch::HookCall(0x40FB50, reinterpret_cast<void*>(&BgAnyKeyWait), 0x4CCBD0);
     patch::HookCall(0x4440ED, reinterpret_cast<void*>(&BgAnyKeyWait), 0x4CCBD0);
+#ifdef DS2_PSE_HOST
+    patch::HookSlot(0x5DA1D4, reinterpret_cast<const void*>(&BgMessageBoxA));   // MessageBoxA import slot (broker)
+#else
     auto box = &BgMessageBoxA;
     patch::WriteValue(0x5DA1D4, box);   // MessageBoxA import slot
+#endif
     graphics::g_adjustPresentParams = &Windowed;   // the device is created windowed (any size, never fullscreen)
     graphics::g_onPresent = &OnPresent;
     dslog::Write("[dev] background mode on (shots: %s every %lu ms)", g_shotDir[0] ? g_shotDir : "off",

@@ -1,0 +1,3 @@
+# Inventory hints (use / give button) for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services.
+name     = dsfix.tooltips
+requires = dsfix >= 3.3

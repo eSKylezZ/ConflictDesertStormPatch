@@ -252,10 +252,10 @@ StartResult Start(const StartOptions& o) {
     // ---- loader services, then the layer, then the plugins ----
     Config c;
     c.gameId = info->gameId;   // the layer stays loaded: its strings stay valid
-    c.registryRoot = o.registryRoot.empty() ? std::string("Software\\PSE\\") + info->gameId : o.registryRoot;
+    c.registryRoot = o.registryRoot;   // empty: Init makes it Software\PSE\<gameId>
     c.logSink = &LogSink;
     c.reportSink = &ReportSink;
-    Init(c);
+    if (!Init(c)) return vanilla("the loader refused the game id " + std::string(info->gameId));
     FlushEarly(true);
     r.gameId = info->gameId;
 

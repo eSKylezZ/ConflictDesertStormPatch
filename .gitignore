@@ -54,6 +54,9 @@ build/
 build-dist/
 build-release/
 build-*/
+# build logs left in the root (e.g. a configure run piped to build-<name>.cfg.txt)
+/build-*.txt
+/build-*.log
 *.pdb
 *.ilk
 *.obj

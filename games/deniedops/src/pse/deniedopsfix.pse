@@ -1,0 +1,5 @@
+# DeniedOpsFix as a PSE host plugin (src/pse/deniedopsfix.cpp). The Denied Ops game layer (PSE\Games\pse_deniedops.dll)
+# allows "deniedopsfix" as a host plugin: it gets pse.host and loads before every other plugin.
+name = deniedopsfix
+host = true
+requires = pse.game.deniedops >= 1.0

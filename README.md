@@ -51,9 +51,11 @@ To build straight into your game folder, copy `CMakeUserPresets.example.json` to
 then deploy on every build; in VS Code you can add a `launch.json` that starts `DesertStorm.exe` under
 the debugger.
 
-Byte patches are defined per feature in `scripts/patch_defs.py`; after changing them run
-`python scripts/gen_patch_tables.py` to regenerate `src/generated/patch_tables.h`. Button icons are
-baked by `python scripts/gen_prompt_icons.py` (needs Pillow).
+DesertStormFix's sources live in `games/ds1/` (`src/`, `plugins/`, `scripts/`, `dist/`); the root
+`CMakeLists.txt` builds them together with PSE (`pse/`). Byte patches are defined per feature in
+`games/ds1/scripts/patch_defs.py`; after changing them run `python games/ds1/scripts/gen_patch_tables.py`
+to regenerate `games/ds1/src/generated/patch_tables.h`. Button icons are baked by
+`python games/ds1/scripts/gen_prompt_icons.py` (needs Pillow).
 
 ### What not to commit
 Nothing from the game itself: no executables, DLLs, level data, textures, sounds or disassembly

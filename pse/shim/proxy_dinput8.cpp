@@ -21,7 +21,10 @@ FARPROC Real(const char* name) {
 }  // namespace
 
 extern "C" {
+extern "C" void ShimLateStart();   // shim.cpp: a late-loaded proxy starts PSE here
+
 HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD version, REFIID riid, LPVOID* out, IUnknown* outer) {
+    ShimLateStart();
     using Fn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, IUnknown*);
     auto fn = reinterpret_cast<Fn>(Real("DirectInput8Create"));
     return fn ? fn(inst, version, riid, out, outer) : E_FAIL;

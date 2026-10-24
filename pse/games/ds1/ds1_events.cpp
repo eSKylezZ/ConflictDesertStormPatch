@@ -75,29 +75,63 @@ int __cdecl RenderHook(int a) {
 void* g_levelInitNext = nullptr;
 void* g_unloadNext[2] = {};
 
+// ---- script messages (pse_game_ds1.h "ds1.script_message") ---------------------------------------------------------
+// The level's script object [0x60F578] = 6 cdecl callbacks (+0 init, +4 update, +8 message(id, param*), +0xC save,
+// +0x10 load, +0x14 size), set during level init by the game (mission DLL's LevelSetup) or DesertStormFix (Lua levels,
+// translated missions). Right after level init the layer puts a copy in its place whose message callback raises the
+// event and then calls the script's own - once per level, never again mid-level: online mode wraps the current object
+// itself (and re-wraps when it changes), so it then wraps this copy and the chain stays one-way.
+struct ScriptObject {
+    void* fn[6];
+};
+ScriptObject g_scriptProxy{};
+ScriptObject* g_scriptOriginal = nullptr;
+PSEEventId g_evScriptMessage = 0;
+constexpr uint32_t kScriptObject = 0x60F578;
+
+int __cdecl ScriptMessageProxy(int id, uint32_t* param) {
+    PSEDs1ScriptMessageEvent e{sizeof e, static_cast<uint32_t>(id), param};
+    pse::RaiseEvent(g_evScriptMessage, &e);
+    return reinterpret_cast<int(__cdecl*)(int, uint32_t*)>(g_scriptOriginal->fn[2])(id, param);
+}
+
+void WrapScriptObject() {
+    auto& slot = *reinterpret_cast<ScriptObject**>(kScriptObject);
+    if (!slot || slot == &g_scriptProxy || !g_evScriptMessage) return;
+    g_scriptOriginal = slot;
+    g_scriptProxy = *slot;
+    g_scriptProxy.fn[2] = reinterpret_cast<void*>(&ScriptMessageProxy);
+    slot = &g_scriptProxy;
+}
+
 int __cdecl LevelInitHook(const char* name) {
     ds1_saves::LevelStart(name);   // NEW_GAME (+ revert callbacks) when a game starts from the front end
     g_level = name ? name : "";
     g_frontEndPending = false;
     pse::RaiseEvent(PSE_EVENT_LEVEL_LOAD_BEGIN, const_cast<char*>(g_level.c_str()));
     const int r = reinterpret_cast<int(__cdecl*)(const char*)>(g_levelInitNext)(name);
+    WrapScriptObject();
     pse::RaiseEvent(PSE_EVENT_LEVEL_LOAD_END, const_cast<char*>(g_level.c_str()));
     g_frontEndPending = IsFrontEnd(g_level.c_str());
     return r;
 }
 
-int Unload(void* next) {
+int Unload(void* next, bool exit) {
     if (!g_level.empty()) {
         const std::string level = g_level;   // (a subscriber may start something that changes g_level)
         pse::RaiseEvent(PSE_EVENT_LEVEL_UNLOAD, const_cast<char*>(level.c_str()));
     }
+    // The game is closing: the plugins get PSE_MSG_EXIT and are unloaded (pse.host Shutdown - once, so a host plugin
+    // calling it too is harmless), then the game's own clean-up - as the DS2 layer does
+    if (exit)
+        if (const PSEHostInterface* host = pse::HostInterface()) host->Shutdown();
     const int r = reinterpret_cast<int(__cdecl*)()>(next)();
     g_level.clear();
     g_frontEndPending = false;
     return r;
 }
-int __cdecl UnloadHook0() { return Unload(g_unloadNext[0]); }   // level change (Level_LoadPending)
-int __cdecl UnloadHook1() { return Unload(g_unloadNext[1]); }   // window destroyed
+int __cdecl UnloadHook0() { return Unload(g_unloadNext[0], false); }   // level change (Level_LoadPending)
+int __cdecl UnloadHook1() { return Unload(g_unloadNext[1], true); }    // window destroyed (WM_DESTROY 0x411404)
 
 // ---- save / load ---------------------------------------------------------------------------------------------------
 void* g_saveNext = nullptr;
@@ -120,6 +154,117 @@ int __fastcall LoadHook(void* self, void*, const char* path) {
     const int r = reinterpret_cast<int(__thiscall*)(void*, const char*)>(g_loadNext)(self, path);
     if (path) ds1_saves::LoadEnd(path, r != 0);   // the co-save to the plugins, LOAD_END
     return r;
+}
+
+// ---- soldier damage (pse_game_ds1.h "game events") ------------------------------------------------------------------
+// Soldier_TakeDamage thiscall(soldier, float amount, object* attacker) ret 8 - every damage of a soldier (the vtable's
+// slot 15 = this function; online mode's wrapper on that slot calls it directly, so the entry hook sees what each PC
+// really applies). It returns at once for a soldier that is already dead: those calls pass straight through.
+void* g_damageNext = nullptr;
+PSEEventId g_evDamage = 0, g_evDamaged = 0, g_evKilled = 0;
+
+float Health(const void* soldier) {
+    return *reinterpret_cast<const float*>(static_cast<const uint8_t*>(soldier) + 0x54);
+}
+int32_t ScriptId(const void* object) {
+    return object ? *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(object) + 8) : -1;
+}
+
+void __fastcall DamageHook(void* soldier, void*, float amount, void* attacker) {
+    using Fn = void(__thiscall*)(void*, float, void*);
+    const float before = soldier ? Health(soldier) : 0.0f;
+    if (!(before > 0.0f)) return reinterpret_cast<Fn>(g_damageNext)(soldier, amount, attacker);
+    PSEDs1DamageEvent e{sizeof e, reinterpret_cast<uint32_t>(soldier), ScriptId(soldier),
+                        reinterpret_cast<uint32_t>(attacker), ScriptId(attacker), amount, before, before};
+    pse::RaiseEvent(g_evDamage, &e);
+    if (!(e.amount > 0.0f)) return;   // a subscriber took it away (NaN too)
+    const float applied = e.amount;
+    reinterpret_cast<Fn>(g_damageNext)(soldier, applied, attacker);
+    e = PSEDs1DamageEvent{sizeof e, reinterpret_cast<uint32_t>(soldier), ScriptId(soldier),
+                          reinterpret_cast<uint32_t>(attacker), ScriptId(attacker), applied, before, Health(soldier)};
+    pse::RaiseEvent(g_evDamaged, &e);
+    if (!(e.healthAfter > 0.0f)) pse::RaiseEvent(g_evKilled, &e);
+}
+
+// ---- vehicle damage --------------------------------------------------------------------------------------------------
+// Vehicle_ApplyDamage thiscall(vehicle, float amount, object* attacker, int, float, int finish) ret 0x14 - the common
+// path of every vehicle damage (the vtable's damage slot 0x43F3B0, zone hits, scripts). It applies the damage
+// (FUN_0049c630), and at health 0 makes the wreck (flag +0xC 0x400, script message 6). `finish` != 0 = the game's own
+// clean-up of a wreck: no before-event (a subscriber must not cancel it).
+void* g_vehicleNext = nullptr;
+PSEEventId g_evVehDamage = 0, g_evVehDamaged = 0, g_evVehDestroyed = 0;
+
+void __fastcall VehicleDamageHook(void* vehicle, void*, float amount, void* attacker, int a3, float a4, int finish) {
+    using Fn = void(__thiscall*)(void*, float, void*, int, float, int);
+    const float before = vehicle ? Health(vehicle) : 0.0f;
+    if (!(before > 0.0f)) return reinterpret_cast<Fn>(g_vehicleNext)(vehicle, amount, attacker, a3, a4, finish);
+    PSEDs1DamageEvent e{sizeof e, reinterpret_cast<uint32_t>(vehicle), ScriptId(vehicle),
+                        reinterpret_cast<uint32_t>(attacker), ScriptId(attacker), amount, before, before};
+    if (!finish) {
+        pse::RaiseEvent(g_evVehDamage, &e);
+        if (!(e.amount > 0.0f)) return;
+    }
+    const float applied = e.amount;
+    reinterpret_cast<Fn>(g_vehicleNext)(vehicle, applied, attacker, a3, a4, finish);
+    e = PSEDs1DamageEvent{sizeof e, reinterpret_cast<uint32_t>(vehicle), ScriptId(vehicle),
+                          reinterpret_cast<uint32_t>(attacker), ScriptId(attacker), applied, before, Health(vehicle)};
+    pse::RaiseEvent(g_evVehDamaged, &e);
+    if (!(e.healthAfter > 0.0f)) pse::RaiseEvent(g_evVehDestroyed, &e);
+}
+
+// ---- pick-ups, objectives, mission end ------------------------------------------------------------------------------
+// Soldier_PickUp thiscall(soldier, item) ret 4: the item is his after (item +0x6C = its owner) unless the game refused.
+// Objective_Complete = the script API's +0x4C0 function, cdecl(index): the campaign's objective entry (FUN_004586e0)
+// gets the done flag +0x14 & 4 (+4 = title hash). Campaign_SetResult thiscall(campaign [0x60EDC0], result) ret 4.
+void* g_pickUpNext = nullptr;
+void* g_objectiveNext = nullptr;
+void* g_missionEndNext = nullptr;
+PSEEventId g_evPickUp = 0, g_evObjective = 0, g_evMissionEnd = 0;
+constexpr uint32_t kCampaign = 0x60EDC0, kObjectiveByIndex = 0x4586E0;
+
+// Whether the game took the item = AddItem's answer (FUN_004314d0 thiscall(soldier, item, 0, 0) ret 0xC, called at
+// 0x432082): non-zero = in the inventory (a stackable item - medikit, ammo - is merged into the stack it already has, so
+// the picked object itself never gets him as owner). Recorded by a call-site hook, the event raised after the whole
+// pick-up (text, sound, script message 3, held weapon) is done.
+void* g_addItemNext = nullptr;
+int g_pickUpDepth = 0;
+bool g_pickUpTaken = false;
+int __fastcall AddItemHook(void* soldier, void*, void* item, int a, int b) {
+    const int r = reinterpret_cast<int(__thiscall*)(void*, void*, int, int)>(g_addItemNext)(soldier, item, a, b);
+    if (g_pickUpDepth) g_pickUpTaken = r != 0;
+    return r;
+}
+
+void __fastcall PickUpHook(void* soldier, void*, void* item) {
+    ++g_pickUpDepth;
+    g_pickUpTaken = false;
+    reinterpret_cast<void(__thiscall*)(void*, void*)>(g_pickUpNext)(soldier, item);
+    --g_pickUpDepth;
+    if (!soldier || !item || !g_pickUpTaken) return;
+    PSEDs1PickUpEvent e{sizeof e, reinterpret_cast<uint32_t>(soldier), ScriptId(soldier),
+                        reinterpret_cast<uint32_t>(item), ScriptId(item)};
+    pse::RaiseEvent(g_evPickUp, &e);
+}
+
+uint8_t* Objective(uint32_t index) {
+    void* campaign = *reinterpret_cast<void**>(kCampaign);
+    if (!campaign) return nullptr;
+    return reinterpret_cast<uint8_t*(__thiscall*)(void*, uint32_t)>(kObjectiveByIndex)(campaign, index);
+}
+void __cdecl ObjectiveHook(uint32_t index) {
+    const uint8_t* entry = Objective(index);
+    const bool wasDone = entry && (entry[0x14] & 4);
+    reinterpret_cast<void(__cdecl*)(uint32_t)>(g_objectiveNext)(index);
+    if (!entry || wasDone || !(entry[0x14] & 4)) return;
+    // (mission scripts pass the index with garbage in the upper bytes - the game reads the low byte)
+    PSEDs1ObjectiveEvent e{sizeof e, index & 0xFF, *reinterpret_cast<const uint32_t*>(entry + 4)};
+    pse::RaiseEvent(g_evObjective, &e);
+}
+
+void __fastcall MissionEndHook(void* campaign, void*, uint32_t result) {
+    reinterpret_cast<void(__thiscall*)(void*, uint32_t)>(g_missionEndNext)(campaign, result);
+    PSEDs1MissionEndEvent e{sizeof e, result};
+    pse::RaiseEvent(g_evMissionEnd, &e);
 }
 
 // ---- D3D8 ----------------------------------------------------------------------------------------------------------
@@ -256,6 +401,33 @@ int Install(PSEPluginHandle self) {
                           kOuter, &g_saveNext, &id), "save", kSaveGame);
     Check(h->HookFunction(self, kLoadGame, sizeof kLoadPrologue, kLoadPrologue, reinterpret_cast<void*>(&LoadHook),
                           kOuter, &g_loadNext, &id), "load", kLoadGame);
+    const PSEMessagingInterface* m = pse::MessagingInterface();
+    g_evDamage = m->EventId(PSE_DS1_EVENT_SOLDIER_DAMAGE);
+    g_evDamaged = m->EventId(PSE_DS1_EVENT_SOLDIER_DAMAGED);
+    g_evKilled = m->EventId(PSE_DS1_EVENT_SOLDIER_KILLED);
+    Check(h->HookFunction(self, kTakeDamage, sizeof kTakeDamagePrologue, kTakeDamagePrologue,
+                          reinterpret_cast<void*>(&DamageHook), kOuter, &g_damageNext, &id), "soldier damage",
+          kTakeDamage);
+    g_evVehDamage = m->EventId(PSE_DS1_EVENT_VEHICLE_DAMAGE);
+    g_evVehDamaged = m->EventId(PSE_DS1_EVENT_VEHICLE_DAMAGED);
+    g_evVehDestroyed = m->EventId(PSE_DS1_EVENT_VEHICLE_DESTROYED);
+    g_evPickUp = m->EventId(PSE_DS1_EVENT_ITEM_PICKED_UP);
+    g_evObjective = m->EventId(PSE_DS1_EVENT_OBJECTIVE_COMPLETED);
+    g_evMissionEnd = m->EventId(PSE_DS1_EVENT_MISSION_END);
+    g_evScriptMessage = m->EventId(PSE_DS1_EVENT_SCRIPT_MESSAGE);
+    Check(h->HookFunction(self, kVehicleDamage, sizeof kVehicleDamagePrologue, kVehicleDamagePrologue,
+                          reinterpret_cast<void*>(&VehicleDamageHook), kOuter, &g_vehicleNext, &id), "vehicle damage",
+          kVehicleDamage);
+    Check(h->HookFunction(self, kPickUp, sizeof kPickUpPrologue, kPickUpPrologue, reinterpret_cast<void*>(&PickUpHook),
+                          kOuter, &g_pickUpNext, &id), "pick-up", kPickUp);
+    Check(h->HookCallSite(self, kPickUpAddItemCall, kAddItem, reinterpret_cast<void*>(&AddItemHook), kOuter,
+                          &g_addItemNext, &id), "pick-up AddItem", kPickUpAddItemCall);
+    Check(h->HookFunction(self, kObjectiveComplete, sizeof kObjectivePrologue, kObjectivePrologue,
+                          reinterpret_cast<void*>(&ObjectiveHook), kOuter, &g_objectiveNext, &id), "objective",
+          kObjectiveComplete);
+    Check(h->HookFunction(self, kMissionEnd, sizeof kMissionEndPrologue, kMissionEndPrologue,
+                          reinterpret_cast<void*>(&MissionEndHook), kOuter, &g_missionEndNext, &id), "mission end",
+          kMissionEnd);
     // The game's Direct3DCreate8 import (called through the thunk 0x59B246); DesertStormFix's graphics hook chains
     // behind this one (its wrapper object for Renderer 1-3 is what the layer then sees).
     if (Peek32(kIatDirect3DCreate8) == 0 || Peek32(kIatDirect3DCreate8) == 0xFFFFFFFF) {
@@ -266,7 +438,7 @@ int Install(PSEPluginHandle self) {
         Check(h->HookPointer(self, kIatDirect3DCreate8, reinterpret_cast<void*>(&Direct3DCreate8Hook), kOuter,
                              &g_create8Next, &id), "Direct3DCreate8", kIatDirect3DCreate8);
     }
-    Log(g_failed ? PSE_LOG_ERROR : PSE_LOG_INFO, "Game layer: %s (frame, render, level, save / load, D3D)",
+    Log(g_failed ? PSE_LOG_ERROR : PSE_LOG_INFO, "Game layer: %s (frame, render, level, save / load, game events, D3D)",
         g_failed ? "some event hooks failed" : "event hooks installed");
     return g_failed;
 }

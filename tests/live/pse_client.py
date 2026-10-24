@@ -10,7 +10,7 @@ Errors in the Lua chunk raise PseError (the game keeps running).
 import json, os, re, struct, time
 
 PIPE_DIR = "\\\\.\\pipe\\"
-STATE_MAIN_MENU, STATE_IN_GAME = 0x1, 0xE
+STATE_MAIN_MENU, STATE_IN_GAME, STATE_BRIEFING = 0x1, 0xE, 0x14
 
 
 class PseError(RuntimeError):
@@ -151,15 +151,33 @@ class Client:
             if self.frame() != f0: return True
         return False
 
+    def close_briefing(self, presses=3):
+        """The game's own mission briefing pop-up (front-end state 0x14, shown when DesertStormFix's briefing / loadout
+        screen is off - setting FeatLoadout = 0) waits for a key while frames keep running. Esc closes it the game's way
+        (its update sends the mission script message 0x3B); posted keys don't always reach a background window, so after
+        `presses` tries it does what customise.cpp does: state 0xE + message 0x3B itself. True = it was up."""
+        if self.state()["fe_state"] != STATE_BRIEFING: return False
+        for _ in range(presses):
+            self.press("esc")
+            time.sleep(0.4)
+            if self.state()["fe_state"] != STATE_BRIEFING: return True
+        self.run("dev.call(0x47EF20, 'cdecl', 0xE) "
+                 "local o = dev.u32(0x60F578) if o ~= 0 then local p = dev.alloc(64) dev.write_bytes(p, string.rep('00', 64)) "
+                 "dev.call(dev.u32(o + 8), 'cdecl', 0x3B, p) end return 1")
+        return True
+
     def wait_for_play(self, timeout=120.0, player=0):
         """After a level start: waits for in-game play (front-end state 0xE, frames running, player n has a soldier).
-        Presses Space whenever the game thread stalls (PLEASE PRESS ANY KEY waits for a key inside the load)."""
+        Presses Space whenever the game thread stalls (PLEASE PRESS ANY KEY waits for a key inside the load) and closes
+        the game's briefing pop-up (FeatLoadout = 0)."""
         t0 = time.time()
         while time.time() - t0 < timeout:
             st = self.state()
             if st["dispatch"] == 0 and st["fe_state"] == STATE_IN_GAME and self.frames_advancing(0.5):
                 p = self.player(player)
                 if p: return p
+            elif st["dispatch"] == 0 and st["fe_state"] == STATE_BRIEFING and self.frames_advancing(0.5):
+                self.close_briefing()
             elif not self.frames_advancing(1.0):
                 self.press("space")
             time.sleep(0.2)

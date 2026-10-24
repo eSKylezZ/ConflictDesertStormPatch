@@ -28,9 +28,24 @@ void Log(PSELogLevel level, const char* fmt, ...) {
     pse::LogLine(g_self, level, line);
 }
 
+// The game's paths are ANSI (the system code page); pse::cosave and the messages take UTF-8 (as on DS2), so a save
+// folder with non-ASCII letters keeps its co-save.
+std::string Utf8(const std::string& ansi) {
+    const int n = MultiByteToWideChar(CP_ACP, 0, ansi.c_str(), -1, nullptr, 0);
+    if (n <= 0) return ansi;
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, ansi.c_str(), -1, w.data(), n);
+    const int m = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (m <= 0) return ansi;
+    std::string out(static_cast<size_t>(m), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), m, nullptr, nullptr);
+    out.pop_back();   // the NUL
+    return out;
+}
+
 void Send(uint32_t type, const char* path) {
-    const char* p = path ? path : "";
-    pse::Broadcast(type, p, static_cast<uint32_t>(std::strlen(p) + 1));
+    const std::string p = Utf8(path ? path : "");
+    pse::Broadcast(type, p.c_str(), static_cast<uint32_t>(p.size() + 1));
 }
 
 bool Exists(const std::string& path) { return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES; }
@@ -61,7 +76,7 @@ void SaveEnd(const char* path, bool written, bool existedBefore) {
             DeleteFileA(co.c_str());   // left over from a save deleted outside the game
             Log(PSE_LOG_INFO, "PSE saves: removed the stale co-save %s (its save was gone)", co.c_str());
         }
-        const bool ok = pse::cosave::Save(co.c_str());
+        const bool ok = pse::cosave::Save(Utf8(co).c_str());
         if (ok) Log(PSE_LOG_INFO, "PSE saves: co-save %s written", co.c_str());
         else Log(PSE_LOG_ERROR, "[fail] PSE saves: co-save %s not written", co.c_str());
     }
@@ -75,7 +90,7 @@ void LoadEnd(const char* path, bool ok) {
         const std::string sav = WithSav(path), co = CoSavePathFor(sav);
         const uint32_t legacy = !Exists(co) && g_legacy ? g_legacy(sav.c_str(), nullptr, 0) : 0;
         if (Exists(co)) {
-            if (pse::cosave::Load(co.c_str())) Log(PSE_LOG_INFO, "PSE saves: co-save %s loaded", co.c_str());
+            if (pse::cosave::Load(Utf8(co).c_str())) Log(PSE_LOG_INFO, "PSE saves: co-save %s loaded", co.c_str());
             else Log(PSE_LOG_ERROR, "[fail] PSE saves: co-save %s unreadable - plugins start fresh", co.c_str());
         } else if (legacy) {
             // A save made before the co-save (DesertStormFix's .dsfix sidecar): its data as the chunks the plugins write
@@ -83,7 +98,7 @@ void LoadEnd(const char* path, bool ok) {
             std::vector<uint8_t> image(legacy);
             const uint32_t n = g_legacy(sav.c_str(), image.data(), legacy);
             image.resize(n < legacy ? n : legacy);
-            const std::string label = sav + " (old sidecar)";
+            const std::string label = Utf8(sav) + " (old sidecar)";
             pse::cosave::LoadBytes(image.data(), image.size(), label.c_str());
             Log(PSE_LOG_INFO, "PSE saves: %s has no co-save - read its old sidecar %s.dsfix", sav.c_str(), sav.c_str());
         } else {

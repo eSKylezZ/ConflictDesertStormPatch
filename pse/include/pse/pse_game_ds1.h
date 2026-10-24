@@ -159,6 +159,94 @@ typedef struct PSEGameDs1V1 {
     int (PSE_CALL* ExeKnown)(void);
 } PSEGameDs1V1;
 
+/* ---- game events (pse.messaging; raised by the game layer on the game thread - get the id with EventId(name)) ----
+ * data = PSEDs1DamageEvent* for all three:
+ *   "ds1.soldier_damage"   a soldier is about to take damage - every cause that goes through the soldier's damage
+ *                          function (Soldier_TakeDamage 0x424200: bullets, explosions, falls, a script's kill). A
+ *                          subscriber may change `amount`; the game applies what is left after every subscriber, and
+ *                          0 or less = nothing happens (no damage, no hit reaction). healthAfter = healthBefore here.
+ *   "ds1.soldier_damaged"  after the game applied it: amount = what was passed to the game, healthAfter = the health
+ *                          now (difficulty and the like are inside the game's function: compare the two healths).
+ *   "ds1.soldier_killed"   right after "ds1.soldier_damaged" when it took the soldier from above 0 to 0 or below.
+ * A soldier that is already dead gets none of them (the game ignores the call). Online, each PC raises them for the
+ * damage its own game applies. Changing `amount` changes the simulation: do it only in a SIMULATION plugin (online
+ * peers must run the same - docs/sdk/online-compat.md). */
+#define PSE_DS1_EVENT_SOLDIER_DAMAGE "ds1.soldier_damage"
+#define PSE_DS1_EVENT_SOLDIER_DAMAGED "ds1.soldier_damaged"
+#define PSE_DS1_EVENT_SOLDIER_KILLED "ds1.soldier_killed"
+
+typedef struct PSEDs1DamageEvent {
+    uint32_t size;                /* sizeof(PSEDs1DamageEvent) - later versions only append */
+    PSEDs1Soldier victim;         /* the soldier (same handle as GetLocalPlayer's) */
+    int32_t victimId;             /* its script id (the level's object id that mission scripts use; -1 = none) */
+    uint32_t attacker;            /* the object that did it: a soldier, vehicle ... (its address); 0 = none */
+    int32_t attackerId;           /* its script id, -1 = none */
+    float amount;                 /* damage points (see the events above) */
+    float healthBefore;           /* health when the damage arrived (soldier +0x54; squad soldiers start near 150) */
+    float healthAfter;
+} PSEDs1DamageEvent;
+
+/* Vehicles (tanks, trucks, helicopters, mounted guns ...) - the same three, data = PSEDs1DamageEvent* with `victim` =
+ * the vehicle's address and victimId its script id; raised from the vehicles' damage path (0x43E1F0, every cause):
+ *   "ds1.vehicle_damage"     before: `amount` may be changed (0 or less = nothing happens). Not raised for the game's
+ *                            own "finish it off" calls (its last argument set), which only clean up a wreck.
+ *   "ds1.vehicle_damaged"    after: healthAfter = the vehicle's health now (+0x54).
+ *   "ds1.vehicle_destroyed"  after "damaged" when it took the vehicle from above 0 to 0 or below (it is a wreck now).
+ * A wreck (health 0 or below) gets none of them. */
+#define PSE_DS1_EVENT_VEHICLE_DAMAGE "ds1.vehicle_damage"
+#define PSE_DS1_EVENT_VEHICLE_DAMAGED "ds1.vehicle_damaged"
+#define PSE_DS1_EVENT_VEHICLE_DESTROYED "ds1.vehicle_destroyed"
+
+/* "ds1.item_picked_up" - a soldier took an item into his inventory (weapon, ammo, medikit, key ...; FUN_00432070), raised
+ * after the game did it; data = PSEDs1PickUpEvent*. Not raised when the game refused it (inventory full ...). A
+ * stackable item (medikit, ammo) is merged into the stack the soldier has: `item` is the picked-up object, not the stack. */
+#define PSE_DS1_EVENT_ITEM_PICKED_UP "ds1.item_picked_up"
+typedef struct PSEDs1PickUpEvent {
+    uint32_t size;                /* sizeof(PSEDs1PickUpEvent) - later versions only append */
+    PSEDs1Soldier soldier;
+    int32_t soldierId;            /* script id, -1 = none */
+    uint32_t item;                /* the item object's address */
+    int32_t itemId;               /* its script id (-1 for items made at run time, e.g. a dead soldier's drop) */
+} PSEDs1PickUpEvent;
+
+/* "ds1.objective_completed" - a mission objective was ticked off (the mission script's complete-objective call, script
+ * API +0x4C0, for every mission: DLL, Lua, editor), raised once - not again for an objective already done; data =
+ * PSEDs1ObjectiveEvent*. The title text: LookupText(titleHash, ...). */
+#define PSE_DS1_EVENT_OBJECTIVE_COMPLETED "ds1.objective_completed"
+typedef struct PSEDs1ObjectiveEvent {
+    uint32_t size;                /* sizeof(PSEDs1ObjectiveEvent) */
+    uint32_t index;               /* the objective's number in the mission (0 = the first one added) */
+    uint32_t titleHash;           /* text hash of its title */
+} PSEDs1ObjectiveEvent;
+
+/* "ds1.mission_end" - the mission's result was set (script API +0x48C or the debug "complete mission"): the game shows
+ * MISSION SUCCESSFUL / FAILED next. data = PSEDs1MissionEndEvent*. */
+#define PSE_DS1_EVENT_MISSION_END "ds1.mission_end"
+typedef struct PSEDs1MissionEndEvent {
+    uint32_t size;                /* sizeof(PSEDs1MissionEndEvent) */
+    uint32_t result;              /* 2 = success, 1 = failure (the values the game uses) */
+} PSEDs1MissionEndEvent;
+
+/* "ds1.script_message" - every message the game sends the level's mission script (the same the mission DLL / Lua script
+ * gets in its message callback, raised just before it does): about 70 kinds - kills, pick-ups, doors, switches, enemies
+ * spotted, shots, alerts, waypoints, explosions ... data = PSEDs1ScriptMessageEvent*. Read-only: the script's answer
+ * to a query message is still the script's. Parameters are script ids (the level's object ids) unless noted:
+ *   0x00 killed (victim, killer or -1, time)      0x03 picked up (soldier, item)        0x04 enemy on combat alert
+ *   0x07 destructible destroyed (object, attacker) 0x08 waypoint reached (unit, waypoint) 0x09 path done (unit)
+ *   0x0B healed     0x0C damaged       0x0D switch used (switch name hash, 1.0f, soldier)
+ *   0x0E air strike called (soldier, x, y, z float)  0x11 mission complete   0x12 mission start (after the overview)
+ *   0x15 door (door, 0 closing / 1 opening / 2 closed / 3 open)  0x16 script timer (timer id)
+ *   0x17 explosive planted   0x18 explosion (x, y, z float)   0x1B / 0x1C mounted / dismounted (soldier, vehicle)
+ *   0x34 enemy spotted (observer, target)   0x3C shot (weapon, shooter)   0x52 a save was loaded
+ * (the full list: the readable mission scripts' game.EVENT names / ModKit api_slots.json). */
+#define PSE_DS1_EVENT_SCRIPT_MESSAGE "ds1.script_message"
+typedef struct PSEDs1ScriptMessageEvent {
+    uint32_t size;                /* sizeof(PSEDs1ScriptMessageEvent) */
+    uint32_t id;                  /* the message (table above) */
+    const uint32_t* params;       /* its parameter dwords as the game sends them (up to 8; may be NULL) - valid only
+                                     during the callback */
+} PSEDs1ScriptMessageEvent;
+
 #ifdef __cplusplus
 }
 #endif

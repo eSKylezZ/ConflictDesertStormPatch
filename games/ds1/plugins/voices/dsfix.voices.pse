@@ -1,0 +1,4 @@
+# Squad voices (SAS / Delta accents, .skin voices) + your soldier talks, for Conflict: Desert Storm (DesertStormFix).
+# Uses dsfix.services, publishes dsfix.voices v1 (dsfix_voices.h).
+name     = dsfix.voices
+requires = dsfix >= 3.3

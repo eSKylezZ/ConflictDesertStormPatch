@@ -222,6 +222,17 @@ All game thread only (`PSE_E_WRONG_PHASE` / 0 elsewhere); accessors with a NULL 
   SIMULATION plugins only ([online-compat.md](../online-compat.md)) - flag a plugin SIMULATION if its natives change
   what happens in a mission.
 
+## DS2
+
+- The state: `.lua` levels of Desert Storm II (`games/ds2/src/features/scripthost.cpp`, sub-plugin `ds2fix.scripthost`,
+  [ds2-mods.md](../ds2-mods.md#lua-missions-and-custom-campaigns)). Same binding as DS1: `ds2fix` attaches
+  `lua_bridge.h` with its load interface (host plugin), installs the namespaces after `OpenLibs`, syncs them every
+  script update, sends `pse.lua.level_start` after `init()` and `pse.lua.level_end` when the level unloads (the state is
+  closed then - DS1 keeps it until the next Lua level). The standalone `dinput8.dll` runs `.lua` levels without plugin
+  functions.
+- A plugin's namespaces are the same in DS1 and DS2 scripts; the game-specific `game.*` functions differ (DS2's API
+  slots, [game-ds2.md](game-ds2.md#lua-missions-ds2fixscripthost-gamesds2srcfeaturesscripthostcpp--campaignscpp-2026-10-23)).
+
 ## Internals (not SDK)
 
 - `pse/loader/lua_iface.cpp` (in `pse_loader.dll`): registry (ids never reused, a generation counter), the public

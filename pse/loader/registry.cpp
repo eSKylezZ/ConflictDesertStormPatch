@@ -111,15 +111,23 @@ const void* QueryAny(const char* id, uint32_t minVersion) {
 
 }  // namespace detail
 
-void Init(const Config& config) {
-    if (g_initialized) return;
+bool Init(const Config& config) {
+    if (g_initialized) return true;
+    bool valid = config.gameId && *config.gameId && std::strlen(config.gameId) <= 16;
+    for (const char* p = config.gameId; valid && *p; ++p)
+        valid = (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9');
+    if (!valid) {   // no default game: settings and plugins' game lists would quietly be another game's
+        if (config.logSink) config.logSink("[pse] ERROR Init refused: no valid game id (Config::gameId)");
+        return false;
+    }
     g_config = config;
-    if (!g_config.gameId) g_config.gameId = "ds1";
+    if (g_config.registryRoot.empty()) g_config.registryRoot = std::string("Software\\PSE\\") + g_config.gameId;
     g_initialized = true;
     detail::InitLog();
     detail::InitTasks();
     hooks::SetEnvironment(&PluginName, &LogLine);
     g_loader = RegisterInternalPlugin(&kLoaderInfo);
+    return true;
 }
 
 void ResetForTests() {

@@ -1,28 +1,37 @@
-// DesertStorm2Fix as a host plugin of the Pivotal Script Extender (PSE) - SKELETON (2026-10-19).
+// DesertStorm2Fix as the host plugin of the Pivotal Script Extender (PSE) - the DS2 product since 2026-10-22.
 //
-// The same features as the dinput8.dll build (src/dllmain.cpp), but loaded by PSE: <game>\dinput8.dll = the PSE shim,
-// PSE\pse_loader.dll + PSE\Games\pse_ds2.dll (the DS2 game layer: detection, pse.ids, pse.game.ds2, the core game
-// events) and this DLL as PSE\Plugins\ds2fix.dll + ds2fix.pse ("host = true"; the DS2 layer allows the name "ds2fix").
+// The same features as the standalone dinput8.dll build (src/dllmain.cpp), loaded by PSE: <game>\dinput8.dll = the PSE
+// shim, PSE\pse_loader.dll + PSE\Games\pse_ds2.dll (the DS2 game layer: detection, pse.ids, pse.game.ds2, the core game
+// events incl. PSE_MSG_EXIT at WM_DESTROY, the co-save) and this DLL as PSE\Plugins\ds2fix.dll + ds2fix.pse
+// ("host = true"; the DS2 layer allows the name "ds2fix"). Other DS2 plugins: games/ds2/plugins/<name>/.
 // Docs: docs/sdk/reference/game-ds2.md (repo root) "DesertStorm2Fix as a host plugin".
 //
 //   - every pse:: call goes through pse/hostlink (pse.host), linked in from the repo root (pse/);
 //   - patching = DesertStormFix's broker-backed src/core/patch.cpp at the repo root (a superset of games/ds2/src/core/patch.h),
-//     so every byte group / call hook / jump has an owner: the feature's sub-plugin "ds2fix.<feature>" (OwnerScope);
-//   - log lines (loader + plugins + features) -> DesertStorm2Fix.log (this DLL's sink replaces the layer's loader.log).
-// Not yet: settings through pse.settings (still HKLM\...\CDS II\Enhancements), the D3D9 device hooks through the broker
-// (graphics.cpp writes vtable slots itself - chained after the layer's, see game-ds2.md), PSE_MSG_EXIT (the layer sends
-// it at WM_DESTROY).
+//     so every byte group / call hook / jump / slot has an owner: the feature's sub-plugin "ds2fix.<feature>"
+//     (OwnerScope); the D3D9 vtable slots through core/comhooks.h (graphics.cpp);
+//   - settings: pse.settings of "ds2fix" (src/pse/settings_pse.cpp: HKCU\Software\PSE\ds2\Plugins\ds2fix, copied once
+//     from the standalone build's Enhancements key);
+//   - log lines (loader + plugins + features) -> DesertStorm2Fix.log in dev builds; release builds (no log of their own)
+//     leave them to the layer's PSE\Logs\loader.log.
 #include <windows.h>
 
+#include <algorithm>
 #include <deque>
+#include <map>
+#include <string>
+#include <vector>
 
 #include "core/log.h"
 #include "core/patch.h"
 #include "core/proxy.h"
 #include "core/pse_host.h"
 #include "core/settings.h"
+#include "ds2fix_graphics.h"
+#include "ds2fix_hud.h"
 #include "features/features.h"
 #include "features/graphics.h"
+#include "features/menus.h"
 #include "hostlink.h"
 #include "loader.h"
 
@@ -43,16 +52,52 @@ FARPROC RealDInput8(const char* name) {
 // ---- pse_host (the DS1 host's interface, core/pse_host.h, implemented for DS2) ----
 namespace {
 PSEPluginHandle g_core = 0;
+#ifndef DS_DIST
 void PSE_CALL LogSink(const char* line) { dslog::Write("%s", line); }
 void PSE_CALL ReportSink(const char* line, int error) { dslog::Write("%s%s", error ? "[report] [fail] " : "[report] ", line); }
+
+// Dev: the broker's records once the menus are up and after each level load (the DS1 console's "pse hooks"), plus a
+// count of hooks / groups per owner - a feature patching outside the broker shows up as a "[warn] ... outside the
+// broker" line of patch.cpp instead.
+void DumpHooks(const char* when) {
+    const PSEHooksInterface* hooks = pse::HooksInterface();
+    if (!hooks) return;
+    std::vector<PSEHookInfo> list(hooks->ListHooks(nullptr, 0));
+    for (auto& h : list) h.size = sizeof h;
+    list.resize(std::min<size_t>(hooks->ListHooks(list.data(), static_cast<uint32_t>(list.size())), list.size()));
+    static const char* const kKinds[] = {"bytes", "call", "function", "indirect", "pointer"};
+    std::map<std::string, int> owners;
+    for (const PSEHookInfo& h : list) {
+        ++owners[h.ownerName ? h.ownerName : "?"];
+        dslog::Write("[dev] hook %-8s %-22s 0x%08X len %2u prio %5d pos %u %s",
+                     static_cast<uint32_t>(h.kind) < 5 ? kKinds[h.kind] : "?", h.ownerName ? h.ownerName : "?", h.va,
+                     h.len, h.priority, h.chainPosition, h.name ? h.name : "");
+    }
+    std::string sum;
+    for (const auto& [name, n] : owners) sum += " " + name + "=" + std::to_string(n);
+    dslog::Write("[dev] PSE hooks (%s): %zu records, %zu owners:%s", when, list.size(), owners.size(), sum.c_str());
+}
+
+void PSE_CALL OnMessage(const PSEMessage* msg, void*) {
+    static bool menus = false;
+    if (msg->type == PSE_MSG_FRONT_END_READY && !menus) menus = true, DumpHooks("menus");
+}
+int PSE_CALL OnLevelLoaded(PSEEventId, void* data, void*) {
+    const char* level = static_cast<const char*>(data);
+    if (level && _stricmp(level, "FrontEnd") != 0) DumpHooks(level);
+    return 0;
+}
+#endif
 }  // namespace
 
 bool pse_host::Init(const PSELoadInterface* pse) {
     if (!pse::hostlink::Attach(pse)) return false;
     g_core = pse->plugin;
+#ifndef DS_DIST
     const PSEHostInterface* host = pse::hostlink::Host();
     host->SetLogSink(&LogSink);
     host->SetReportSink(&ReportSink);
+#endif
     return true;
 }
 PSEPluginHandle pse_host::Core() { return g_core; }
@@ -78,16 +123,61 @@ void pse_host::Shutdown() {
 }
 
 namespace {
+// ds2fix.graphics v1 (src/pse/ds2fix_graphics.h) for the DS2 plugins: graphics.h behind a C table.
+void PSE_CALL GfxSetVirtualScreen(int on, int w, int h) { graphics::SetVirtualScreen(on != 0, w, h); }
+int PSE_CALL GfxVirtualScreenOn() { return graphics::VirtualScreenOn() ? 1 : 0; }
+void PSE_CALL GfxRealToVirtual(long* x, long* y) {
+    if (x && y) graphics::RealToVirtual(*x, *y);
+}
+int PSE_CALL GfxRealWidth() { return graphics::RealWidth(); }
+int PSE_CALL GfxRealHeight() { return graphics::RealHeight(); }
+float PSE_CALL GfxVirtualScale() { return graphics::VirtualScale(); }
+void* PSE_CALL GfxDevice() { return graphics::Device(); }
+static_assert(graphics::kVirtualW == DS2FIX_VIRTUAL_W && graphics::kVirtualH == DS2FIX_VIRTUAL_H);
+const Ds2FixGraphicsV1 kGraphicsInterface = {sizeof(Ds2FixGraphicsV1), 1, &GfxSetVirtualScreen, &GfxVirtualScreenOn,
+                                             &GfxRealToVirtual, &GfxRealWidth, &GfxRealHeight, &GfxVirtualScale,
+                                             &GfxDevice};
+
+// ds2fix.hudhost v1 (src/pse/ds2fix_hud.h) for the widescreen / HUD plugin ds2fix.widescreen: the split-screen view
+// size its HUD scale follows, and the OPTIONS rows (menus.cpp) for its settings.
+const Ds2FixHudOptionV1* g_hudOption = nullptr;
+bool HudOptScaling() { return g_hudOption->Scaling() != 0; }
+uint32_t HudOptPercent() { return g_hudOption->Percent(); }
+void HudOptSet(bool on, uint32_t percent) { g_hudOption->Set(on ? 1 : 0, percent); }
+void PSE_CALL HostSplitViewSize(int* w, int* h) {
+    if (w && h) features::SplitViewSize(*w, *h);
+}
+void PSE_CALL HostSetHudOption(const Ds2FixHudOptionV1* option) {
+    g_hudOption = option;
+    features::menus::HudOption rows;
+    if (option) {
+        rows.scaling = &HudOptScaling;
+        rows.percent = &HudOptPercent;
+        rows.set = &HudOptSet;
+    }
+    features::menus::SetHudOption(rows);
+}
+const Ds2FixHudHostV1 kHudHostInterface = {sizeof(Ds2FixHudHostV1), 1, &HostSplitViewSize, &HostSetHudOption};
+
 // One row per feature = one internal plugin; Apply runs inside its owner scope (dllmain.cpp's Init order).
+// Widescreen modes, HUD scaling, the front end's virtual screen and sharper text are the external plugin
+// ds2fix.widescreen (games/ds2/plugins/widescreen) since 2026-10-22.
 const pse_host::Feature kFeatures[] = {
-    {"ds2fix.widescreen", "Widescreen launcher modes", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWidescreen},
-    {"ds2fix.hud", "HUD scaling", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyHud},
-    {"ds2fix.frontend", "Front end at any resolution", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFrontEnd},
-    {"ds2fix.fontsharp", "Sharper text", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFontSharp},
     {"ds2fix.cinematics", "Skip intro films", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyCinematics},
     {"ds2fix.menus", "Menus (co-op entry)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyMenus},
     {"ds2fix.splitscreen", "Split screen", PSE_PLUGIN_SIMULATION, &features::ApplySplitScreen},
     {"ds2fix.coop", "Co-op join screen", PSE_PLUGIN_SIMULATION, &features::ApplyCoop},
+    {"ds2fix.weaponicons", "Weapon pictures from mods (.weapon hud icon)", PSE_PLUGIN_CLIENT_ONLY,
+     &features::ApplyWeaponIcons},
+    {"ds2fix.mods", "Mods folder", PSE_PLUGIN_SIMULATION, &features::ApplyMods},
+    {"ds2fix.modlevels", "Levels from mods (mission DLLs, .level, game-data references, edited scenes)",
+     PSE_PLUGIN_SIMULATION, &features::ApplyModLevels},
+    {"ds2fix.skins", ".skin files (soldier textures, bodies, names)", PSE_PLUGIN_SIMULATION, &features::ApplySkins},
+    {"ds2fix.modsound", "Mods folder sounds (bank packs, level sounds, music, films)", PSE_PLUGIN_CLIENT_ONLY,
+     &features::ApplyModSounds},
+    {"ds2fix.modsmenu", "Mods menu (MODS screen, mod count)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyModsMenu},
+    {"ds2fix.scripthost", "Lua mission scripts (.lua levels, custom campaigns, +level)", PSE_PLUGIN_SIMULATION,
+     &features::ApplyScriptHost},
     {"ds2fix.graphics", "Direct3D hooks", PSE_PLUGIN_CLIENT_ONLY, &graphics::Install},
     {"ds2fix.devbg", "Dev background test mode", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDevBackground},
 };
@@ -110,6 +200,19 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
     settings::Load();
     pse_host::RegisterFeatures(kFeatures, sizeof kFeatures / sizeof kFeatures[0]);
     for (const auto& f : kFeatures) pse_host::RunAs(f.name, f.apply);
+    const auto* messaging = static_cast<const PSEMessagingInterface*>(pse->Query(pse->plugin, PSE_MESSAGING_INTERFACE, 1));
+    if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.graphics"), DS2FIX_GRAPHICS_INTERFACE, 1,
+                                                   &kGraphicsInterface) != PSE_OK)
+        dslog::Write("[fail] PSE: interface %s not registered", DS2FIX_GRAPHICS_INTERFACE);
+    if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.menus"), DS2FIX_HUDHOST_INTERFACE, 1,
+                                                   &kHudHostInterface) != PSE_OK)
+        dslog::Write("[fail] PSE: interface %s not registered", DS2FIX_HUDHOST_INTERFACE);
+#ifndef DS_DIST
+    if (messaging) {
+        messaging->RegisterListener(pse->plugin, nullptr, &OnMessage, nullptr);
+        messaging->Subscribe(pse->plugin, PSE_EVENT_LEVEL_LOAD_END, &OnLevelLoaded, nullptr, 0);
+    }
+#endif
     return 1;
 }
 }

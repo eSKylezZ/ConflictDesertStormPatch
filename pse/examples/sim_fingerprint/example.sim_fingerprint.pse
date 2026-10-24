@@ -1,0 +1,2 @@
+# A simulation plugin with a declared fingerprint (docs/sdk/online-compat.md).
+name = example.sim_fingerprint

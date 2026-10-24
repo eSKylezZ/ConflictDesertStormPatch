@@ -421,6 +421,46 @@ PSE_TEST("plugins: bad_crash is disabled cleanly, the others load") {
     DeleteTestKey();
 }
 
+PSE_TEST("plugins: online check - a declared simulation fingerprint stands for the DLL") {
+    RequireExamples();
+    if (!Exists(PluginDir() + "\\example.sim_fingerprint.dll")) PSE_SKIP("example.sim_fingerprint not built");
+    Fresh();
+    Scratch s("fingerprint");
+    s.Copy("example.sim_rules");
+    s.Copy("example.sim_fingerprint");
+    PSE_CHECK_EQ(pse::LoadPlugins(s.Wide()), 2u);
+    std::string rules, fp;
+    for (const pse::compat::PluginEntry& e : pse::compat::LocalPlugins()) {
+        if (e.name == "example.sim_rules") rules = e.hash;
+        if (e.name == "example.sim_fingerprint") fp = e.hash;
+    }
+    // No export: the file's SHA-256. The export: "fp:" + SHA-256 of its string.
+    PSE_CHECK_EQ(rules.size(), 64u);
+    pse::compat::Sha256 h;
+    const char text[] = "example.sim_fingerprint rules revision 1";
+    h.Add(text, sizeof text - 1);
+    const std::string expected = std::string(pse::compat::kFingerprintPrefix) + h.Hex();   // Hex() works once
+    PSE_CHECK_STR(fp.c_str(), expected.c_str());
+
+    // Compare: same fingerprint = compatible whatever the files; another one, or a file hash on the other side, refused.
+    pse::compat::Set a;
+    a.gameId = "ds1";
+    a.plugins.push_back({"example.sim_fingerprint", PSE_MAKE_VERSION(1, 0, 0), PSE_PLUGIN_SIMULATION, fp});
+    pse::compat::Set b = a;
+    PSE_CHECK(pse::compat::Compare(a, b, "the host").empty());
+    b.plugins[0].hash = std::string(pse::compat::kFingerprintPrefix) + std::string(64, 'a');
+    std::vector<std::string> d = pse::compat::Compare(a, b, "the host");
+    PSE_REQUIRE(d.size() == 1u);
+    PSE_CHECK(d[0].find("different simulation code here than on the host (fingerprint ") != std::string::npos);
+    b.plugins[0].hash = rules;
+    d = pse::compat::Compare(a, b, "the host");
+    PSE_REQUIRE(d.size() == 1u);
+    PSE_CHECK(d[0].find(" vs none)") != std::string::npos);
+
+    pse::UnloadPlugins();
+    DeleteTestKey();
+}
+
 PSE_TEST("plugins: refused before loading - missing dependency, version, name, game, no DLL") {
     RequireExamples();
     {

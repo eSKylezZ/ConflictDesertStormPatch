@@ -1,0 +1,3 @@
+# Sharper text for Conflict: Desert Storm (DesertStormFix): the font sheet enlarged to the HUD scale.
+name     = dsfix.fontsharp
+requires = dsfix >= 3.3

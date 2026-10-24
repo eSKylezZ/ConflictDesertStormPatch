@@ -3,8 +3,8 @@
 A mod can run its own Lua instead of one of the game's mission DLLs (`Mission*.dll`, `Training*.dll`). The level
 stays what it is – the same name, archive, sound cache, scene, briefing screen, saves and menu entry – only its
 script comes from the mod. This is how an edited **readable mission** (ModKit `cli/ds_mission2lua_readable.py`, Lua
-made from the player's own DLL) is played, and how the ModKit example **TrainingRestored**
-(`examples/training_restored/build.py`) puts the training missions' cut content back.
+made from the player's own DLL) is played, and how the ModKit example **RestoredMissions**
+(`examples/restored_missions/build.py`) puts cut content back into the training missions and Mission 1.
 
 Needs DesertStormFix 3.3 (the `dsfix.missionsource` plugin, `src/features/missionsource.cpp`). Works in every build,
 with the MISSIONS FROM LUA setting on or off.
@@ -73,7 +73,7 @@ python cli/ds_mission2lua_readable.py --bundle work\Training1               (reb
 
 then add `--@replaces Training1.dll` as the bundle's second line and copy it to `<game>\Mods\<Mod>\Training1.lua`.
 Generated missions are game code made from the player's files: share a script that builds them (like
-`examples/training_restored/build.py`: anchored edits + appended Lua), not the built files.
+`examples/restored_missions/build.py`: anchored edits + appended Lua), not the built files.
 
 Since ModKit 2026-10-20 a readable mission's `scripts/runtime.lua` wraps **every** named script API slot (not only the
 ones its DLL calls), so an edit can call any of them by name (`api.play_stream`, `api.set_view_camera`, …).

@@ -14,6 +14,7 @@
 #include "core/settings.h"
 #include "features/features.h"
 #include "features/graphics.h"
+#include "features/menus.h"
 #include "generated/layout_clamps.h"
 
 #include <algorithm>
@@ -29,21 +30,39 @@ constexpr uint32_t kRenderer = 0x680038, kWidth = 0x41A38, kHeight = 0x41A3C;
 constexpr uint32_t kSetUniform = 0x52B1A0, kSetXY = 0x52B1E0;
 constexpr uint8_t kEntry[] = {0xD9, 0x44, 0x24, 0x04, 0xD8, 0x0D, 0x4C, 0xA7, 0x5D, 0x00};   // fld [esp+4]; fmul [0x5DA74C]
 
-bool g_rawClamps = false;
+bool g_clampsOk = false, g_rawClamps = false;
+bool g_on = false;    // scaling active (HudScaling; switched live by SetHudScaling - off = the game's own 1.0)
 int g_raw800k = 800;
+float g_lastK = 1.0f;
 
 // Raw-offset clamp sites take their forced 800 path, whose "mov X, 800" immediate becomes 800 * k: their c * X / 800
 // pixels then grow by k like the art (W/800 overshot it on wide screens - the portraits' target icon at 4K).
 void UpdateRawClamps(float k) {
+    if (k != g_lastK) {
+        g_lastK = k;
+        features::OnHudScale(k);   // hudfix.cpp: fixed pixel paddings x k
+    }
     const int v = static_cast<int>(800.0f * k + 0.5f);
     if (!g_rawClamps || v == g_raw800k) return;
     g_raw800k = v;
     for (const auto& c : gen::kRawClamps) patch::Write(c.imm, &v, 4);
 }
 
+// The clamp sites follow the switch: forced 800 path while scaling, the game's c * max(800, W) / 800 without.
+void SetClamps(bool on) {
+    if (g_clampsOk)
+        for (const auto& c : gen::kLayoutClamps) patch::Write(c.jump, on ? c.patched : c.orig, c.len);
+    if (g_rawClamps) {
+        for (const auto& c : gen::kRawClamps) patch::Write(c.jump, on ? c.patched : c.orig, c.len);
+        const int v = 800;
+        g_raw800k = 800;
+        for (const auto& c : gen::kRawClamps) patch::Write(c.imm, &v, 4);
+    }
+}
+
 float HudK() {
     auto r = *reinterpret_cast<const uint8_t* const*>(kRenderer);
-    if (!r) return 1.0f;
+    if (!r || !g_on) return 1.0f;
     int w = *reinterpret_cast<const int*>(r + kWidth), h = *reinterpret_cast<const int*>(r + kHeight);
     features::SplitViewSize(w, h);   // split screen: the art fits a view (splitscreen.cpp)
     if (w <= 0 || h <= 0) return 1.0f;
@@ -61,8 +80,28 @@ void Store(uint8_t* sheet, float sx, float sy, int flag) {
     *reinterpret_cast<int*>(sheet + 0x20) = (sx == 100.0f && sy == 100.0f) ? 0 : flag;
 }
 
+// Every sheet a setter scaled, with the percentages the game asked for (before k): RescaleHudSheets puts them at the
+// current k again - a HUD size change in the options, and the in-mission menus (frontend.cpp: drawn on the virtual
+// screen, k = 1) and back. Forgotten at each level load (sheets of a level may be freed with it).
+struct SheetRec {
+    uint8_t* sheet;
+    float sx, sy;
+    int flag;
+};
+SheetRec g_sheets[64];
+int g_sheetCount = 0;
+void Remember(uint8_t* sheet, float sx, float sy, int flag) {
+    for (int i = 0; i < g_sheetCount; ++i)
+        if (g_sheets[i].sheet == sheet) {
+            g_sheets[i] = {sheet, sx, sy, flag};
+            return;
+        }
+    if (g_sheetCount < 64) g_sheets[g_sheetCount++] = {sheet, sx, sy, flag};
+}
+
 void __fastcall SetUniform(uint8_t* sheet, void*, float s) {
     const float k = HudK();
+    Remember(sheet, s, s, 1);
     Store(sheet, s * k, s * k, 1);
 }
 
@@ -119,6 +158,7 @@ uint32_t __fastcall ScaledImageHeight(const uint8_t* sheet, void*, int image) { 
 
 void __fastcall SetXY(uint8_t* sheet, void*, float sx, float sy, int flag) {
     const float k = HudK();
+    Remember(sheet, sx, sy, flag);
     Store(sheet, sx * k, sy * k, flag);
 }
 #ifndef DS_DIST
@@ -165,8 +205,66 @@ void __fastcall ProbeRestore(uint8_t* sheet, void* edx, float s) { Note("queue r
 #endif
 }  // namespace
 
+namespace {
+// Around the in-mission menus the sheets' scale fields themselves are saved and written back (the menus set some
+// sheets the mission never set again - the HUD art sheet [0x62F434] to 60 % - and the HUD screen's set-up, run when
+// the mission state is entered, lays the soldier panels out from them). Saved: every remembered sheet + the HUD /
+// font sheets the game keeps in globals.
+struct RawSheet {
+    uint8_t* sheet;
+    int flag;
+    float sx, sy;
+};
+SheetRec g_saved[64];
+RawSheet g_raw[80];
+int g_savedCount = 0, g_rawCount = 0;
+float g_savedK = 1.0f;
+constexpr uint32_t kSheetGlobals[] = {0x62F434, 0x62F4B0, 0x62F4B4};   // sheets
+constexpr uint32_t kFontGlobals[] = {0x62F438, 0x62F43C, 0x62F440};    // fonts: [font] = sheet
+
+void SaveRaw(uint8_t* sheet) {
+    if (!sheet || g_rawCount >= 80) return;
+    for (int i = 0; i < g_rawCount; ++i)
+        if (g_raw[i].sheet == sheet) return;
+    g_raw[g_rawCount++] = {sheet, *reinterpret_cast<int*>(sheet + 0x20), *reinterpret_cast<float*>(sheet + 0x24),
+                           *reinterpret_cast<float*>(sheet + 0x28)};
+}
+}  // namespace
+
+void features::ForgetHudSheets() { g_sheetCount = g_savedCount = g_rawCount = 0; }
+void features::RescaleHudSheets() {
+    const float k = HudK();
+    for (int i = 0; i < g_sheetCount; ++i)
+        Store(g_sheets[i].sheet, g_sheets[i].sx * k, g_sheets[i].sy * k, g_sheets[i].flag);
+}
+void features::SaveHudSheets() {
+    std::copy(g_sheets, g_sheets + g_sheetCount, g_saved);
+    g_savedCount = g_sheetCount;
+    g_savedK = HudK();
+    g_rawCount = 0;
+    for (int i = 0; i < g_sheetCount; ++i) SaveRaw(g_sheets[i].sheet);
+    for (uint32_t g : kSheetGlobals) SaveRaw(*reinterpret_cast<uint8_t**>(g));
+    for (uint32_t g : kFontGlobals)
+        if (auto font = *reinterpret_cast<uint8_t**>(g)) SaveRaw(*reinterpret_cast<uint8_t**>(font));
+}
+void features::RestoreHudSheets() {
+    if (!g_savedCount && !g_rawCount) return;
+    g_sheetCount = 0;   // the menus' percentages go; the mission's come back
+    for (int i = 0; i < g_savedCount; ++i) Remember(g_saved[i].sheet, g_saved[i].sx, g_saved[i].sy, g_saved[i].flag);
+    const float f = g_savedK > 0.0f ? HudK() / g_savedK : 1.0f;   // HUD SIZE changed in the menus
+    for (int i = 0; i < g_rawCount; ++i) {
+        uint8_t* s = g_raw[i].sheet;
+        *reinterpret_cast<int*>(s + 0x20) = g_raw[i].flag;
+        *reinterpret_cast<float*>(s + 0x24) = g_raw[i].sx * f;
+        *reinterpret_cast<float*>(s + 0x28) = g_raw[i].sy * f;
+    }
+    g_savedCount = g_rawCount = 0;
+}
+
 void features::ApplyHud() {
-    if (!settings::Get().hudScaling) return;
+    ApplyHudFixes();   // the DS1 fixes + dev probes (hudfix.cpp)
+    // Installed whatever HudScaling says: off = k 1 and the clamp sites as the game has them (the game's own look),
+    // so the in-game option (SetHudScaling) can switch it live.
     if (!patch::Matches(kSetUniform, kEntry, sizeof kEntry) || !patch::Matches(kSetXY, kEntry, sizeof kEntry)) {
         dslog::Write("[fail] HUD scaling: unexpected bytes at the sheet scale setters - skipped");
         return;
@@ -182,48 +280,39 @@ void features::ApplyHud() {
         patch::WriteJump(0x5294E0, reinterpret_cast<void*>(&SmallFontStub));
         patch::Write(0x5294E5, "\x90", 1);
     }
-    bool clampsOk = true;
+    g_clampsOk = true;
     for (const auto& c : gen::kLayoutClamps)
         if (!patch::Matches(c.jump, c.orig, c.len) && !patch::Matches(c.jump, c.patched, c.len)) {
             dslog::Write("[fail] HUD layout clamps: unexpected bytes at 0x%08X (clamp 0x%08X) - none applied", c.jump, c.site);
-            clampsOk = false;
+            g_clampsOk = false;
             break;
         }
-    if (clampsOk) {
-        bool skip[sizeof gen::kLayoutClamps / sizeof gen::kLayoutClamps[0]] = {};
-#ifndef DS_DIST
-        // Dev\ClampSkip "3,7,12": leave those clamp sites (table index) unpatched - bisecting which site places what
-        char list[256] = {};
-        DWORD ls = sizeof list;
-        if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStorm2Fix\\Dev", "ClampSkip", RRF_RT_REG_SZ, nullptr, list,
-                         &ls) == ERROR_SUCCESS)
-            for (char* p = list; *p;) {
-                char* end;
-                const long i = std::strtol(p, &end, 10);
-                if (end == p) break;
-                if (i >= 0 && i < static_cast<long>(std::size(skip))) skip[i] = true;
-                p = *end ? end + 1 : end;
-            }
-#endif
-        for (size_t i = 0; i < std::size(gen::kLayoutClamps); ++i)
-            if (!skip[i]) patch::Write(gen::kLayoutClamps[i].jump, gen::kLayoutClamps[i].patched, gen::kLayoutClamps[i].len);
-        dslog::Write("[ok]   HUD layout clamps: %u sites", static_cast<unsigned>(sizeof gen::kLayoutClamps / sizeof gen::kLayoutClamps[0]));
-    }
     constexpr uint8_t k800[] = {0x20, 0x03, 0x00, 0x00};
-    bool rawOk = true;
+    g_rawClamps = true;
     for (const auto& c : gen::kRawClamps)
         if ((!patch::Matches(c.jump, c.orig, c.len) && !patch::Matches(c.jump, c.patched, c.len)) ||
             !patch::Matches(c.imm, k800, 4)) {
             dslog::Write("[fail] HUD raw offsets: unexpected bytes at 0x%08X (clamp 0x%08X) - none applied", c.jump, c.site);
-            rawOk = false;
+            g_rawClamps = false;
             break;
         }
-    if (rawOk) {
-        for (const auto& c : gen::kRawClamps) patch::Write(c.jump, c.patched, c.len);
-        g_rawClamps = true;
-        dslog::Write("[ok]   HUD raw offsets: %u sites (800 -> 800 * k)", static_cast<unsigned>(sizeof gen::kRawClamps / sizeof gen::kRawClamps[0]));
-    }
+    g_on = settings::Get().hudScaling;
+    if (g_on) SetClamps(true);
 #ifndef DS_DIST
+    // Dev\ClampSkip "3,7,12": leave those clamp sites (table index) as the game has them - bisecting which site places what
+    char list[256] = {};
+    DWORD ls = sizeof list;
+    if (g_on && g_clampsOk &&
+        RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStorm2Fix\\Dev", "ClampSkip", RRF_RT_REG_SZ, nullptr, list, &ls) ==
+            ERROR_SUCCESS)
+        for (char* p = list; *p;) {
+            char* end;
+            const long i = std::strtol(p, &end, 10);
+            if (end == p) break;
+            if (i >= 0 && i < static_cast<long>(std::size(gen::kLayoutClamps)))
+                patch::Write(gen::kLayoutClamps[i].jump, gen::kLayoutClamps[i].orig, gen::kLayoutClamps[i].len);
+            p = *end ? end + 1 : end;
+        }
     DWORD probe = 0, size = sizeof probe;
     if (RegGetValueA(HKEY_CURRENT_USER, "Software\\DesertStorm2Fix\\Dev", "HudProbe", RRF_RT_REG_DWORD, nullptr, &probe,
                      &size) == ERROR_SUCCESS && probe) {
@@ -239,5 +328,35 @@ void features::ApplyHud() {
         dslog::Write("[dev] TextProbe on");
     }
 #endif
-    dslog::Write("[ok]   HUD scaling: sheet scale setters x k (HudScalePercent %u)", settings::Get().hudScalePercent);
+    dslog::Write("[ok]   HUD scaling: sheet scale setters x k (HudScaling %d, HudScalePercent %u; %u layout clamps, %u raw offsets)",
+                 g_on, settings::Get().hudScalePercent, g_clampsOk ? static_cast<unsigned>(std::size(gen::kLayoutClamps)) : 0u,
+                 g_rawClamps ? static_cast<unsigned>(std::size(gen::kRawClamps)) : 0u);
+    menus::HudOption opt;   // OPTIONS > HUD SCALING / HUD SIZE (menus.cpp)
+    opt.scaling = &HudScaling;
+    opt.percent = &HudScalePercent;
+    opt.set = &SetHudScale;
+    menus::SetHudOption(opt);
+}
+
+// ---- the in-game option (menus.cpp rows HUD SCALING / HUD SIZE) ----------------------------------------------------
+bool features::HudScaling() { return g_on; }
+uint32_t features::HudScalePercent() { return settings::Get().hudScalePercent; }
+
+// Live: the setting is saved, the clamp sites follow, every remembered sheet gets the new k at once (or, inside the
+// in-mission menus = virtual screen, when the menu closes - RestoreHudSheets).
+void features::SetHudScale(bool on, uint32_t percent) {
+    percent = std::clamp<uint32_t>(percent, 25, 400);
+    settings::Values v = settings::Get();
+    if (v.hudScaling == on && v.hudScalePercent == percent && g_on == on) return;
+    v.hudScaling = on;
+    v.hudScalePercent = percent;
+    settings::Save(v);
+    if (g_on != on) {
+        g_on = on;
+        SetClamps(on);
+    }
+    if (!graphics::VirtualScreenOn()) RescaleHudSheets();
+    const float k = HudK();
+    if (!on) UpdateRawClamps(1.0f);   // (the paddings back to the game's)
+    dslog::Write("HUD: scaling %s, size %u %% (k %.3f)", on ? "on" : "off", percent, k);
 }

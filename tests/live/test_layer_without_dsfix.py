@@ -43,6 +43,32 @@ def _modules(pid):
     return out
 
 
+def _close(pid, timeout=30):
+    """WM_CLOSE to the game's windows (the game then destroys its window: WM_DESTROY -> the layer's exit), and wait for
+    the process to end. True = it ended by itself."""
+    import ctypes
+    from ctypes import wintypes
+    u, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+    found = []
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def each(h, _):
+        p = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            found.append(h)
+        return True
+    u.EnumWindows(proc(each), 0)
+    for h in found:
+        u.PostMessageW(h, 0x0010, 0, 0)   # WM_CLOSE
+    h = k32.OpenProcess(0x00100000, False, pid)   # SYNCHRONIZE
+    if not h:
+        return True
+    r = k32.WaitForSingleObject(h, int(timeout * 1000))
+    k32.CloseHandle(h)
+    return r == 0
+
+
 def _lines(path):
     return [l.rstrip("\n") for l in open(path, encoding="utf-8", errors="replace")] if os.path.exists(path) else []
 
@@ -107,7 +133,9 @@ def test_plugins_get_events_and_cosave_without_dsfix():
                     time.sleep(0.5)
                 mods = _modules(g.p.pid) if g.alive() else []
                 alive = g.alive()
+                closed = _close(g.p.pid) if alive else False   # a normal exit: the layer sends PSE_MSG_EXIT
             harness, logger = _lines(harness_log), _lines(logger_log)
+            loader_log = _lines(os.path.join(bg.GAME, "PSE", "Logs", "loader.log"))
             print("\n[live] harness:", *harness, sep="\n    ")
             print("[live] events_logger:", *logger, sep="\n    ")
             assert alive, "the game died (harness: %r)" % harness[-5:]
@@ -151,6 +179,13 @@ def test_plugins_get_events_and_cosave_without_dsfix():
             assert 0 <= unload < begin2 < end2, logger[le:]
             assert _index(logger, "message NEW_GAME", le) < 0, "a loaded save got NEW_GAME"
             assert _index(logger, "cosave revert", le) < 0, logger[le:]
+
+            # Closing the game: the layer sends PSE_MSG_EXIT itself (WM_DESTROY's level unload) - no host plugin needed
+            assert closed, "the game didn't end after WM_CLOSE"
+            assert _index(logger, "message EXIT", end2) >= 0, logger[-5:]
+            # No host plugin: the loader's own log file has every line, the plugins' too, not only the start-up ones
+            assert _index(loader_log, "start-up: done in") >= 0, loader_log[:5]
+            assert _index(loader_log, "[example.events_logger]") >= 0, loader_log[-5:]
         finally:
             for f in moved:
                 shutil.move(os.path.join(away, f), os.path.join(plugins, f))

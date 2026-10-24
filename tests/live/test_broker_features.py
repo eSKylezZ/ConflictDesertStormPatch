@@ -67,7 +67,7 @@ def test_converted_hooks_are_broker_records(c):
         assert group and group[0]["owner"] == "dsfix.controller", _at(hooks, 0x538F2A)
         assert c.read(0x538F2A, "u8") == 0xE8 and c.read(0x538F2F, "u8") == 0x90
     if c.run("return dev.setting('HudScaling')"):
-        assert [h for h in _at(hooks, 0x4570D0, "function") if h["owner"] == "dsfix.hud"]
+        assert [h for h in _at(hooks, 0x4570D0, "function") if h["owner"] == "dsfix.hud"]   # its own DLL since 2026-10-24
 
 
 def test_overlay_and_probe_share_the_image_draw_entry(c):

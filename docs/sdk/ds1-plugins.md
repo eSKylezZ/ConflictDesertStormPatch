@@ -35,9 +35,7 @@ cosmetic, UI or local input (may differ between peers). When in doubt a feature 
 | Plugin | Feature | Flags | Apply functions (Init order) |
 | --- | --- | --- | --- |
 | `dsfix.videomenu` | Video options / restart | CLIENT_ONLY | `ApplyRestart` |
-| `dsfix.widescreen` | Widescreen resolutions | CLIENT_ONLY | `ApplyWidescreen` |
 | `dsfix.dev` | Developer test hooks | SIMULATION | `ApplyDevBackground`, `ApplyDevHooks` |
-| `dsfix.hud` | HUD / menu scaling | CLIENT_ONLY | `ApplyHud` |
 | `dsfix.controller` | Controllers in game | CLIENT_ONLY | `ApplyController` |
 | `dsfix.hotplug` | Controller hot-plug | CLIENT_ONLY | `ApplyPadAccess` |
 | `dsfix.timing` | Frame timing + physics | SIMULATION | `ApplyTiming` |
@@ -51,44 +49,27 @@ cosmetic, UI or local input (may differ between peers). When in doubt a feature 
 | `dsfix.coop` | Co-op set-up + saves | SIMULATION | `ApplyCoop` |
 | `dsfix.versus` | Versus | SIMULATION | `ApplyVersus` |
 | `dsfix.cheats` | Cheats menu | SIMULATION | `ApplyCheats` |
-| `dsfix.developer` | Developer page + debug keys | SIMULATION | `ApplyDebugKeys` |
 | `dsfix.freecam` | Free camera | CLIENT_ONLY | `ApplyFreeCam` |
 | `dsfix.modsmenu` | MODS menu | CLIENT_ONLY | `ApplyModsMenu` |
 | `dsfix.fixmenu` | DESERTSTORMFIX menu | CLIENT_ONLY | `ApplyFixMenu` |
 | `dsfix.pausemenu` | Pause menu items | CLIENT_ONLY | `ApplyPauseMenu` |
-| `dsfix.fontsharp` | Sharper text | CLIENT_ONLY | `ApplyFontSharp` |
-| `dsfix.textfit` | Menu text fitting | CLIENT_ONLY | `ApplyTextFit` |
 | `dsfix.barcolour` | Menu bar / HUD colour | CLIENT_ONLY | `ApplyBarColour` |
 | `dsfix.controls` | Controls menu | CLIENT_ONLY | `ApplyControls` |
-| `dsfix.mouse` | Mouse acceleration | CLIENT_ONLY | `ApplyMouse` |
-| `dsfix.menus` | Menu fixes | CLIENT_ONLY | `ApplyMenus` |
-| `dsfix.followers` | Followers | SIMULATION | `ApplyFollowers` |
-| `dsfix.difficulty` | VERY HARD / VERY EASY | SIMULATION | `ApplyDifficulty` |
-| `dsfix.jpfixes` | Japanese-release fixes | SIMULATION | `ApplyJpFixes` |
-| `dsfix.units` | Unit / vehicle tables | SIMULATION | `ApplyUnits` |
-| `dsfix.handling` | Vehicle handling | SIMULATION | `ApplyHandling` |
-| `dsfix.limits` | Engine limits | SIMULATION | `ApplyLimits` |
-| `dsfix.tooltips` | Inventory tooltips | CLIENT_ONLY | `ApplyTooltips` |
-| `dsfix.rumble` | Weapon rumble | CLIENT_ONLY | `ApplyRumble` |
+| `dsfix.multikbm` | Several keyboards and mice | CLIENT_ONLY | `ApplyMultiKbm` |
+| `dsfix.coopscripts` | Co-op mission scripts | SIMULATION | `ApplyCoopScripts` |
 | `dsfix.mods` | Mods folder | SIMULATION | `ApplyMods` |
 | `dsfix.assetstore` | PSE asset store (setting SHARED ASSET STORE, [ds1-settings.md](ds1-settings.md)): `pse.vfs` provider `ds1.store`, hooks `0x4BE360` / `0x4BD8A0` (priority 100) | SIMULATION | `ApplyAssetStore` |
 | `dsfix.memory` | Global Heap + big textures | SIMULATION | `ApplyMemory` |
 | `dsfix.weaponicons` | Weapon pictures from mods | CLIENT_ONLY | `ApplyWeaponIcons` |
-| `dsfix.bodies` | Soldier bodies from mods | SIMULATION | `ApplyBodies` |
-| `dsfix.timeofday` | Time of day | SIMULATION | `ApplyTimeOfDay` |
-| `dsfix.footprints` | Footprints + puddles | CLIENT_ONLY | `ApplyFootprints` |
-| `dsfix.weather` | Weather | SIMULATION | `ApplyWeather` |
-| `dsfix.voices` | Voices | SIMULATION | `ApplyVoices` |
+| `dsfix.skins` | Skins applied mid-level (loadout screen, loaded saves): their textures loaded at once, saved skins found on every side (entry hook on the skin apply `0x435BE0`, call `0x417449`); was part of `dsfix.bodies` until 2026-10-24. Off with both FeatMods and FeatLoadout off | SIMULATION | `ApplySkins` |
 | `dsfix.overview` | Mission overview | SIMULATION | `ApplyOverview` |
 | `dsfix.loadout` | Loadout + unlocks | SIMULATION | `ApplyLoadout` |
 | `dsfix.customise` | Briefing / loadout screen | SIMULATION | `ApplyCustomise` |
 | `dsfix.gear` | Soldier gear | SIMULATION | `ApplyGear` |
 | `dsfix.diagnostics` | Diagnostics + performance overlay | CLIENT_ONLY | `ApplyDiagnostics` |
-| `dsfix.audio` | Audio while aiming | CLIENT_ONLY | `ApplyAudio` |
-| `dsfix.shadows` | Shadow fix | CLIENT_ONLY | `ApplyShadows` |
 | `dsfix.scripthost` | Lua mission scripts | SIMULATION | `ApplyScriptHost` |
 | `dsfix.missionrt` | Translated mission runtime: Lua native `x86rt` for translated missions | SIMULATION | `ApplyMissionRt` |
-| `dsfix.originals` | Original game files: moves `*.dat` / `*.sch` / mission DLLs to `PSE\Originals` ([layout.md](layout.md)); pointer hooks on the exe's `CreateFileA` `0x5D8138`, `CreateFileW` `0x5D80B0`, `GetFileAttributesA` `0x5D810C`, `FindFirstFileA` `0x5D8104`, `LoadLibraryA` `0x5D8070` (redirect only when the game-folder file is missing). Two rows: the redirect before `dsfix.mods`, the move after `dsfix.missionsource` | SIMULATION | `ApplyOriginalsRedirect`, `ApplyOriginalsMove` |
+| `dsfix.originals` | Original game files: moves `*.dat` / `*.sch` / level script DLLs (Mission / Training / MP_MISSION / FrontEnd / Outro) to `PSE\Originals` ([layout.md](layout.md)); the game finds them through the game layer's redirect (since 2026-10-22, [game-ds1.md](reference/game-ds1.md#events-and-messages) "Game files" - these hooks were here before). Two rows: the folders for DesertStormFix's own readers before `dsfix.mods`, the move after `dsfix.missionsource` | SIMULATION | `ApplyOriginalsRedirect`, `ApplyOriginalsMove` |
 | `dsfix.missionsource` | Translated missions: setting MISSIONS FROM LUA (`TranslatedMissions`, [ds1-settings.md](ds1-settings.md)), dev `Dev\MissionSource`; hook at the level's DLL load `0x40C3EB` | SIMULATION | `ApplyMissionSource` |
 | `dsfix.campaigns` | Custom campaigns | SIMULATION | `ApplyCampaigns` |
 | `dsfix.console` | Developer console | SIMULATION | `ApplyConsole` |
@@ -115,6 +96,79 @@ in `plugins/<name>/`, targets in the top-level `CMakeLists.txt` (`DSFIX_PLUGINS`
 | Plugin | Files | Flags | Needs | What |
 | --- | --- | --- | --- | --- |
 | `dsfix.discord` 1.0.0 | `plugins/discord/discord.cpp`, `dsfix.discord.pse` | CLIENT_ONLY | `pse.game.ds1 >= 1.0` | Discord status (was the internal feature `src/features/discord.cpp` until 2026-10-19) |
+| `dsfix.shadows` 1.0.0 | `plugins/shadows/shadows.cpp`, `dsfix.shadows.pse` | CLIENT_ONLY | – | Shadow fix (was the internal feature `src/features/shadows.cpp` until 2026-10-23); setting `FeatShadowFix` |
+| `dsfix.audio` 1.0.0 | `plugins/audio/audio.cpp`, `dsfix.audio.pse` | CLIENT_ONLY | – | Audio while aiming (was `src/features/audio.cpp` until 2026-10-23); setting `FeatAimAudio`, byte group AUDIO |
+| `dsfix.widescreen` 1.0.0 | `plugins/widescreen/` | CLIENT_ONLY | – | Widescreen launcher modes (byte group WIDESCREEN; until 2026-10-23 in dsfix.dll) |
+| `dsfix.textfit` 1.0.0 | `plugins/textfit/` | CLIENT_ONLY | – | Menu text fitting (until 2026-10-23 in dsfix.dll) |
+| `dsfix.mouse` 1.0.0 | `plugins/mouse/` | CLIENT_ONLY | – | Mouse acceleration off by default; setting `MouseAcceleration` (own key since 2026-10-23) |
+| `dsfix.menus` 1.0.0 | `plugins/menus/` | CLIENT_ONLY | – | Menu fixes (until 2026-10-23 in dsfix.dll) |
+| `dsfix.units` 1.0.0 | `plugins/units/` | SIMULATION (fingerprint) | – | Unit tables: empty item slots skipped (until 2026-10-23 in dsfix.dll) |
+| `dsfix.limits` 1.0.0 | `plugins/limits/` (+ `dsfix_limits.h`) | SIMULATION (fingerprint) | – | Engine limits (byte group LIMITS, hooks); publishes interface **`dsfix.limits` v1** (`DsfixLimitsV1 {size, version, HeapExtra()}`): `dsfix.memory` adds `HeapExtra()` to the Global Heap when the game creates it (without the plugin: nothing) |
+| `dsfix.difficulty` 1.0.0 | `plugins/difficulty/` | SIMULATION (fingerprint) | `dsfix >= 3.3` | VERY HARD / VERY EASY (until 2026-10-24 in dsfix.dll); setting `FeatVeryHard` (restart); its two DIFFICULTY rows' texts through `dsfix.services`' text provider |
+| `dsfix.jpfixes` 1.0.0 | `plugins/jpfixes/` | SIMULATION (fingerprint) | `dsfix >= 3.3` | Japanese-release fixes; setting `FeatJpFixes` (live; online the host's value: `HostValue("jpfixes")`, dsfix's hostsync reads the setting from this plugin's key) |
+| `dsfix.handling` 1.0.0 | `plugins/handling/` | SIMULATION (fingerprint) | `dsfix >= 3.3` | Mod vehicles' grip / spin damping (`.vehicle`, read through `VehicleHandlingAt`) |
+| `dsfix.tooltips` 1.0.0 | `plugins/tooltips/` | CLIENT_ONLY | `dsfix >= 3.3` | Inventory hints; setting `FeatTooltips`; texts / button icons from `dsfix.services`. The split-screen weapon-name fix (`0x454558`) it used to carry is `dsfix.splitscreen`'s now |
+| `dsfix.rumble` 1.0.0 | `plugins/rumble/` | CLIENT_ONLY | `dsfix >= 3.3` | Per-weapon rumble rows + trigger feel; setting `FeatRumble`; the feel reaches dsfix.dll's pad I/O through the trigger feel provider |
+| `dsfix.bodies` 1.0.0 | `plugins/bodies/` | SIMULATION (fingerprint) | `dsfix >= 3.3` | Soldier bodies from mods (`.skin` `body =`, normal maps) - only with the Mods folder on; multi-part bodies: the squad's uniform on the main skin only (jump at `0x503384`, always). Chains on the skin apply entry with dsfix.dll's `dsfix.skins` |
+| `dsfix.followers` 1.0.0 | `plugins/followers/` | SIMULATION (fingerprint) | `dsfix >= 3.3` | Playable followers (the Emir, Franklin) with a pistol + MediKit (`GiveSpawnedWeapon` / `GiveSpawnedMedikit`); setting `FeatFollowers` (live; online the host's: `HostValue("followers")`; dsfix's hostsync and coopscripts read it from this plugin's key, no plugin = off) |
+| `dsfix.hud` 1.0.0 | `plugins/hud/` | CLIENT_ONLY | `dsfix >= 3.3` | HUD / menu scaling (byte group HUD + the HUD cave, icon / text / bar fixes, layout offsets; until 2026-10-24 in dsfix.dll). Its settings stay DesertStormFix's (`HudScaling`, `HudScalePercent`: launcher, OPTIONS > VIDEO), read with `DsfixSetting` and re-applied by `SetSettingsListener`. Without the DLL: the game's 800x600-sized HUD |
+| `dsfix.weather` 1.0.0 | `plugins/weather/` (+ `dsfix_weather.h`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Weather, weather sounds, footprints + puddles in one DLL (were dsfix.dll's `dsfix.weather` / `dsfix.footprints` until 2026-10-24). Settings stay DesertStormFix's (`FeatWeather`, `Footprints`, `FeatFootprintsAll`, `FeatFootprintsWeather`); the remembered WEATHER choice is its hidden setting `Weather` (copied once). Publishes interface **`dsfix.weather` v1** (`DsfixWeatherV1 {size, version, Label, Choice, SetChoice, ScriptWeather, ForHost, Kind}`) for dsfix.dll's loadout WEATHER row, Lua `game.weather` and the online token; without the plugin: no WEATHER row, `game.weather` errors, online sends no weather. Shares the call `0x40E356` with `dsfix.nameplates` (broker chain 50 / 100) |
+| `dsfix.timeofday` 1.0.0 | `plugins/timeofday/` (+ `dsfix_timeofday.h`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Time of day + day / night cycle (until 2026-10-24 in dsfix.dll): the script API's time slots ruled by the loadout rows' choice. Its choices are hidden settings `TimeOfDay` / `TimeFlow` (copied once); `FeatTimeOfDay` / `FeatLoadout` stay DesertStormFix's. Publishes **`dsfix.timeofday` v1** (`TimeLabel`, `FlowLabel`, `Time`, `Flow`, `Set`, `Continues`, `Rule`) for dsfix.dll's TIME OF DAY / TIME FLOW rows and the online token; without it: no rows, missions keep their own time |
+| `dsfix.voices` 1.0.0 | `plugins/voices/` (+ `dsfix_voices.h`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Squad voices (SAS / Delta accents, `.skin` voices) + YOUR SOLDIER TALKS (byte group PLAYER_VOICE); until 2026-10-24 in dsfix.dll. Its VOICE choices are hidden settings `Voice<SP|Coop><role>` (copied once); `FeatVoices` / `FeatPlayerVoice` stay DesertStormFix's; the accent banks stay mods.cpp's (`SoundCache`). Publishes **`dsfix.voices` v1** (`Label`, `Choice`, `SetChoice`, `CoopChoice`, `Text`, `HasOwnVoice`) for dsfix.dll's VOICE row and the online token; without it: no VOICE row, everyone his own bank |
+| `dsfix.fontsharp` 1.0.0 | `plugins/fontsharp/fontsharp.cpp` | CLIENT_ONLY | `dsfix >= 3.3` | Sharper text (until 2026-10-24 dsfix.dll's `dsfix.fontsharp`): the font sheet's pages swapped for enlarged copies at the glyph texture bind `0x53CC9B` (last subscriber, priority 0). Setting `FeatSharpText` in its own key; reads DesertStormFix's `HudScaling` (`DsfixSetting` + `SetSettingsListener`). The texture reader is shared with dsfix.dll's barcolour.cpp as the header `src/core/texpixels.h`. Without it: the game's soft text |
+| `dsfix.developer` 1.0.0 | `plugins/developer/developer.cpp` | SIMULATION (fingerprint) | `dsfix >= 3.3` | CHEATS > DEVELOPER page (front-end state 0x46: debug displays, time speed, complete mission, resurrect) + Pivotal's debug key map (byte group DEBUG_KEYS, call `0x4473B5`); until 2026-10-24 dsfix.dll's `dsfix.developer`. Page through `SetScreenProvider`, texts `0xC00D....` through `SetTextProvider`. Only with DesertStormFix's `FeatCheats` on at start-up. Without it: dsfix.dll's CHEATS row DEVELOPER does nothing |
+
+The SIMULATION ones declare a simulation fingerprint (below), so a dev build and the release package still connect
+online. They load after `dsfix.dll`'s own features (the loader's second round), still before the game's WinMain.
+
+**dsfix.services v1** (`src/core/dsfix_services.h`, 2026-10-24) is dsfix.dll's interface for the split-out features
+that still need something of it - published by `features::RegisterServices` (services.cpp) at the end of dsfix's Load,
+so it exists before the second round. `kit::Services()` queries it once (an error line without it); such a plugin's
+manifest says `requires = dsfix >= 3.3`. `DsfixServicesV1 {size, version}` then:
+
+| Member | What |
+| --- | --- |
+| `GameText(hash)` | the game's catalog text (current language) or NULL |
+| `ControlIconText(player, action)` | icon character of player 0-3's button for a `default.key` action, NULL = no icon |
+| `OnlineMission()` | 1 while an online mission runs |
+| `HostValue(name)` | the host's value of a synced setting online (`"jpfixes"`, `"followers"`), else -1 |
+| `ModsGeneration()` | changes when the Mods folder is re-read (MODS menu) |
+| `VehicleHandlingCount()` / `VehicleHandlingAt(i, &model, &grip, &spin)` | mods' `.vehicle` handling (< 0 = the game's) |
+| `SetTextProvider(plugin, fn)` | `fn(hash)` is asked by dsfix's text lookup before the catalog (one per plugin, NULL removes) |
+| `SetTriggerFeelProvider(plugin, fn)` | `fn(player)` → `DsfixTriggerFeel` for dsfix's pad I/O (adaptive triggers, full pull) |
+| `DsfixSetting(key)` | DesertStormFix's own bool / int setting by registry name (`"FeatLoadout"`), 0 if unknown |
+| `ModsFolderEnabled()` / `SkinBody(texture)` / `SkinNormalMap(texture)` / `ModReport(line)` | Mods folder read; the body / normal map a `.skin` gives that texture (`""` = none); a log + mod report line |
+| `LoadoutScreenOpen()` | the briefing / loadout screen is up |
+| `GiveSpawnedWeapon(soldier, weapon, mags)` / `GiveSpawnedMedikit(soldier)` | a weapon / MediKit made from the level's own scene record, given to the soldier (NULL / 0 = no record) |
+| `SetSettingsListener(plugin, fn)` | `fn()` after DesertStormFix's own settings changed in the launcher (OK / Set to Defaults) - re-read `DsfixSetting` |
+| `GameFocused()` | the game window is in front (or treated so: run in background / tests) |
+| `DrawPuddleReflections(dev8, parts, n, look)` | puddle reflections through dsfix.dll's D3D9 renderers 1-3 (`DsfixPuddlePart`, `DsfixWaterLook`; 0 on Renderer 0) |
+| `LinkedFrom()` | the level this one continues from (linked missions), `""` if none |
+| `SkinVoice(texture)` / `SpeechLanguage()` | the voice bank a `.skin` gives that texture (`""` = none); the game's speech language (0 UK / 6 US English, -1 another) |
+| `SetScreenProvider(plugin, fn)` | `fn(state)` returns the screen object for a front-end state dsfix.dll doesn't serve (its state -> screen hook on `FUN_00480930` asks after its own states), or NULL. One per plugin, NULL removes it; dropped at `PSE_MSG_EXIT`. Check `size` before calling (appended 2026-10-24) |
+
+The providers are plain cross-plugin calls (no crash guard); dsfix forgets them all at `PSE_MSG_EXIT`, before the
+loader unloads the plugins. Without `dsfix.rumble` the trigger feel is `DEFAULT` for every weapon; without a text
+provider the hashes fall through to the game's catalog.
+
+**The dsfix kit** (`plugins/kit/`, static library `dsfix_kit`, 2026-10-23) is how a feature leaves `dsfix.dll` without
+being rewritten: it compiles DesertStormFix's `src/core/patch.cpp` into the plugin and supplies what that file and
+`core/log.h` expect from the host, on the public SDK only – `pse::HooksInterface()` (= the plugin's `pse.hooks`),
+`pse::PluginName()`, `pse_host::Core()` (= the plugin itself, so every patch is owned by it) and `dslog::Write` (=
+`pse.log`, so the lines land in `DesertStormFix.log` as `[dsfix.<name>] INFO …`). The feature keeps its `patch::` /
+`dslog::` code; `settings::Get()` reads become `kit::DeclareBool` / `kit::GetBool` (its own pse.settings key; the old
+value is copied once from `dsfix`'s key, marker `ImportedFromDsfix`, as for Discord) with a change callback for live
+settings (flags argument: `PSE_SETTING_LIVE` by default, 0 = restart - OPTIONS > DESERTSTORMFIX then shows "ON *" and
+asks for a restart after a change, measured against the values at `PSE_MSG_POST_LOAD`), `DevDword` becomes `kit::DevDword`. CMake: `dsfix_add_plugin(<target> <folder> <description>)` builds
+`plugins/<folder>/*.cpp` + its manifest and adds it to `DSFIX_PLUGINS` (tree, deploy, release zip). OPTIONS >
+DESERTSTORMFIX keeps the rows (`Kind::Plugin`, OFF and fixed when the DLL is missing). Removing the DLL = the game's own
+behaviour. Every kit plugin exports `PSEPlugin_SimFingerprint` (kit.cpp: DesertStormFix version, `dsfix::kSimRevision`,
+the patch tables, its name and version), so a SIMULATION one is compared online like dsfix.dll's own features, not by
+its file hash ([online-compat.md](online-compat.md#external-plugins-declared-simulation-fingerprint)). Exports per
+plugin: one `DSFIX_KIT_PLUGIN(name, display, flags, load)` line (kit.h); `kit::OnFrame(fn)` = per-frame work (was a
+`Timed(...)` line in launcher.cpp); a function another feature called directly becomes a published interface (example:
+`dsfix.limits`), or a `dsfix.services` member when dsfix.dll itself is the other side. Cross-feature calls left in
+dsfix.dll are what keeps the rest inside for now.
 
 **dsfix.discord** – uses `pse.log`, `pse.settings`, `pse.messaging` (`PSE_EVENT_FRAME`) and `pse.game.ds1` (`LevelName`,
 `LevelKind`, `LevelTitle`, `SplitScreenPlayers`, `ExeKnown`), nothing else of the game or DesertStormFix:
@@ -140,7 +194,7 @@ in `plugins/<name>/`, targets in the top-level `CMakeLists.txt` (`DSFIX_PLUGINS`
 
 | Site | Chain (priority, runs first → last) |
 | --- | --- |
-| `0x53CC9B` (`call 0x544220`, texture bind of the plain image draw `FUN_0053c9e0`) | `dsfix.weaponicons` 200 (a mod weapon's picture; only with FeatMods) → `dsfix.barcolour` 100 (recoloured menu / HUD page) → `dsfix.fontsharp` 0 (enlarged font page) → `0x544220`. Constants in `features.h` (`kGlyphBind*`). Each passes the texture it chose to its `next`; the later ones only replace their own pages, so the earlier replacement wins (same result as the old hand-written calls). |
+| `0x53CC9B` (`call 0x544220`, texture bind of the plain image draw `FUN_0053c9e0`) | `dsfix.weaponicons` 200 (a mod weapon's picture; only with FeatMods) → `dsfix.barcolour` 100 (recoloured menu / HUD page) → `dsfix.fontsharp` 0 (enlarged font page; its own DLL since 2026-10-24) → `0x544220`. Constants in `features.h` (`kGlyphBind*`). Each passes the texture it chose to its `next`; the later ones only replace their own pages, so the earlier replacement wins (same result as the old hand-written calls). |
 
 ## Co-save chunks
 

@@ -52,15 +52,16 @@ void settings::Load() {
         Read(key, "VSync", g_values.vsync);
         Read(key, "PerfOverlay", g_values.perfOverlay);
         Read(key, "MenuZoom", g_values.menuZoom);
+        Read(key, "FeatMods", g_values.featMods);
         RegCloseKey(key);
     }
     const Values& v = g_values;
     dslog::Write("Settings: HudScaling=%d HudScalePercent=%u Controller=%d PadDeadzone=%u FpsCap=%u FpsCapToRefresh=%d "
                 "SplitScreenLayout=%u DiscordPresence=%d DisplayMode=%u SkipIntro=%d SkipCutscenes=%d "
-                "Antialiasing=%u Anisotropy=%u MenuZoom=%d",
+                "Antialiasing=%u Anisotropy=%u MenuZoom=%d FeatMods=%d",
                 v.hudScaling, v.hudScalePercent, v.controller, v.padDeadzone, v.fpsCap, v.fpsCapToRefresh,
                 v.splitScreenLayout, v.discordPresence, v.displayMode, v.skipIntro, v.skipCutscenes,
-                v.antialiasing, v.anisotropy, v.menuZoom);
+                v.antialiasing, v.anisotropy, v.menuZoom, v.featMods);
 }
 
 bool settings::Save(const Values& v) {
@@ -76,7 +77,8 @@ bool settings::Save(const Values& v) {
               Put(key, "DisplayMode", v.displayMode) && Put(key, "SkipIntro", v.skipIntro) &&
               Put(key, "SkipCutscenes", v.skipCutscenes) && Put(key, "Antialiasing", v.antialiasing) &&
               Put(key, "Anisotropy", v.anisotropy) && Put(key, "MouseAcceleration", v.mouseAcceleration) &&
-              Put(key, "VSync", v.vsync) && Put(key, "PerfOverlay", v.perfOverlay) && Put(key, "MenuZoom", v.menuZoom);
+              Put(key, "VSync", v.vsync) && Put(key, "PerfOverlay", v.perfOverlay) && Put(key, "MenuZoom", v.menuZoom) &&
+              Put(key, "FeatMods", v.featMods);
     RegCloseKey(key);
     if (ok) g_values = v;
     return ok;

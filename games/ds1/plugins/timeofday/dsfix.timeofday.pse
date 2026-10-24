@@ -1,0 +1,4 @@
+# Time of day + day / night cycle for Conflict: Desert Storm (DesertStormFix). Uses dsfix.services, publishes
+# dsfix.timeofday v1 (dsfix_timeofday.h).
+name     = dsfix.timeofday
+requires = dsfix >= 3.3

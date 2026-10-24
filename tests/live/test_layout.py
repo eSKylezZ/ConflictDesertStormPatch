@@ -35,15 +35,19 @@ def test_loader_game_layer_and_host_plugin(c):
     assert dsfix["external"] and dsfix["host"] and not dsfix["flags"] & INTERNAL and not dsfix["disabled"]
     assert dsfix["version"].startswith("3.")
     # Its features: internal sub-plugins (no crash guard, PSE_PLUGIN_INTERNAL), not hosts, all enabled.
-    subs = {n: p for n, p in plugins.items() if n.startswith("dsfix.") and n != "dsfix.discord"}
-    assert len(subs) >= 50, len(subs)
+    # DesertStormFix's own plugin DLLs (dsfix.discord, the split-out features on the dsfix kit) are ordinary external
+    # plugins; everything else named dsfix.* is a sub-plugin inside dsfix.dll.
+    own_dlls = {n for n, p in plugins.items() if n.startswith("dsfix.") and p["external"]}
+    subs = {n: p for n, p in plugins.items() if n.startswith("dsfix.") and n not in own_dlls}
+    # every split moves one from subs to own_dlls (2026-10-24: 49 inside + 20 DLLs): the feature set as a whole counts
+    assert len(subs) >= 30 and len(subs) + len(own_dlls) >= 60, (len(subs), len(own_dlls))
     for n, p in subs.items():
         assert p["flags"] & INTERNAL and not p["external"] and not p["host"] and not p["disabled"], (n, p)
-    # dsfix.discord stays an ordinary external plugin.
-    if "dsfix.discord" in plugins:
-        d = plugins["dsfix.discord"]
-        assert d["external"] and not d["host"] and not d["flags"] & INTERNAL
-    print("\n[live] loader + pse.game.ds1 (host) + dsfix (external host) + %d sub-plugins" % len(subs))
+    for n in own_dlls:
+        d = plugins[n]
+        assert not d["host"] and not d["flags"] & INTERNAL and not d["disabled"], (n, d)
+    print("\n[live] loader + pse.game.ds1 (host) + dsfix (external host) + %d sub-plugins + DLLs %s"
+          % (len(subs), ", ".join(sorted(own_dlls))))
 
 
 def test_host_loaded_first_and_log_kept(c):

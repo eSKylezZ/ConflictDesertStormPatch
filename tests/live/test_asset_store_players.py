@@ -75,7 +75,9 @@ def make_mod():
     os.makedirs(MOD, exist_ok=True)
     open(os.path.join(MOD, "Iraqi_Militia.unit"), "w").write(UNIT)
     open(os.path.join(MOD, "AKSU.weapon"), "w").write(WEAPON)
-    data = open(os.path.join(bg.GAME, "mission3.dat"), "rb").read()
+    # the game's archives moved to <game>\PSE\Originals (2026-10-22); older installs keep them in the game folder
+    path = os.path.join(bg.GAME, "PSE", "Originals", "mission3.dat")
+    data = open(path if os.path.exists(path) else os.path.join(bg.GAME, "mission3.dat"), "rb").read()
     entries = {h: (o, s) for h, o, s in archive.entries(data)}
     o, s = entries[archive_hash("MISSION3.ENV")]
     env = data[o:o + s]

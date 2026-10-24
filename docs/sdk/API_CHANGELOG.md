@@ -7,13 +7,231 @@ changes are in the repo's `CHANGELOG.md`.
 
 First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still change until SDK 1.0.
 
+- 2026-10-24 – **New interface `dsfix.services` v1** (`games/ds1/src/core/dsfix_services.h`, published by `dsfix.dll`
+  at the end of its Load): game texts, control icons, online state, the host's synced values, mods' vehicle handling,
+  plus a text provider and a trigger feel provider for features in their own DLLs
+  ([ds1-plugins.md](ds1-plugins.md#external-plugins)). **Plugin layout**: `dsfix.difficulty`, `dsfix.jpfixes`,
+  `dsfix.handling`, `dsfix.tooltips`, `dsfix.rumble` are their own DLLs on it (`requires = dsfix >= 3.3`); their
+  settings `FeatVeryHard` / `FeatJpFixes` / `FeatRumble` / `FeatTooltips` moved to their own keys (copied once,
+  [ds1-settings.md](ds1-settings.md#featshadowfix--feataimaudio--mouseacceleration-and-four-more-moved-to-their-plugins)).
+  The split-screen weapon-name byte fix `0x454558` is `dsfix.splitscreen`'s now. dsfix kit: `kit::DeclareBool` takes
+  `flags` (default `PSE_SETTING_LIVE`; 0 = restart) and `kit::Services()`. OPTIONS > DESERTSTORMFIX plugin rows honour
+  a setting declared without `PSE_SETTING_LIVE` ("ON *", restart footer). Dev server: `dev.plugin_setting_flags`,
+  `dev.plugin_restart_pending`. Same day, appended to v1: `DsfixSetting`, `ModsFolderEnabled`, `SkinBody`,
+  `SkinNormalMap`, `ModReport`, `LoadoutScreenOpen`, `GiveSpawnedWeapon`, `GiveSpawnedMedikit`, `HostValue("followers")`
+  - and `dsfix.bodies` (mod bodies + multi-part draw) / `dsfix.followers` (setting `FeatFollowers`) are their own DLLs
+  too. The mid-level skin work the loadout screen needs stays in dsfix.dll as the new internal `dsfix.skins`
+  (skin-apply entry hook, chained with `dsfix.bodies`'). `core/patch.cpp` `HookFunction`: an entry another plugin's
+  copy of patch.cpp already hooked (its jump in place of the prologue) is chained onto through the broker instead of
+  refused as "unexpected bytes". Later the same day: `SetSettingsListener` appended to v1 (called after the launcher
+  saves DesertStormFix's settings) and **`dsfix.hud`** (HUD / menu scaling) is its own DLL too - its settings stay
+  DesertStormFix's (`HudScaling`, `HudScalePercent`). Dev server: `dev.settings_changed()`. Then **`dsfix.weather`**
+  (weather + weather sounds + footprints, one DLL) publishing the new interface **`dsfix.weather` v1**
+  (`plugins/weather/dsfix_weather.h`) for dsfix.dll's loadout row, Lua `game.weather` and the online token;
+  `dsfix.services` v1 gained `GameFocused` and `DrawPuddleReflections` (`DsfixPuddlePart` / `DsfixWaterLook`) and
+  `HostValue("weather")`. The raw `Weather` value moved to the plugin's key. dsfix kit: `kit::DeclareInt` / `GetInt` /
+  `SetInt`. Dev server: `dev.weather()`. Build: the install-tree file list goes to `pse/cmake/assemble.cmake` as a
+  generated file (`-DFILES_FROM=`; the command line had passed cmd.exe's 8191 characters). Then **`dsfix.timeofday`**
+  with the new interface **`dsfix.timeofday` v1** (`plugins/timeofday/dsfix_timeofday.h`) for the loadout TIME OF DAY /
+  TIME FLOW rows and the online token; `dsfix.services` v1 gained `LinkedFrom()` and `HostValue("timeofday_on" /
+  "timeofday" / "timeflow")`. The raw `TimeOfDay` / `TimeFlow` values moved to the plugin's key. Then **`dsfix.voices`**
+  with **`dsfix.voices` v1** (`plugins/voices/dsfix_voices.h`) for the VOICE row and the online token;
+  `dsfix.services` v1 gained `SkinVoice`, `SpeechLanguage` and `HostValue("voices" / "voice0".."voice3")`; the raw
+  `Voice<SP|Coop><role>` values moved to the plugin's key. Then **`dsfix.fontsharp`** (sharper text, last subscriber of
+  the shared glyph bind `0x53CC9B`); its setting `FeatSharpText` moved to the plugin's key (imported once). No API
+  change: it uses `DsfixSetting("HudScaling")` and `SetSettingsListener`. Then **`dsfix.developer`** (CHEATS >
+  DEVELOPER + debug keys); `dsfix.services` v1 gained **`SetScreenProvider(plugin, fn)`** (`DsfixScreenProvider`:
+  a plugin's screen object for a front-end state dsfix.dll doesn't serve) - check `size` before calling it.
+- 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
+  levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
+  `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).
+  DS2 modders: [ds2-mods.md](ds2-mods.md#lua-missions-and-custom-campaigns).
+
+- 2026-10-23 – **New optional plugin export `PSEPlugin_SimFingerprint`** (`pse_api.h`, `PSEPluginSimFingerprintFn`;
+  [online-compat.md](online-compat.md#external-plugins-declared-simulation-fingerprint)). A SIMULATION plugin DLL that
+  exports it is compared in the online plugin-set check by `fp:` + SHA-256 of the returned string instead of the DLL
+  file's SHA-256, so a dev build and a release build of one source connect. Plugins without it: unchanged. Loader
+  `compat::kFingerprintPrefix`; new example `pse/examples/sim_fingerprint`. DesertStormFix's kit plugins export one
+  (`dsfix::kSimRevision` moved to `games/ds1/src/core/simrevision.h`).
+
+- 2026-10-23 – **Plugin layout: six more DesertStormFix features are their own DLLs** – `dsfix.widescreen`,
+  `dsfix.textfit`, `dsfix.mouse`, `dsfix.menus` (CLIENT_ONLY), `dsfix.units`, `dsfix.limits` (SIMULATION, with a
+  declared fingerprint). Same names as the internal sub-plugins they replace. New interface **`dsfix.limits` v1**
+  (`games/ds1/plugins/limits/dsfix_limits.h`: `HeapExtra()`), replacing the in-DLL call `features::LimitsHeapExtra`.
+  Setting `MouseAcceleration` moved to `dsfix.mouse`'s key (copied once).
+
+- 2026-10-24 – **TGE: films fill the screen, objectives notebook, frame cap, background tests** (internal plugins
+  `tgefix.widescreen`, `tgefix.hud`, `tgefix.framecap`, dev-only `tgefix.devbg`; [game-tge.md](reference/game-tge.md)).
+  No interface changed. New `tgefix` settings `FilmsFill` (the main menu's 4:3 background film zoomed to the screen's
+  width), `FrameCap`, `FpsCap`. The objectives notebook is laid out on a centred 4:3 screen scaled to the height, as at 800x600
+  (on wide screens its text had slid off the book's pages). Dev builds: `HKCU\Software\GreatEscapeFix\Dev\Background` = 1 runs the game off-screen for scripted
+  tests (back-buffer shots via `Dev\Shot`).
+
+- 2026-10-24 – **TGE: menu / HUD scaling and windowed mode** (internal plugins `tgefix.hud`, `tgefix.display`,
+  [game-tge.md](reference/game-tge.md#menu-and-hud-scaling-tgefixhud-client_only-gamestgesrcfeaturesguiscalecpp)).
+  No interface changed. New `tgefix` settings `HudScaling`, `HudScalePercent`, `Windowed` (launcher Settings… >
+  Windowed). The main menu's 4:3 bars are its background film's shape, not a mask (documented, kept).
+  Fullscreen start fixed: the game window is brought to the front (it could start as a black 800 x 600 box behind
+  another program), and a fullscreen window covers the screen at the chosen mode (other modes than 800x600 showed only
+  their top-left 800 x 600).
+
+- 2026-10-23 – **New game: The Great Escape** (game id `tge`, [game-tge.md](reference/game-tge.md)). New game layer
+  `PSE\Games\pse_tge.dll` (`pse/games/tge/`), new interface **`pse.game.tge` v1** (`pse/include/pse/pse_game_tge.h`:
+  DispatchMode, LevelTableIndex, LevelName, LevelKind, GameWindow, ExeSha256, ExeKnown; read-only), new ID database
+  `pse/ids/tge.ids.txt` (41 ids, database 0 – none published yet, names may change; [ids-tge.md](reference/ids-tge.md)).
+  The core events and messages are the same as DS1 / DS2 (no saves / co-save, no `NEW_GAME` yet). Host plugin
+  `tgefix` (GreatEscapeFix, `games/tge/`): widescreen launcher modes, Mods folder. Shim and loader unchanged (the
+  shim's "unsupported exe" text names GreatEscape.exe).
+
+- 2026-10-23 – **DS2: weapon pictures from mods** (internal plugin `ds2fix.weaponicons`,
+  [game-ds2.md](reference/game-ds2.md#weapon-pictures-ds2fixweaponicons-gamesds2srcfeaturesweaponiconscpp-2026-10-23),
+  modder page [ds2-mods.md](ds2-mods.md#weapon-pictures)). No interface changed. `.weapon` `hud icon` now takes a picture
+  file in the mod (`.png` / `.dds` / `.tga`); a broker entry hook on DS2's picture lookup `0x452170` (owner
+  `ds2fix.weaponicons`, CLIENT_ONLY). Game picture names work as before.
+
+- 2026-10-23 – **Plugin layout: `dsfix.shadows` and `dsfix.audio` are their own DLLs** (`PSE\Plugins\dsfix.shadows.dll`,
+  `dsfix.audio.dll` + manifests; [ds1-plugins.md](ds1-plugins.md#external-plugins)). No interface changed. They were
+  internal sub-plugins of `dsfix.dll` with the same names; now ordinary external CLIENT_ONLY plugins built on the new
+  dsfix kit (`games/ds1/plugins/kit`, public SDK only). Their settings `FeatShadowFix` / `FeatAimAudio` moved from
+  `dsfix`'s key to each plugin's own key (copied once, [ds1-settings.md](ds1-settings.md#featshadowfix--feataimaudio--mouseacceleration-and-four-more-moved-to-their-plugins)).
+  Code that looked them up with `FindPlugin` still finds them; their hooks are owned by the DLL plugins.
+
+- 2026-10-22 – **Repository: DesertStormFix moved to `games/ds1/`** ([layout.md](layout.md#repository-layout)). No
+  interface changed. `src/` → `games/ds1/src/`, `plugins/` → `games/ds1/plugins/`, `dist/` → `games/ds1/dist/`,
+  DS1's generator scripts (`patch_defs.py`, `gen_patch_tables.py`, icon / art / anim generators) →
+  `games/ds1/scripts/`; the generated PSE id tables `pse_ids_<game>.h` → `pse/ids/generated/` (`scripts/gen_ids.py`
+  writes them there; include path `pse/ids`). The root CMake still builds DS1 + PSE; DS2's PSE build takes the shared
+  `core/patch.*` and patcher from `games/ds1/src`.
+
+- 2026-10-22 – **DS1 game events: soldier damage and deaths** ([game-ds1.md](reference/game-ds1.md#game-events-soldier-damage-and-deaths)).
+  `PSE_API_VERSION` stays 0; `pse.game.ds1` stays v1 (nothing appended to the table). New in `pse_game_ds1.h`: the
+  named events `ds1.soldier_damage` (before - a subscriber may change `amount`, the first write-side hook of the game
+  interface), `ds1.soldier_damaged`, `ds1.soldier_killed` (macros `PSE_DS1_EVENT_SOLDIER_*`) and `PSEDs1DamageEvent`.
+  Raised by the DS1 layer from an entry hook on `Soldier_TakeDamage` `0x424200` (OUTER). Same day: `ds1.vehicle_damage`
+  / `_damaged` / `_destroyed` (`0x43E1F0`), `ds1.item_picked_up` (`PSEDs1PickUpEvent`, `0x432070` + its AddItem call),
+  `ds1.objective_completed` (`PSEDs1ObjectiveEvent`, script API +0x4C0) and `ds1.mission_end` (`PSEDs1MissionEndEvent`,
+  `0x4578A0`), and `ds1.script_message` (`PSEDs1ScriptMessageEvent`: every message the game sends the mission script,
+  through a copy of the script object the layer installs after each level init). `example.events_logger` logs them.
+
+- 2026-10-22 – **Loader / game layers: no DS1 defaults, DS1 runs without DesertStormFix** ([game-ds1.md](reference/game-ds1.md#events-and-messages),
+  [game-ds2.md](reference/game-ds2.md#loader-neutrality-found-while-porting)). `PSE_API_VERSION` stays 0; no public
+  interface changed. Loader internals: `pse::Config` has no default game (`gameId` null, `registryRoot` empty =
+  `Software\PSE\<gameId>`), `pse::Init` returns bool and refuses a missing / bad id. DS1 layer: sends `PSE_MSG_EXIT`
+  itself at `WM_DESTROY` (as DS2); the redirect to `PSE\Originals` (the exe's five file imports) moved here from
+  DesertStormFix - **without DesertStormFix the game used to stop at "Couldn't open GenStrs.loc"**; the save / load
+  messages carry the save path in UTF-8 (was the ANSI path; DS2 already sent UTF-8) and the co-save is found with it.
+  DS2 layer: its own `loader.log` writer removed (the loader's fallback writes that file).
+
+- 2026-10-22 – **DS1: several mods can change one level** ([data-files.md](data-files.md#several-mods-one-level)).
+  `PSE_API_VERSION` stays 0; no interface changed. `.envpatch` files of the same scene from several mods are merged
+  line by line (different lines all apply, adds at one place all kept in mod order, overlapping changes: the later
+  mod wins + a `conflict:` line); before, only the first mod's patch was used and the others were dropped without a
+  word. `.rmdpatch` files merge per route marker. Two patches adding objects with one script id = a `[fail]` line. A
+  mod shipping the whole file now says that the patches aren't used. Placed-reference record edits report conflicts
+  (`conflict: <id> <field>: A / B (B wins)`) like table records. New C++ `pse/records/scenepatch.h`
+  (`MergeEnvPatches`, `MergeRmdPatches`, `SceneScriptIds`); ModKit `placed.apply_edits` reports the same conflicts.
+  A `based_on` copy may ask for its script id (`script_id = n`; taken = the next free one + `[fail]`). ModKit
+  editor: DS1 `save_mod` saves objects / waypoints / regions as `records\<level>.placed.lua` + only the rest as
+  `.envpatch` (was a full scene copy), `open_mod_level`.
+
+- 2026-10-22 – **DS1 placed-reference edits read by the game** ([data-files.md](data-files.md#placed-references-what-a-level-puts-in-its-world)).
+  `PSE_API_VERSION` stays 0; no interface changed. A mod's `records\*.lua` edits of a level's objects / waypoints /
+  regions (`ds1:<level>/<kind>/<editor id>`) now reach the game at start-up: DesertStormFix applies them to the
+  level's scene (a mod's copy or one its `.envpatch` built, else the game's) into `merged\game\<LEVEL>.ENV` - no
+  ModKit step. The table-record merge skips those ids (they used to be `[fail] ... no record type mission1`). The
+  level part of an id ignores case. New C++ `pse/records/placed.h` (`PlacedLevels`, `ApplyPlaced`), the twin of the
+  ModKit's `placed.apply_edits` / new `placed.merged_scenes` (`scripts/records_placed_gate.py`); `pse_build records
+  merged` also writes the edited scenes. ModKit: a table into a non-vector field or a number into a vector field is
+  a `[fail]` line now (was a Python error).
+
+- 2026-10-22 – **DS2 levels from mods** ([ds2-mods.md](ds2-mods.md#levels-and-missions), [reference/game-ds2.md](reference/game-ds2.md#levels-from-mods-ds2fixmodlevels-gamesds2srcfeaturesmods_levelscpp)).
+  `PSE_API_VERSION` stays 0; no interface changed. New internal sub-plugin `ds2fix.modlevels` (SIMULATION): mission
+  DLLs from mods (by full path), `.dllpatch`, `<Level>.level` (`--@archive mission01` / `none`), `.uses` (`file`,
+  `piece`; `bank` not yet), `.envpatch`, `.rmdpatch` (DS2 route files v3) built from the player's install into
+  `%TEMP%\DesertStorm2Fix\merged\game`; a scene a mod changes gets its octree rebuilt (unless the mod ships a `.OCT`)
+  and its AI walk map + route markers rebuilt with the level's hand-placed markers kept (unless it ships `.QTD` / `.RMD` /
+  `.rmdpatch`). **A mod that shipped a changed `<SCENE>.ENV` together with the shipped `.OCT`** keeps that `.OCT` (no
+  rebuild). C++ (features.h): `BuildModReferences`, `AddBuiltModFile`. ModKit: `kits.extract` cuts DS2 (EOBJ 0x35)
+  pieces; editor `save_mod` writes `.envpatch` / `.rmdpatch` on DS2 (`Game.game_refs`).
+
+- 2026-10-22 – **DS2 mod tables, texts, `.weapon` / `.vehicle` / `.unit`** ([ds2-mods.md](ds2-mods.md#tables--rows-added-replaced-or-removed), [reference/game-ds2.md](reference/game-ds2.md#tables-and-texts-gamesds2srcfeaturesmods_tablescpp-part-of-ds2fixmods-2026-10-22)).
+  `PSE_API_VERSION` stays 0; no interface changed. `ds2fix.mods` now merges a mod's `<TABLE>.txt` (rows added) and
+  `<TABLE>.replace.txt` (rows replaced / `-KEY` removed) with the game's table instead of replacing the whole file
+  (**a mod that shipped a whole table now adds every row a second time - ship only its new rows, or the changed rows as
+  `.replace.txt`**), drops rows the start-up parsers would quit on (`[fail]`), sets Units / Vehicle item and gun slots;
+  `.strings` texts (UTF-8, `[all]` / `[Mission01]` sections, keys by name or `0x` hash), readable `.weapon` (DS2
+  columns: DS1's + 4 tracer columns at 45-48), `.vehicle`, `.unit`. C++ (features.h): `BuildModTables`, `ModText`,
+  `SetModFile`, `AddModRoot`.
+
+- 2026-10-22 – **DS2 mod sounds** ([ds2-mods.md](ds2-mods.md#sounds), [reference/game-ds2.md](reference/game-ds2.md#mods-folder-sounds-ds2fixmodsound-gamesds2srcfeaturesmods_soundcpp)).
+  `PSE_API_VERSION` stays 0; no interface changed. New internal sub-plugin `ds2fix.modsound` (CLIENT_ONLY): `.sch`
+  sound packs added to every level, a `.sch` named like a level cache replaces that level's banks / samples (a
+  language -1 sample replaces every language), `.psf` front-end music (any length) and mission music (same size only),
+  `.bik` films by name. C++ (features.h, for DS2's `.weapon`): `MakeWeaponSoundBank`, `BorrowSoundBank`,
+  `ClearWeaponSoundBanks`. A mod `.sch` named like a level is no longer a whole-file replacement but merged (a whole copy
+  still behaves the same). ModKit `sound.decode_stream` reads DS2's `PSF\x81` streams.
+
+- 2026-10-22 – **DS2 `.skin` files** ([ds2-mods.md](ds2-mods.md#skin-files--a-soldiers-own-textures-body-and-name), [reference/game-ds2.md](reference/game-ds2.md#skin-files-ds2fixskins-gamesds2srcfeaturesskinscpp)).
+  `PSE_API_VERSION` stays 0; no interface changed. New internal sub-plugin `ds2fix.skins` (SIMULATION): mod format
+  `.skin` on DS2 (`soldier`, `uniform`, `texture`, `texture <part>`, `body`, `first name` / `last name`, `portrait`) -
+  per-soldier textures (whole character or per skin part) and bodies (any key count, built at creation) without
+  touching shared files. Not DS1's `.skin` layout (DS2 has no uniform-variant / recruit rows; the soldier is picked by
+  unit name).
+
+- 2026-10-22 – **DS2 plugin `ds2fix.limits`** ([reference/game-ds2.md](reference/game-ds2.md#ds2fixlimits-gamesds2pluginslimits-2026-10-22)).
+  `PSE_API_VERSION` stays 0; no interface changed. New external SIMULATION plugin (`games/ds2/plugins/limits`): engine
+  pools raised for big battles (per-level physics pools from the `.FAS` raised to ≥ 4096 / 2048 / 4096, constraints,
+  collision pairs, particles, projectiles, events, render arena, decals, A*, voices, AI think budget), saves kept
+  readable by the unmodified game. First user of `ds2fix.memory`'s `AddHeapReserve` (2.5 MB).
+
+- 2026-10-22 – **DS2 plugin `ds2fix.memory` + 4 GB patcher** ([reference/game-ds2.md](reference/game-ds2.md#ds2fixmemory-gamesds2pluginsmemory-2026-10-22)).
+  `PSE_API_VERSION` stays 0. New external plugin `ds2fix.memory` (`games/ds2/plugins/memory`, CLIENT_ONLY): the Global
+  Heap sized for mod files (cap 64 MB / 256 MB with 4 GB), texture files too big for it read outside it, memory log
+  lines, main menu 4 GB notice. New plugin interface `ds2fix.memory` v1 (`games/ds2/src/pse/ds2fix_memory.h`:
+  `AddHeapReserve`, `HeapSize`, `HeapCap`, `LargeAddressAware`, `LoadsBigTexturesOutsideHeap`, `GetStats`) - plugins
+  that need heap room call `AddHeapReserve` at `PSE_MSG_POST_LOAD`. `ds2fix.mods`' heap hook passes through while the
+  plugin is there and grows on top of what arrives otherwise. `DesertStorm2Fix-Patcher.exe` (DS1's patcher built with
+  `PATCHER_GAME_DS2`; new exit code 6 = an exe that is never changed, the SecuROM one) ships in the DS2 package.
+
+- 2026-10-22 – **DS2 MODS menu** ([ds2-mods.md](ds2-mods.md), [reference/game-ds2.md](reference/game-ds2.md#mods-folder-ds2fixmods-gamesds2srcfeaturesmodscpp)).
+  `PSE_API_VERSION` stays 0; no interface changed. New internal sub-plugin `ds2fix.modsmenu` (CLIENT_ONLY): main menu
+  MODS (front-end state 0x37), mods switched in game, the file index rebuilt live (Apply).
+
+- 2026-10-22 – **DS1 online sessions, round 3** ([online-compat.md](online-compat.md#when-something-looks-different-on-two-pcs-the-state-dump)).
+  `PSE_API_VERSION` stays 0; no plugin interface changed. New game commands `EA … CSV` / `CSN` / `CS` (cutscene skip
+  vote), `EA … PU` (pick-ups), `EA … VX` (vehicle destroyed on its owner's PC); DesertStormFix's simulation revision
+  is now 5, so older builds refuse to connect. New setting FeatStreamerMode ([ds1-settings.md](ds1-settings.md)). New
+  file `DesertStormFix-sync.csv` (every build, online): a state dump for comparing two PCs.
+
+- 2026-10-22 – **DS1 multi-part skins** (`dsfix.bodies`, [ds1-plugins.md](ds1-plugins.md)). No interface changed. A
+  soldier body with several skinned parts (ModKit exporter 1.8+) now shows each extra part's own texture on the squad
+  too; the squad's uniform covers only the main skin (the last skinned object, the slot the shipped bodies use).
+
+- 2026-10-22 – **DS1 online lobby** ([online-compat.md](online-compat.md#the-lobby-and-the-loadout-screen-desertstormfix-same-channel)).
+  `PSE_API_VERSION` stays 0; no plugin interface changed. DesertStormFix's game commands now include `LB` (lobby player
+  table / requests) and `LO` (loadout screen online) next to `PSEC`; PC numbers are stable per session (host 1,
+  joiners 2..), several players per PC. New setting FeatNameplates ([ds1-settings.md](ds1-settings.md)).
+
+- 2026-10-22 – **DS2 plugin `ds2fix.widescreen`** ([reference/game-ds2.md](reference/game-ds2.md#ds2fixwidescreen-gamesds2pluginswidescreen-2026-10-22)).
+  `PSE_API_VERSION` stays 0. Widescreen modes, HUD scaling + fixes, the virtual-screen front end / in-mission menus and
+  sharper text left `ds2fix` (sub-plugins `ds2fix.widescreen` / `.hud` / `.frontend` / `.fontsharp` are gone) for the
+  external plugin `ds2fix.widescreen`; its settings `HudScaling` / `HudScalePercent` moved to
+  `HKCU\Software\PSE\ds2\Plugins\ds2fix.widescreen` (copied once from ds2fix's key). New plugin interface
+  `ds2fix.hudhost` v1 (`games/ds2/src/pse/ds2fix_hud.h`, served by ds2fix): split-screen view size + the OPTIONS rows
+  HUD SCALING / HUD SIZE.
+
+- 2026-10-22 – **DesertStorm2Fix on PSE** ([reference/game-ds2.md](reference/game-ds2.md#desertstorm2fix-as-a-host-plugin)).
+  `PSE_API_VERSION` stays 0; no loader interface changed. The DS2 release is the PSE tree (shim, loader, `pse_ds2.dll`,
+  host plugin `ds2fix` + `games/ds2/plugins/<name>`); `ds2fix` settings moved to `HKCU\Software\PSE\ds2\Plugins\ds2fix`
+  (copied once from `HKLM\SOFTWARE\SCi Games\CDS II\Enhancements`). New plugin interface `ds2fix.graphics` v1
+  (`games/ds2/src/pse/ds2fix_graphics.h`: the front end's virtual screen + the D3D9 device) for DS2 plugins.
 - 2026-10-21 – **record limits**: schema `max_len` (text / link columns) and `max_rows` (tables); mods' record edits past them are refused with `[fail]` report lines (C++ `pse/records/forms` = ModKit `forms.py`), and the unit / vehicle table checks now also run for tables only record edits changed ([data-files.md](data-files.md#changing-records-from-a-mod)).
 - 2026-10-20 – **PSE data files + records** (not a plugin interface yet): `pse/records/data.h` reader / canonical writer, `pse_build data canon|check`, records schema `pse/records/ds1/schema.lua` (19 tables, `ds1:<type>/<key>` IDs), [data-files.md](data-files.md).
 - 2026-10-20 – **mission replacements** ([reference/mission-replacement.md](reference/mission-replacement.md)).
   `PSE_API_VERSION` stays 0; no interface changed. New mod format: `Mods\<Mod>\<Stem>.lua` with `--@replaces
   <Stem>.dll` in its header runs (in the translated-mission host: `x86rt`, `game.log`, plugin namespaces) instead of
   that mission DLL, whatever the MISSIONS FROM LUA setting; a mod's own DLL still wins, a failing script falls back to
-  the DLL. ModKit: readable missions wrap every named script API slot; example `examples/training_restored`.
+  the DLL. ModKit: readable missions wrap every named script API slot; example `examples/restored_missions` (was training_restored).
 
 - 2026-10-19 – **phase 2 layout** ([layout.md](layout.md)). No public interface changed (`PSE_API_VERSION` stays 0);
   plugin DLLs built against API 0 load as before. What changed around them:

@@ -16,10 +16,10 @@ SETTINGS = {
     "HudScaling": (0, 1), "HudScalePercent": (25, 400), "Controller": (0, 1), "PadDeadzone": (0, 90),
     "FpsCapToRefresh": (0, 1), "SplitScreenLayout": (0, 1), "DisplayMode": (0, 2),
     "SkipIntro": (0, 1), "SkipCutscenes": (0, 1), "Antialiasing": (0, 16), "Anisotropy": (0, 16),
-    "MouseAcceleration": (0, 1), "VSync": (0, 1), "PerfOverlay": (0, 1), "SkipLauncher": (0, 1), "Hdr": (0, 1),
+    "VSync": (0, 1), "PerfOverlay": (0, 1), "SkipLauncher": (0, 1), "Hdr": (0, 1),
     "HdrPaperWhite": (80, 500), "HdrPeak": (0, 10000), "HdrHighlights": (0, 100), "Bloom": (0, 2),
     "Fov1": (50, 110), "Fov2": (50, 110), "Fov3": (50, 110), "Fov4": (50, 110), "MenuBarCustom": (0, 1),
-    "HudColourCustom": (0, 1), "Footprints": (0, 3), "FeatTooltips": (0, 1), "FeatMods": (0, 1),
+    "HudColourCustom": (0, 1), "Footprints": (0, 3), "FeatMods": (0, 1),
     "FeatWeather": (0, 1), "FeatDevConsole": (0, 1),
 }
 

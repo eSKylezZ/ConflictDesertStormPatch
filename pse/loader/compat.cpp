@@ -238,7 +238,12 @@ std::vector<std::string> Compare(const Set& local, const Set& remote, const std:
                           " here, " + (builtB ? "built in" : "a plugin DLL") + " on " + who);
             continue;
         }
-        if (a->hash != b->hash)
+        const bool fpA = a->hash.rfind(kFingerprintPrefix, 0) == 0, fpB = b->hash.rfind(kFingerprintPrefix, 0) == 0;
+        if (a->hash != b->hash && (fpA || fpB))
+            out.push_back(name + " " + VersionString(a->version) + ": different simulation code here than on " + who +
+                          " (fingerprint " + (fpA ? Short(a->hash.substr(3)) : "none") + " vs " +
+                          (fpB ? Short(b->hash.substr(3)) : "none") + ")");
+        else if (a->hash != b->hash)
             out.push_back(name + " " + VersionString(a->version) + ": a different file here than on " + who +
                           " (SHA-256 " + Short(a->hash) + " vs " + Short(b->hash) + ")");
     }
@@ -331,6 +336,32 @@ bool Sha256File(const std::wstring& path, std::string* hex) {
 
 // ---- the running loader's plugins ----------------------------------------------------------------------------------
 
+namespace {
+using FingerprintFn = const char*(PSE_CALL*)(void);
+// The plugin's PSEPlugin_SimFingerprint() under SEH (plugin code; a crash = no fingerprint, the file hash is used).
+const char* CallFingerprint(FingerprintFn fn) {
+    __try {
+        return fn();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+// "fp:" + SHA-256 of the plugin's declared simulation fingerprint, or "" when the loaded DLL exports none.
+std::string DeclaredFingerprint(const std::string& path) {
+    HMODULE m = GetModuleHandleW(detail::Widen(path).c_str());
+    if (!m) return {};
+    auto fn = reinterpret_cast<FingerprintFn>(GetProcAddress(m, "PSEPlugin_SimFingerprint"));
+    if (!fn) return {};
+    const char* s = CallFingerprint(fn);
+    if (!s || !*s) return {};
+    Sha256 h;
+    h.Add(s, strnlen(s, 4096));
+    const std::string hex = h.Hex();
+    return hex.empty() ? std::string() : kFingerprintPrefix + hex;
+}
+}  // namespace
+
 std::vector<PluginEntry> LocalPlugins() {
     // External DLL paths from the load results; hashed once per file (a session can start many times).
     static std::map<std::string, std::string> cache;   // path -> SHA-256
@@ -355,8 +386,10 @@ std::vector<PluginEntry> LocalPlugins() {
             if (f != files.end()) {
                 auto c = cache.find(f->second);
                 if (c == cache.end()) {
-                    std::string hex;
-                    if (!Sha256File(detail::Widen(f->second), &hex)) hex = "unreadable";
+                    // A declared simulation fingerprint (PSEPlugin_SimFingerprint, docs/sdk/online-compat.md) stands
+                    // for the source, so a dev and a release build of one plugin connect; else the file's SHA-256.
+                    std::string hex = DeclaredFingerprint(f->second);
+                    if (hex.empty() && !Sha256File(detail::Widen(f->second), &hex)) hex = "unreadable";
                     c = cache.emplace(f->second, hex).first;
                 }
                 e.hash = c->second;

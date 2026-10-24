@@ -51,6 +51,7 @@ inline pse::Config Fresh(const std::string& logDir = "") {
         Cap().reports.clear();
     }
     pse::Config c;
+    c.gameId = "ds1";
     c.registryRoot = TestRegistryRoot();
     c.logDir = logDir;
     c.logSink = &Sink;

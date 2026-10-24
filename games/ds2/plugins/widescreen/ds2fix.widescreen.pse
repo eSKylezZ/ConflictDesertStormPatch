@@ -1,0 +1,5 @@
+# DesertStorm2Fix's widescreen / HUD part (games/ds2/plugins/widescreen): launcher modes, HUD scaling + fixes, the front
+# end and in-mission menus on the virtual 1280 x 1024 screen, sharper text. Needs ds2fix (its D3D9 hooks map the
+# virtual screen; ds2fix.graphics / ds2fix.hudhost interfaces). Cosmetic only: online peers may differ.
+name     = ds2fix.widescreen
+requires = pse.game.ds2 >= 1.0, ds2fix >= 0.1

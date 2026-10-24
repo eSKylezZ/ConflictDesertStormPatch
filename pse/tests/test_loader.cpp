@@ -21,6 +21,23 @@ PSE_TEST("loader: the loader is plugin 'pse', handle 0 is invalid") {
     PSE_CHECK(pse::PluginInfo(pse)->flags & PSE_PLUGIN_INTERNAL);
 }
 
+PSE_TEST("loader: Init needs a game id - no default game") {
+    pse::ResetForTests();
+    pse::Config c;
+    c.registryRoot = TestRegistryRoot();
+    c.logSink = &Sink;
+    PSE_CHECK(!pse::Init(c));   // none
+    PSE_CHECK(pse::FindPlugin("pse") == 0);
+    c.gameId = "DS1";
+    PSE_CHECK(!pse::Init(c));   // not lower case
+    c.gameId = "ds2";
+    c.registryRoot.clear();
+    PSE_REQUIRE(pse::Init(c));
+    PSE_CHECK(pse::FindPlugin("pse") != 0);
+    PSE_CHECK_EQ(pse::PluginSettingsKey(pse::FindPlugin("pse")), std::string("Software\\PSE\\ds2\\Plugins\\pse"));
+    Fresh();
+}
+
 PSE_TEST("loader: register plugins, names checked, duplicates refused") {
     Fresh();
     PSEPluginHandle a = AddPlugin("dsfix.alpha");

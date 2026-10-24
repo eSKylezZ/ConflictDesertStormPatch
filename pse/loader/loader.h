@@ -13,10 +13,12 @@ struct HKEY__;  // <windows.h> HKEY
 namespace pse {
 
 struct Config {
-    const char* gameId = "ds1";
-    // Registry key (under HKCU) that plugin settings live under: <registryRoot>\Plugins\<plugin name>.
-    // Tests point this at a throw-away key.
-    std::string registryRoot = "Software\\PSE\\ds1";
+    // The game layer's id ("ds1", "ds2" ...): plugins' `games` lists and the settings key. Required - Init refuses a
+    // missing one (lower-case letters / digits, at most 16).
+    const char* gameId = nullptr;
+    // Registry key (under HKCU) that plugin settings live under: <registryRoot>\Plugins\<plugin name>. Empty =
+    // "Software\PSE\<gameId>". Tests point this at a throw-away key.
+    std::string registryRoot;
     // Folder for <plugin>.log files ("" = no files, lines only go to the sink).
     std::string logDir;
     // Receives every formatted log line (already prefixed) - DesertStormFix routes it into DesertStormFix.log.
@@ -26,8 +28,8 @@ struct Config {
 };
 
 // Start-up. Call once, on the game thread (it becomes the "game thread" for pse.tasks). Safe to call again after
-// ResetForTests().
-void Init(const Config& config);
+// ResetForTests(). false = refused (no / bad game id; config.logSink gets the reason): nothing is initialised.
+bool Init(const Config& config);
 // Tests only: forget every plugin, listener, hook record, setting, task (does NOT restore patched memory).
 void ResetForTests();
 
@@ -208,11 +210,15 @@ void SetHostReportSink(PSEHostReportSink sink);
 namespace compat {
 constexpr uint32_t kProtocol = 1;          // bump when the encoding or the comparison rules change
 constexpr const char* kBuiltIn = "=";      // PluginEntry::hash of a plugin built into the host DLL
+// PluginEntry::hash of an external SIMULATION plugin that exports PSEPlugin_SimFingerprint: "fp:" + SHA-256 (hex) of
+// the string it returns - compared instead of the DLL's own hash (a dev and a release build of one source connect).
+constexpr const char* kFingerprintPrefix = "fp:";
 struct PluginEntry {
     std::string name;
     uint32_t version = 0;
     uint32_t flags = 0;    // PSE_PLUGIN_* as the loader has it (PSE_PLUGIN_INTERNAL set for built-in ones)
-    std::string hash;      // external SIMULATION plugin: SHA-256 (hex) of its DLL; built in: kBuiltIn; client-only: ""
+    std::string hash;      // external SIMULATION plugin: SHA-256 (hex) of its DLL or kFingerprintPrefix + the
+                           // fingerprint's SHA-256; built in: kBuiltIn; client-only: ""
 };
 struct ModEntry {
     std::string name;      // folder name under Mods\ (compared without case)
@@ -250,7 +256,8 @@ private:
 // Empty = compatible. Symmetric: Compare(a, b) is empty exactly when Compare(b, a) is.
 //   - protocol / game id / loader API / host name + version / host simulation fingerprint must be equal;
 //   - every plugin that is SIMULATION (or unflagged) on either side: same name + version + kind (built in vs DLL) and,
-//     for DLLs, the same SHA-256; CLIENT_ONLY plugins may differ or be missing;
+//     for DLLs, the same SHA-256 (or the same declared simulation fingerprint); CLIENT_ONLY plugins may differ or be
+//     missing;
 //   - every switched-on mod: same name (any case) and content hash.
 std::vector<std::string> Compare(const Set& local, const Set& remote, const std::string& who);
 // The running loader's plugins (disabled ones left out), by name.

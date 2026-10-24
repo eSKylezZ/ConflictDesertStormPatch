@@ -4,7 +4,9 @@ PSE is a script-extender-style plugin host for Pivotal Games' PC titles (Conflic
 is built: the shim `dinput8.dll` starts `PSE\pse_loader.dll`, the game layer `PSE\Games\pse_ds1.dll` recognises the
 exe, and DesertStormFix is the host plugin `PSE\Plugins\dsfix.dll` ([layout.md](layout.md)). **Second game (2026-10-19):**
 Conflict: Desert Storm II runs on the same shim + loader with its layer `PSE\Games\pse_ds2.dll`
-([reference/game-ds2.md](reference/game-ds2.md)); SDK-only plugins run on both as the same DLL.
+([reference/game-ds2.md](reference/game-ds2.md)); SDK-only plugins run on both as the same DLL. **Third game
+(2026-10-23):** The Great Escape (`PSE\Games\pse_tge.dll`, host plugin GreatEscapeFix,
+[reference/game-tge.md](reference/game-tge.md)).
 **API version 0 is unstable**; it is frozen as v1 with SDK 1.0.
 
 | Page | What |
@@ -37,6 +39,7 @@ Reference, one page per interface:
 | `pse.vfs` – game files from providers (name / name hash + context → bytes; the asset store is one) | [reference/vfs.md](reference/vfs.md) |
 | Plugin DLLs – manifest (`.pse`), load order, exports, lifecycle, failure handling | [reference/plugins.md](reference/plugins.md) |
 | Mission replacements – a mod's Lua (`--@replaces Mission1.dll`) runs instead of a mission DLL | [reference/mission-replacement.md](reference/mission-replacement.md) |
+| Desert Storm II Mods folder – what a DS2 mod can replace today (basic resolver) | [ds2-mods.md](ds2-mods.md) |
 
 Game interfaces (one per game, served by the host):
 
@@ -44,12 +47,14 @@ Game interfaces (one per game, served by the host):
 | --- | --- |
 | `pse.game.ds1` – Conflict: Desert Storm: front-end state, level + title, catalog text, local players, online session, window, exe hash (read-only, v1) | [reference/game-ds1.md](reference/game-ds1.md) |
 | `pse.game.ds2` – Conflict: Desert Storm II: front-end state, dispatch mode, level name / kind, cutscene, split-screen views, window, exe hash (read-only, v1); the DS2 game layer, its events, saves, tests and the `ds2fix` host plugin skeleton | [reference/game-ds2.md](reference/game-ds2.md) |
-| `pse.ids` – stable ids → addresses per exe build (Address Library), verified by signatures at start-up | [reference/ids.md](reference/ids.md); DS1 list (468 ids): [reference/ids-ds1.md](reference/ids-ds1.md); DS2 list (115 ids): [reference/ids-ds2.md](reference/ids-ds2.md) |
+| `pse.game.tge` – The Great Escape: dispatch mode, level-table entry, level name / kind, window, exe hash (read-only, v1); the TGE game layer, its events and the `tgefix` host plugin (widescreen modes, Mods folder) | [reference/game-tge.md](reference/game-tge.md) |
+| `pse.ids` – stable ids → addresses per exe build (Address Library), verified by signatures at start-up | [reference/ids.md](reference/ids.md); DS1 list (468 ids): [reference/ids-ds1.md](reference/ids-ds1.md); DS2 list (115 ids): [reference/ids-ds2.md](reference/ids-ds2.md); TGE list (41 ids, unpublished): [reference/ids-tge.md](reference/ids-tge.md) |
 
 Headers: [`pse/include/pse/pse_api.h`](../../pse/include/pse/pse_api.h) (loader),
 [`pse/include/pse/pse_vfs.h`](../../pse/include/pse/pse_vfs.h) (`pse.vfs`),
 [`pse/include/pse/pse_game_ds1.h`](../../pse/include/pse/pse_game_ds1.h) (Desert Storm),
 [`pse/include/pse/pse_game_ds2.h`](../../pse/include/pse/pse_game_ds2.h) (Desert Storm II),
+[`pse/include/pse/pse_game_tge.h`](../../pse/include/pse/pse_game_tge.h) (The Great Escape),
 [`pse/include/pse/pse_ids.h`](../../pse/include/pse/pse_ids.h) + [`pse_ids_ds1.h`](../../pse/include/pse/pse_ids_ds1.h) +
 [`pse_ids_ds2.h`](../../pse/include/pse/pse_ids_ds2.h) (ids; the constants are generated from
 [`pse/ids/ds1.ids.txt`](../../pse/ids/ds1.ids.txt) / [`ds2.ids.txt`](../../pse/ids/ds2.ids.txt) by `scripts/gen_ids.py`).

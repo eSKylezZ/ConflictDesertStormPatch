@@ -51,6 +51,12 @@ void Init() {
     features::ApplyMenus();
     features::ApplySplitScreen();
     features::ApplyCoop();
+    features::ApplyMods();
+    features::ApplyModLevels();
+    features::ApplySkins();
+    features::ApplyModSounds();
+    features::ApplyModsMenu();
+    features::ApplyScriptHost();   // .lua levels + custom campaigns (before the menus are created)
     graphics::Install();   // Direct3D hooks (front-end mapping, dev background mode)
     features::ApplyDevBackground();
     // more features::Apply*() calls as features are ported (PORTING.md).

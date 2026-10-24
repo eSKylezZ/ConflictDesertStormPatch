@@ -68,10 +68,10 @@ msg->RegisterListener(me, "pse", OnLoader, NULL);
 | `PSE_MSG_POST_LOAD` (1) | every plugin's `Load` returned – look up other plugins' interfaces now | NULL |
 | `PSE_MSG_POST_POST_LOAD` (2) | after that | NULL |
 | `PSE_MSG_GAME_ENTRY` (3) | just before the game's own entry point | NULL |
-| `PSE_MSG_EXIT` (4) | the game is closing | NULL |
+| `PSE_MSG_EXIT` (4) | the game is closing (sent by the game layer at `WM_DESTROY`, once) | NULL |
 | `PSE_MSG_NEW_GAME` (5) | a new game starts (before its level loads) | `const char*` level name |
-| `PSE_MSG_SAVE_BEGIN` (6) / `SAVE_END` (7) | around the game's save | `const char*` save path |
-| `PSE_MSG_LOAD_BEGIN` (8) / `LOAD_END` (9) | around a save being loaded | `const char*` save path |
+| `PSE_MSG_SAVE_BEGIN` (6) / `SAVE_END` (7) | around the game's save | `const char*` save path (UTF-8) |
+| `PSE_MSG_LOAD_BEGIN` (8) / `LOAD_END` (9) | around a save being loaded | `const char*` save path (UTF-8) |
 | `PSE_MSG_FRONT_END_READY` (10) | the first running frame of a front-end level (the menus are up) | `const char*` level name |
 | `PSE_MSG_DEVICE_CREATED` (11) | the game's D3D device was created | the device itself, `dataLen` 0 |
 | `PSE_MSG_DEVICE_RESET` (12) | the device was reset (alt-tab back, display mode change) | the device, `dataLen` 0 |

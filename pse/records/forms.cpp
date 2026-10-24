@@ -137,17 +137,21 @@ bool IsFixed(const std::string& c) {
     return IsInt(c.substr(0, dot)) && Digits(c, dot + 1) && c.find('.', dot + 1) == std::string::npos;
 }
 
-std::string Fixed2(double v) {
-    char b[64];
-    std::snprintf(b, sizeof b, "%.2f", v);
+std::string Fixed(double v, int digits) {
+    char b[384];
+    std::snprintf(b, sizeof b, "%.*f", digits, v);
     return b;
+}
+// kind "fixed<N>" (N = 1..9): a float written with N decimals ("fixed2" = 0.10, DOORS.TXT "fixed6" = 800.000000); -1 else
+int FixedDigits(const std::string& kind) {
+    return kind.size() == 6 && kind.compare(0, 5, "fixed") == 0 && kind[5] >= '1' && kind[5] <= '9' ? kind[5] - '0' : -1;
 }
 
 // a field's value as cell text (forms.py _fmt)
 std::string Fmt(const Value& v, const std::string& kind) {
     const bool num = v.kind == Kind::Int || v.kind == Kind::Float;
     if (kind == "int" && v.kind == Kind::Int) return std::to_string(v.i);
-    if (kind == "fixed2" && num) return Fixed2(v.kind == Kind::Int ? static_cast<double>(v.i) : v.f);
+    if (FixedDigits(kind) > 0 && num) return Fixed(v.kind == Kind::Int ? static_cast<double>(v.i) : v.f, FixedDigits(kind));
     switch (v.kind) {
         case Kind::Bool: return v.b ? "YES" : "NO";
         case Kind::Int: return std::to_string(v.i);
@@ -167,10 +171,10 @@ Value Parse(const std::string& cell, const std::string& kind) {
         if (errno == ERANGE) return Value::String(cell);
         return std::to_string(v) == cell ? Value::Int(v) : Value::String(cell);
     }
-    if (kind == "fixed2") {
+    if (FixedDigits(kind) > 0) {
         if (!IsFixed(cell)) return Value::String(cell);
         const double v = std::strtod(cell.c_str(), nullptr);
-        return Fixed2(v) == cell ? Value::Float(v) : Value::String(cell);
+        return Fixed(v, FixedDigits(kind)) == cell ? Value::Float(v) : Value::String(cell);
     }
     if (kind == "yesno") {
         if (cell == "YES") return Value::Bool(true);
@@ -519,6 +523,8 @@ void Merge(Forms* forms, const std::vector<Edits>& edits, const Value& schema, s
                 continue;
             }
             const std::string rid = *ridp, rtype = TypeOf(rid);
+            if (rid.rfind("ds1:", 0) == 0 && std::count(rid.begin(), rid.end(), '/') == 2)
+                continue;   // a placed reference (ds1:<level>/<kind>/<editor id>): placed.h ApplyPlaced
             auto docIt = forms->find(rtype);
             if (docIt == forms->end()) {
                 report->push_back("[fail] " + ed.mod + "/" + ed.file + ": " + rid + " - no record type " + rtype);

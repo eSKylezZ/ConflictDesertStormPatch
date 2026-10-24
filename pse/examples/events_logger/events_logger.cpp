@@ -6,9 +6,14 @@
 // run without DesertStormFix, where no DesertStormFix.log exists. Lines:
 //   loaded / message <NAME> [data] / event <NAME> first [data] / event <NAME> [level] / frames <n> ...
 //   cosave save frames=<n> / cosave load frames=<n> (or "cosave load no chunk") / cosave revert
+//   ds1.soldier_damaged / _killed, ds1.vehicle_damaged / _destroyed <victim id> by <attacker id> ... (DS1: the first
+//   10 damages, every kill / wreck), ds1.item_picked_up <soldier> took <item>, ds1.objective_completed <n>,
+//   ds1.mission_end <result>, ds1.script_message 0x<id> <param 0> <param 1> (the first 15, then kills / pick-ups / doors
+//   / enemies spotted)
 #include <windows.h>
 
 #include <pse/pse_api.h>
+#include <pse/pse_game_ds1.h>   // the DS1 game events (named: no other game raises them)
 
 #include <cstdarg>
 #include <cstdio>
@@ -93,6 +98,44 @@ int PSE_CALL OnLevel(PSEEventId e, void* data, void*) {
     return 0;
 }
 
+// DS1 game events (pse_game_ds1.h): logged only - an example of reading the damage event (a plugin may also change
+// `amount` in "ds1.soldier_damage", the one before the game applies it).
+uint32_t g_damaged = 0;
+int PSE_CALL OnSoldier(PSEEventId, void* data, void* ctx) {
+    const auto* e = static_cast<const PSEDs1DamageEvent*>(data);
+    const char* name = static_cast<const char*>(ctx);
+    if ((!std::strcmp(name, PSE_DS1_EVENT_SOLDIER_DAMAGED) || !std::strcmp(name, PSE_DS1_EVENT_VEHICLE_DAMAGED)) &&
+        ++g_damaged > 10)
+        return 0;
+    Line("%s %d by %d amount %.1f health %.1f -> %.1f", name, e->victimId, e->attackerId, e->amount, e->healthBefore,
+         e->healthAfter);
+    return 0;
+}
+int PSE_CALL OnPickUp(PSEEventId, void* data, void*) {
+    const auto* e = static_cast<const PSEDs1PickUpEvent*>(data);
+    Line("%s %d took %d", PSE_DS1_EVENT_ITEM_PICKED_UP, e->soldierId, e->itemId);
+    return 0;
+}
+int PSE_CALL OnObjective(PSEEventId, void* data, void*) {
+    const auto* e = static_cast<const PSEDs1ObjectiveEvent*>(data);
+    Line("%s %u title 0x%08X", PSE_DS1_EVENT_OBJECTIVE_COMPLETED, e->index, e->titleHash);
+    return 0;
+}
+uint32_t g_messages = 0;
+int PSE_CALL OnScriptMessage(PSEEventId, void* data, void*) {   // the first 15, then kills / pick-ups / doors / spotted
+    const auto* e = static_cast<const PSEDs1ScriptMessageEvent*>(data);
+    const bool notable = e->id == 0x00 || e->id == 0x03 || e->id == 0x15 || e->id == 0x34;
+    if (++g_messages > 15 && !notable) return 0;
+    if (e->params) Line("%s 0x%02X %d %d", PSE_DS1_EVENT_SCRIPT_MESSAGE, e->id, static_cast<int>(e->params[0]),
+                        static_cast<int>(e->params[1]));
+    else Line("%s 0x%02X", PSE_DS1_EVENT_SCRIPT_MESSAGE, e->id);
+    return 0;
+}
+int PSE_CALL OnMissionEnd(PSEEventId, void* data, void*) {
+    Line("%s %u", PSE_DS1_EVENT_MISSION_END, static_cast<const PSEDs1MissionEndEvent*>(data)->result);
+    return 0;
+}
+
 // Co-save: one chunk with the frame count at the time of the save.
 void PSE_CALL Save(PSESaveWriter* w, void*) {
     g_ser->WriteChunk(w, kTag, 1, &g_frames, sizeof g_frames);
@@ -145,6 +188,16 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
     ok = g_messaging->Subscribe(g_self, PSE_EVENT_PRESENT, &OnCounted, &g_present, 0) && ok;
     const PSEEventId levelEvents[] = {PSE_EVENT_LEVEL_LOAD_BEGIN, PSE_EVENT_LEVEL_LOAD_END, PSE_EVENT_LEVEL_UNLOAD};
     for (PSEEventId e : levelEvents) ok = g_messaging->Subscribe(g_self, e, &OnLevel, nullptr, 0) && ok;
+    static const char* const soldierEvents[] = {PSE_DS1_EVENT_SOLDIER_DAMAGED, PSE_DS1_EVENT_SOLDIER_KILLED,
+                                                PSE_DS1_EVENT_VEHICLE_DAMAGED, PSE_DS1_EVENT_VEHICLE_DESTROYED};
+    for (const char* name : soldierEvents)
+        ok = g_messaging->Subscribe(g_self, g_messaging->EventId(name), &OnSoldier, const_cast<char*>(name), 0) && ok;
+    ok = g_messaging->Subscribe(g_self, g_messaging->EventId(PSE_DS1_EVENT_ITEM_PICKED_UP), &OnPickUp, nullptr, 0) && ok;
+    ok = g_messaging->Subscribe(g_self, g_messaging->EventId(PSE_DS1_EVENT_OBJECTIVE_COMPLETED), &OnObjective, nullptr,
+                                0) && ok;
+    ok = g_messaging->Subscribe(g_self, g_messaging->EventId(PSE_DS1_EVENT_MISSION_END), &OnMissionEnd, nullptr, 0) && ok;
+    ok = g_messaging->Subscribe(g_self, g_messaging->EventId(PSE_DS1_EVENT_SCRIPT_MESSAGE), &OnScriptMessage, nullptr,
+                                0) && ok;
     ok = g_ser->SetCallbacks(g_self, &Save, &Load, &Revert, nullptr) == PSE_OK && ok;
     Line("loaded (game %s, API %u)%s", pse->gameId, pse->apiVersion, ok ? "" : " - some subscriptions failed");
     return ok ? 1 : 0;

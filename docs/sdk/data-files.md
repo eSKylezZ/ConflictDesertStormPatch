@@ -61,7 +61,7 @@ A record has `id`, `key` (the game's own spelling) and named fields; links to ot
 (`stats = "ds1:unit_stats/us_infantryman00"`). Columns whose meaning isn't known yet are `colN` (N = the 1-based
 column, as in a `.weapon` file's `column N`). A text or link cell holding the game's "nothing" (`-1`) is left out.
 
-How each table reads is described by the schema `pse/records/ds1/schema.lua` (column names, kinds `int` / `fixed2` /
+How each table reads is described by the schema `pse/records/ds1/schema.lua` (column names, kinds `int` / `fixed1` … `fixed9` (a float written with that many decimals) /
 `yesno` / `text` / `ref`, link targets, a `note` with the meaning and unit, and limits: `max_len` on a text / link
 column = the most characters the game's loader takes, `max_rows` on a table = the most records it keeps). The records are made **from the player's own files** (they are game data and
 are never shipped) and turn back into the game's tables byte for byte - checked for all 19 tables.
@@ -79,7 +79,64 @@ mission scripts use (`obj.HERO_FOLEY`, `wp.CELL_BLOCK_GUARD_0`, `rgn.PICKUP_BLAC
 
 All 18 levels: 6 866 references, every object linked to its base record. ModKit: `conflict_ds_tools/placed.py`,
 `cli/ds_records.py -o <folder> --levels` (also `--check`: the tables' round trip; `--merged`: the tables with the
-mods' record edits). Placed references are read-only for now - changing them comes with the editor.
+mods' record edits).
+
+**Changing placed references** (ModKit `placed.write_envpatches(game_dir, mod_dir, edits)`, 2026-10-21): the same edit
+syntax as table records, ids of one level's placed references:
+
+```lua
+return {
+  { id = "ds1:mission3/object/cs_hero_foley", pos = { x = 26467.0, y = 807.55, z = 62020.6 } },
+  { id = "ds1:mission3/object/cs_hero_jones", delete = true },          -- taken out of play
+  { id = "ds1:mission3/object/my_extra_guard", based_on = "ds1:mission3/object/cs_hero_foley", in_play = true },
+  { id = "ds1:mission3/waypoint/goat03_01", wait_ms = 7777 },
+}
+```
+
+- Objects: `pos`, `rot`, `in_play`, `base` (a record id: the object's unit), `scene = { field = value }`; `based_on` makes
+  a copy with the next free script id - or `script_id = n` if that one is free (mission logic refers to objects by
+  it; a taken one gives the next free id and a `[fail]` line) -, its editor ID becomes its scene name. `delete` takes an object out of play - its
+  line stays, because the game's precomputed level data refers to scene objects by their place in the file.
+- Waypoints: `pos`, `rot`, `wait_ms`, `next` (a waypoint id or -1). Regions: `pos` and the shape's fields.
+- The level part of an id ignores case (`ds1:Mission1/...` = `ds1:mission1/...`); the editor ID part doesn't.
+- **In the game**: put the edits in `Mods\<Mod>\records\*.lua` like table records - DesertStormFix applies every
+  switched-on mod's placed edits at start-up (mod order, files by name) to the level's scene: a mod's own
+  `<LEVEL>.ENV` or one a `.envpatch` builds if there is one, else the game's. The result is
+  `%TEMP%\DesertStormFix\merged\game\<LEVEL>.ENV`; the mod report lists copies, objects taken out of play and every
+  refused edit (`[fail] MyMod/edits.lua: ds1:mission1/object/x pos can't be set: ...`). Two mods giving the same field
+  different values: the later mod wins and the report says so, as for table records
+  (`conflict: ds1:mission1/object/base_guard_1 pos: ModA / ModB (ModB wins)`; a `scene = { ... }` part counts as
+  `scene.<field>`, `delete` as an `in_play` value).
+- A level whose scene comes from the mods (placed edits, a `.envpatch`, a mod's own `<LEVEL>.ENV`) gets its culling
+  octree rebuilt from that scene at load (~50 ms; written to `%TEMP%\DesertStormFix\rebuilt-<SCENE>.OCT`, never over
+  the game's), unless a mod ships the level's `.OCT` too. Before 2026-10-23 the shipped octree was used, and objects
+  the edit added (copies of props) were in play but never drawn.
+- Or ship the changes as a `.envpatch`: ModKit `placed.write_envpatches(game_dir, mod_dir, edits)` writes the level's
+  `<LEVEL>.envpatch` (only the changed lines, no game data). Both can be used together - the record edits apply to the
+  patched scene. One catch: an edit names the object by its editor ID in *that* scene, so if a patch renames an
+  object's stat name, an edit using the old name gets a `[fail]` line.
+
+### Several mods, one level
+
+Like plugins editing the same cell in Fallout or Skyrim, any number of mods can change one level:
+
+- **Record edits** (`records\*.lua`) merge field by field: one mod moving a guard and another changing his unit both
+  apply; only the same field set to different values is a conflict (the later mod wins). This is the best way for
+  objects, waypoints and regions - prefer it over a `.envpatch` for them. The Conflict Editor's `save_mod` does this
+  by itself (ModKit 1.8+): changed and copied objects, waypoints and regions go to `records\<level>.placed.lua`, only
+  the rest to `<LEVEL>.envpatch`; `open_mod_level` opens the level as the mod has it.
+- **`.envpatch` files** of the same level from several mods are merged line by line before the game reads the scene:
+  changes to different lines all apply; objects several mods add at the same place (the end of the object list) are
+  all kept, in mod order; two mods changing the same lines - the later mod's change wins
+  (`conflict: MISSION1.ENV lines 2036-2036: ModA / ModB (ModB wins)`). A patch of another base scene can't be merged:
+  the later mod's patch is used alone. The report lists the merge (`MISSION1.ENV = MISSION1.ENV + MISSION1.envpatch
+  (ModA) + MISSION1.envpatch (ModB)`).
+- **Script ids**: two patches that each add an object with the same new script id give the level two objects with
+  one id - the report has a `[fail]` line for it. A record edit's `based_on` copy takes the next free id after every
+  patch, so it never collides.
+- **`.rmdpatch` files** (route markers) merge per marker the same way; the marker count is the largest.
+- A mod that ships the whole `<LEVEL>.ENV` (or `.RMD`) replaces the level's file: the other mods' patches of it are not
+  used (the report says so); their record edits still apply on top.
 
 ## Changing records from a mod
 
@@ -122,7 +179,8 @@ return {
 
 Status (2026-10-20): format, schema, generator, field-level merge and the game loading the merged tables are built
 (C++ `pse/records/forms.h` in DesertStormFix, the same in the ModKit's `conflict_ds_tools/forms.py`; both give the same
-bytes - `scripts/records_forms_gate.py`). Column names (2026-10-20) and placed references with editor IDs are done; the
+bytes - `scripts/records_forms_gate.py`). Column names (2026-10-20), placed references with editor IDs and the game reading placed edits (2026-10-22; C++
+`pse/records/placed.h` = Python `placed.py`, `scripts/records_placed_gate.py`) are done; the
 limit checks are built and the schema has `max_len` for every text / link column the game reads (2026-10-21, from
 the loaders' buffers: 35 characters for most names, 34 for models, connectors and the units' speech bank, 31 for sound
 banks and the weapons' reload / throw animations, 33 for the aim animation, 15 for a weapon's movement model). No

@@ -20,6 +20,7 @@
 
 #include "data.h"
 #include "forms.h"
+#include "placed.h"
 #include "pse_build.h"
 
 using namespace pse::build;
@@ -229,6 +230,43 @@ bool WriteAllW(const std::wstring& path, const std::string& s) {
     return ok;
 }
 
+// One file by name from the game's archives (catalog.dat first, then the other .dat files of the game folder and
+// PSE\Originals by name - as DesertStormFix's ReadGameFile): only each archive's index is read.
+bool ReadGameArchiveFile(const std::wstring& game, const std::string& name, std::string* out) {
+    std::vector<std::wstring> dats;
+    for (const std::wstring& dir : {game, pse::build::OriginalsDir(game)}) {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((dir + L"\\*.dat").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        std::vector<std::wstring> names;
+        do names.push_back(fd.cFileName);
+        while (FindNextFileW(h, &fd));
+        FindClose(h);
+        std::sort(names.begin(), names.end(), [](const std::wstring& a, const std::wstring& b) {
+            const bool ca = !_wcsicmp(a.c_str(), L"catalog.dat"), cb = !_wcsicmp(b.c_str(), L"catalog.dat");
+            return ca != cb ? ca : _wcsicmp(a.c_str(), b.c_str()) < 0;
+        });
+        for (const std::wstring& n : names) dats.push_back(dir + L"\\" + n);
+    }
+    const uint32_t hash = pse::build::Ds1NameHash(name.c_str());
+    for (const std::wstring& path : dats) {
+        FILE* f = _wfopen(path.c_str(), L"rb");
+        if (!f) continue;
+        std::vector<uint32_t> index(0x8000 / 4);
+        const size_t got = std::fread(index.data(), 1, 0x8000, f) / 4;
+        for (size_t i = 0; i + 2 < got; i += 3) {
+            if (!index[i] && !index[i + 1] && !index[i + 2]) break;
+            if (index[i] != hash) continue;
+            out->assign(index[i + 2], '\0');
+            const bool ok = !_fseeki64(f, index[i + 1], SEEK_SET) && std::fread(out->data(), 1, out->size(), f) == out->size();
+            std::fclose(f);
+            return ok;
+        }
+        std::fclose(f);
+    }
+    return false;
+}
+
 int RecordsCommand(int argc, wchar_t** argv) {
     if (argc < 1 || (std::wcscmp(argv[0], L"generate") && std::wcscmp(argv[0], L"merged"))) {
         std::fputs("usage: pse_build records generate --schema <file> [--game <dir>] --out <dir>\n"
@@ -336,6 +374,20 @@ int RecordsCommand(int argc, wchar_t** argv) {
     pse::records::Merge(&forms, edits, schema.root, &report);
     for (const auto& [file, bytes] : pse::records::Tables(forms, schema.root))
         WriteAllW(out + L"\\" + std::wstring(file.begin(), file.end()), bytes);
+    // placed references: each level's scene with the edits (<out>\<LEVEL>.ENV, placed.h)
+    for (const std::string& level : pse::records::PlacedLevels(edits)) {
+        std::string name = level;
+        for (char& c : name)
+            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 32);
+        name += ".ENV";
+        std::string scene;
+        if (!ReadGameArchiveFile(game, name, &scene)) {
+            report.push_back("[fail] no scene " + name);
+            continue;
+        }
+        const std::string text = pse::records::ApplyPlaced(scene, level, edits, forms, &report);
+        WriteAllW(out + L"\\" + std::wstring(name.begin(), name.end()), text);
+    }
     std::string rep;
     for (const std::string& l : report) rep += l + "\n";
     WriteAllW(out + L"\\report.txt", rep);

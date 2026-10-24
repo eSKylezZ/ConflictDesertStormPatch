@@ -84,9 +84,15 @@ typedef struct PSELoadInterface {
 /* Exports of an external plugin DLL (phase 2):
  *   __declspec(dllexport) extern const PSEPluginInfo PSEPlugin_Info;
  *   __declspec(dllexport) int  PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse);   // non-zero = loaded
- *   __declspec(dllexport) void PSE_CALL PSEPlugin_Unload(void);                         // optional            */
+ *   __declspec(dllexport) void PSE_CALL PSEPlugin_Unload(void);                         // optional
+ *   __declspec(dllexport) const char* PSE_CALL PSEPlugin_SimFingerprint(void);          // optional
+ * PSEPlugin_SimFingerprint (SIMULATION plugins; called after Load, any thread): a string standing for the plugin's
+ * simulation code - the online plugin-set check compares its SHA-256 instead of the DLL file's, so builds of the same
+ * source that differ as files (a dev build with logging, the release package) can play together. It is the author's
+ * promise: change it whenever the simulation changes (docs/sdk/online-compat.md). NULL / "" = the file hash is used. */
 typedef int(PSE_CALL* PSEPluginLoadFn)(const PSELoadInterface* pse);
 typedef void(PSE_CALL* PSEPluginUnloadFn)(void);
+typedef const char*(PSE_CALL* PSEPluginSimFingerprintFn)(void);
 
 /* ------------------------------------------------------------------------------------------------------------------
  * pse.log (version 1)

@@ -150,7 +150,7 @@ Generated (never edit by hand):
 
 | File | What | Used by |
 | --- | --- | --- |
-| `src/generated/pse_ids_<game>.h` | the table (`pse_ids_<game>::kGame`, `pse::ids::GameDef`) | the game layer (registration), `pse_tests` |
+| `pse/ids/generated/pse_ids_<game>.h` | the table (`pse_ids_<game>::kGame`, `pse::ids::GameDef`) | the game layer (registration), `pse_tests` |
 | `pse/include/pse/pse_ids_<game>.h` | `#define PSE_ID_<game>_<Name> <id>u` + `PSE_IDS_<GAME>_DATABASE_VERSION` | plugins |
 | `docs/sdk/reference/ids-<game>.md` | the list with addresses and descriptions | people |
 

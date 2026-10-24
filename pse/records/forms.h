@@ -5,7 +5,7 @@
 // lines (scripts/records_gate.py).
 //
 //   Schema (pse/records/<game>/schema.lua): tables = { { file, type, columns = { { name, kind, none?, ref? }, ... },
-//     rows_per_key?, owner? }, ... }; kind int / fixed2 / yesno / text / ref; ref = a type or a list of types.
+//     rows_per_key?, owner? }, ... }; kind int / fixed<N> (N decimals, 1-9) / yesno / text / ref; ref = a type or a list of types.
 #include <map>
 #include <string>
 #include <vector>

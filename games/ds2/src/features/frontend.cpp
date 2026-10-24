@@ -59,7 +59,7 @@ void Enter(int realW = 0, int realH = 0) {
         return;
     }
     if (!realW) realW = *w, realH = *h;
-    if (realW == graphics::kVirtualW && realH == graphics::kVirtualH) return;   // nothing to map
+    // (also at a real 1280 x 1024: the mapping is then 1:1, but the art must stay unscaled - k = 1 - there too)
     g_realW = realW;
     g_realH = realH;
     *w = graphics::kVirtualW;
@@ -68,8 +68,6 @@ void Enter(int realW = 0, int realH = 0) {
     SetRendererViewport(graphics::kVirtualW, graphics::kVirtualH);
 }
 
-// the start-up (logos, films, sheet / font set-up) and the front-end run on the virtual screen from the first frame:
-// sheets and fonts set up at the real size would otherwise carry k on top of the mapping
 // the start-up (logos, films, sheet / font set-up) and the front-end run on the virtual screen from the first frame:
 // sheets and fonts set up at the real size would otherwise carry k on top of the mapping
 void OnDeviceCreated(int w, int h) { Enter(w, h); }
@@ -111,25 +109,69 @@ BOOL WINAPI ScreenToGame(HWND window, POINT* p) {
     return ok;
 }
 
+// ---- the menus inside a mission (pause menu state 0x14 and its MISSION STATS / LOAD / SAVE / OPTIONS ... screens) -------
+// They are the front-end's screens on the same 3D monitor, made for 1280 x 1024 with unscaled art; in a mission the
+// screen is real and the sheets carry k, so text and art overflowed their boxes (any size above 800 x 600). Entering a
+// state, FUN_0043df10 switches the front-end backdrop with FUN_0040b2b0(on) (only caller 0x43DF2E; on = a menu state,
+// flags [0x609684] / [0x609688]) - in a mission that now also switches the virtual screen: on = the mission's renderer
+// viewports (split screen: several views) and HUD sheet scales are saved, virtual screen on, sheets at k = 1; off = all
+// put back. (FUN_0040b2b0 is replaced; menus.cpp hooks its call site, which still lands here.)
+constexpr uint32_t kBackdrop = 0x40B2B0;
+constexpr uint32_t kViewsAt = 0x30, kViewsLen = 0x64, kFullAt = 0x41A00, kFullLen = 0x24;
+bool g_inMission = false, g_missionMenu = false;
+uint8_t g_viewsSave[kViewsLen], g_fullSave[kFullLen];
+
+void MissionMenu(bool on) {
+    auto r = *reinterpret_cast<uint8_t* const*>(kRenderer);
+    if (!r || on == g_missionMenu) return;
+    if (on) {
+        if (graphics::VirtualScreenOn()) return;
+        std::memcpy(g_viewsSave, r + kViewsAt, kViewsLen);
+        std::memcpy(g_fullSave, r + kFullAt, kFullLen);
+        features::SaveHudSheets();
+        Enter();
+        features::RescaleHudSheets();
+        g_missionMenu = true;
+    } else {
+        Leave();
+        std::memcpy(r + kViewsAt, g_viewsSave, kViewsLen);
+        std::memcpy(r + kFullAt, g_fullSave, kFullLen);
+        features::RestoreHudSheets();
+        g_missionMenu = false;
+    }
+    dslog::Write("Front-end: mission menu %s (state 0x%X)", on ? "on - virtual screen" : "off", *reinterpret_cast<int*>(0x63433C));
+}
+
+void __cdecl Backdrop(int on) {   // copy of FUN_0040b2b0
+    *reinterpret_cast<int*>(0x609684) = on;
+    *reinterpret_cast<int*>(0x609688) = on != 0;
+    if (g_inMission) MissionMenu(on != 0);
+}
+
 // The calls they replace: the game's functions, or - as a PSE host plugin (DS2_PSE_HOST) - the next hook of the
 // broker chain on those call sites (the DS2 game layer's level events sit there too).
 void* g_frontEndNext = reinterpret_cast<void*>(kFrontEndInit);
 void* g_missionNext = reinterpret_cast<void*>(kMissionInit);
 
 int __fastcall FrontEndInit(void* self, void*) {
+    g_inMission = g_missionMenu = false;
+    features::ForgetHudSheets();
     Enter();
     return reinterpret_cast<int(__thiscall*)(void*)>(g_frontEndNext)(self);
 }
 
 int __cdecl MissionInit(int arg) {
     Leave();
+    g_missionMenu = false;
+    g_inMission = true;
+    features::ForgetHudSheets();
     return reinterpret_cast<int(__cdecl*)(int)>(g_missionNext)(arg);
 }
 }  // namespace
 
 void features::ApplyFrontEnd() {
     if (!settings::Get().hudScaling) return;   // the same switch as the HUD: "scale the 2D to the screen"
-#ifdef DS2_PSE_HOST
+#if defined(DS2_PSE_HOST) || defined(DS2_WIDESCREEN_PLUGIN)
     if (patch::SubscribeCall(kFrontEndCall, reinterpret_cast<void*>(&FrontEndInit), kFrontEndInit, 0, &g_frontEndNext) &&
         patch::SubscribeCall(kMissionCall, reinterpret_cast<void*>(&MissionInit), kMissionInit, 0, &g_missionNext)) {
 #else
@@ -148,6 +190,11 @@ void features::ApplyFrontEnd() {
         patch::HookIndirectCall(0x4CB17C, reinterpret_cast<void*>(&ScreenToGame), 0x5DA260);
         patch::HookCall(kEngineCall, reinterpret_cast<void*>(&EngineInit), kEngineInit);
         patch::HookCall(0x541F67, reinterpret_cast<void*>(&RendererViewport), 0x537380);
+        static const uint8_t kBackdropEntry[] = {0x8B, 0x44, 0x24, 0x04, 0x33, 0xC9, 0x85, 0xC0};
+        if (patch::Matches(kBackdrop, kBackdropEntry, sizeof kBackdropEntry))
+            patch::WriteJump(kBackdrop, reinterpret_cast<void*>(&Backdrop));
+        else
+            dslog::Write("[fail] Front-end: menu backdrop switch 0x%08X not recognised - in-mission menus unscaled", kBackdrop);
         dslog::Write("[ok]   Front-end: laid out at 1280x1024, scaled to the screen");
     }
 }
