@@ -15,10 +15,12 @@
 #include "core/dsfix_services.h"
 #include "core/log.h"
 #include "core/pse_host.h"
+#include "core/settings.h"
 #include "features/features.h"
 #include "loader.h"
 #include "render/water.h"
 #include "timeofday/dsfix_timeofday.h"
+#include "display/dsfix_display.h"
 #include "voices/dsfix_voices.h"
 #include "weather/dsfix_weather.h"
 
@@ -150,6 +152,16 @@ const char* PSE_CALL SkinVoice(const char* texture) {
 }
 int PSE_CALL SpeechLanguage() { return features::SpeechLanguage(); }
 
+int PSE_CALL MissionCutsceneSkip() {
+    // (VehicleReloadSkip: the restart after a vehicle change on the loadout screen - the intro was just seen)
+    return features::LockstepSkipCutscenes(settings::Get().skipCutscenes) || features::OverviewSkipPending() ||
+                   features::VehicleReloadSkip()
+               ? 1
+               : 0;
+}
+int PSE_CALL DevBackground() { return features::DevBackground() ? 1 : 0; }
+const char* PSE_CALL QuickStartLevel() { return features::QuickStartLevel(); }
+
 PSEResult PSE_CALL SetScreenProvider(PSEPluginHandle plugin, DsfixScreenProvider fn) {
     if (!plugin) return PSE_E_INVALID_ARG;
     std::erase_if(g_screens, [plugin](const ScreenProvider& p) { return p.plugin == plugin; });
@@ -169,7 +181,9 @@ const DsfixServicesV1 kServices = {sizeof(DsfixServicesV1), 1,
                                    &GiveSpawnedMedikit,     &SetSettingsListener,
                                    &GameFocused,            &DrawPuddleReflections,
                                    &LinkedFrom,             &SkinVoice,
-                                   &SpeechLanguage,         &SetScreenProvider};
+                                   &SpeechLanguage,         &SetScreenProvider,
+                                   &MissionCutsceneSkip,    &DevBackground,
+                                   &QuickStartLevel};
 
 void PSE_CALL OnLoaderMessage(const PSEMessage* msg, void*) {
     if (msg && msg->type == PSE_MSG_EXIT) {   // the plugins are unloaded after this message
@@ -239,6 +253,29 @@ const DsfixTimeOfDayV1* TimeOfDayPlugin() {
     return t;
 }
 }  // namespace
+
+static const DsfixDisplayV1* DisplayPlugin() {
+    static const DsfixDisplayV1* d = nullptr;
+    if (!d)
+        if (const PSEMessagingInterface* m = pse::MessagingInterface())
+            if (auto p = static_cast<const DsfixDisplayV1*>(m->QueryInterface(pse_host::Core(), DSFIX_DISPLAY_INTERFACE, 1));
+                p && p->size >= sizeof(DsfixDisplayV1))
+                d = p;
+    return d;
+}
+
+// OPTIONS > VIDEO (graphics.cpp ChangeDisplayMode): the plugin dsfix.display places the window for a new mode.
+void features::PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode) {
+    if (const DsfixDisplayV1* d = DisplayPlugin()) d->PlaceGameWindow(w, h, mode);
+}
+
+// Renderer 3 presents through a DXGI flip swap chain into the window: no exclusive fullscreen, a borderless window
+// over the monitor instead (the plugin dsfix.display applies the same rule when it places the window).
+uint32_t features::EffectiveDisplayMode(uint32_t mode) {
+    if (mode == static_cast<uint32_t>(DisplayMode::Fullscreen) && settings::Get().renderer == 3)
+        return static_cast<uint32_t>(DisplayMode::Borderless);
+    return mode;
+}
 
 bool features::TimeOfDayInstalled() { return TimeOfDayPlugin() != nullptr; }
 int features::TimeOfDay() { return TimeOfDayPlugin() ? TimeOfDayPlugin()->Time() : 0; }

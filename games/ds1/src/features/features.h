@@ -21,6 +21,7 @@ enum CoopAction : uint32_t { kCoopJoin = 1, kCoopLeave = 2, kCoopStart = 4, kCoo
 // dsfix.bodies, dsfix.followers, dsfix.hud (HUD / menu scaling) on interface dsfix.services (core/dsfix_services.h,
 // services.cpp).
 void RegisterServices();                 // services.cpp: publishes dsfix.services (before the external plugins load)
+void RegisterOverlayInterface();         // overlay_iface.cpp: publishes dsfix.overlay (overlay.h for the plugin DLLs)
 const char* ServiceText(uint32_t hash);  // the plugins' text providers (the Lookup hook asks them first), or nullptr
 void* ServiceScreen(uint32_t state);     // the plugins' front-end screens (coop.cpp's state -> screen hook), or nullptr
 void ServiceSettingsChanged();           // the plugins' settings listeners (OnSettingsChanged: the launcher saved)
@@ -32,8 +33,6 @@ void ApplyFrameCap();    // frame limiter: min(cap, monitor refresh)
 void ApplyLauncher();    // "Enhancements" settings in the launcher's Detail Settings dialog
 void ApplyInGameInput(); // in-game menus: hide the cursor + pad prompts while a pad is in use
 void ApplySplitScreen(); // local split screen: player set-up for players 2-4 (views are built per frame)
-void ApplyDisplay();     // display mode: fullscreen / windowed / borderless window
-void ApplyCinematics();  // skip the start-up logos / mission cutscenes
 void ApplyGraphics();    // anti-aliasing (MSAA) + anisotropic filtering via the D3D8 device
 void ApplyCoop();        // front-end CO-OP entry + join screen (Xbox-style local co-op set-up)
 void ApplyControls();    // Options -> CONTROLS: keyboard & mouse / controller (per-player pad layouts)
@@ -458,7 +457,7 @@ void OnFrameStartCheck();               // launcher.cpp: clears StartPending onc
 void ApplyAnisotropy();                 // graphics.cpp: TEXTURE FILTERING changed (live)
 bool ChangeDisplayMode(uint32_t modeIndex, uint32_t displayMode);  // graphics.cpp: new mode now (device reset)
 void PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode);       // display.cpp: the game window for a mode
-uint32_t EffectiveDisplayMode(uint32_t mode);  // display.cpp: Renderer 3 (own DXGI presenter) shows fullscreen as borderless
+uint32_t EffectiveDisplayMode(uint32_t mode);  // services.cpp (the plugin dsfix.display has the same rule): Renderer 3 (own DXGI presenter) shows fullscreen as borderless
 void* OnlineScreen(uint32_t state);     // online.cpp: CO-OP (0x48) and the online screens (0x49..0x4B), nullptr if not ours
 const char* OnlineText(uint32_t hash);
 uint32_t CoopMenuState();               // the CO-OP screen (SPLIT SCREEN / ONLINE): where the join screen's Back goes

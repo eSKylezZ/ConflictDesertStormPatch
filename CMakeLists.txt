@@ -138,8 +138,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/scripthost.cpp
     games/ds1/src/features/movie.cpp
     games/ds1/src/features/campaigns.cpp
-    games/ds1/src/features/display.cpp
-    games/ds1/src/features/cinematics.cpp
     games/ds1/src/features/graphics.cpp
     games/ds1/src/features/coop.cpp
     games/ds1/src/features/overlay.cpp
@@ -151,6 +149,7 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/coopscripts.cpp
     games/ds1/src/features/multikbm.cpp
     games/ds1/src/features/services.cpp
+    games/ds1/src/features/overlay_iface.cpp
     games/ds1/src/features/skinapply.cpp
     games/ds1/src/features/loadout.cpp
     games/ds1/src/features/diagnostics.cpp
@@ -231,7 +230,7 @@ set(DSFIX_PLUGINS dsfix_discord)
 # The dsfix kit (games/ds1/plugins/kit): DesertStormFix features moved out of dsfix.dll into their own plugin DLLs keep
 # their core/patch.cpp + dslog code, on the public SDK (pse.log / pse.hooks / pse.settings - kit.h). One static copy per
 # plugin; nothing of dsfix.dll or the loader's internals is linked.
-add_library(dsfix_kit STATIC games/ds1/plugins/kit/kit.cpp games/ds1/src/core/patch.cpp pse/loader/x86len.cpp)
+add_library(dsfix_kit STATIC games/ds1/plugins/kit/kit.cpp games/ds1/plugins/kit/overlay_client.cpp games/ds1/src/core/patch.cpp pse/loader/x86len.cpp)
 target_include_directories(dsfix_kit PUBLIC games/ds1/src games/ds1/plugins ${PSE_SDK_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
 target_compile_definitions(dsfix_kit PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS
@@ -277,6 +276,8 @@ dsfix_add_plugin(dsfix_timeofday timeofday "Time of day")
 dsfix_add_plugin(dsfix_voices voices "Squad voices")
 dsfix_add_plugin(dsfix_fontsharp fontsharp "Sharper text")
 dsfix_add_plugin(dsfix_developer developer "Developer page + debug keys")
+dsfix_add_plugin(dsfix_cinematics cinematics "Intro / cutscene skip")
+dsfix_add_plugin(dsfix_display display "Display mode")
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

@@ -42,6 +42,10 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   change: it uses `DsfixSetting("HudScaling")` and `SetSettingsListener`. Then **`dsfix.developer`** (CHEATS >
   DEVELOPER + debug keys); `dsfix.services` v1 gained **`SetScreenProvider(plugin, fn)`** (`DsfixScreenProvider`:
   a plugin's screen object for a front-end state dsfix.dll doesn't serve) - check `size` before calling it.
+  Then the new interface **`dsfix.overlay` v1** (`src/core/dsfix_overlay.h`: DesertStormFix's overlay drawing as plain C;
+  the kit implements `overlay.h` on it), `dsfix.services` v1 gained `MissionCutsceneSkip`, `DevBackground` and
+  `QuickStartLevel`, and **`dsfix.cinematics`** / **`dsfix.display`** (with interface **`dsfix.display` v1**) are their
+  own DLLs.
 - 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
   levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
   `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).

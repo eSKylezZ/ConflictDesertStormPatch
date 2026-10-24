@@ -40,12 +40,17 @@ SPLIT = {
     # last subscriber of the shared glyph bind 0x53CC9B (dsfix.dll's barcolour / weaponicons are on it too: see
     # test_sharp_text_follows_its_settings and test_pse.py test_glyph_bind_is_a_shared_chain)
     "dsfix.fontsharp": (CLIENT, "FeatSharpText", []),
+    # the two movie-cancel queries' flag reads; when to skip is dsfix.dll's (services MissionCutsceneSkip)
+    "dsfix.cinematics": (SIM, None, [(0x48676E, "call_site"), (0x4867ED, "call_site")]),
+    # ClipCursor replacement; publishes dsfix.display (the live mode change in OPTIONS > VIDEO)
+    "dsfix.display": (CLIENT, None, [(0x4112B0, "function")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: dsfix.nameplates (dsfix.dll, priority 50) + dsfix.weather (100)
 HUD_SCALE = 0x5D7B00          # hud: the cave's HudScale float = HudScalePercent / 100 (dsfix's own setting)
 SERVICES = {"dsfix.difficulty", "dsfix.jpfixes", "dsfix.handling", "dsfix.tooltips", "dsfix.rumble", "dsfix.bodies",
-            "dsfix.followers", "dsfix.hud", "dsfix.weather", "dsfix.timeofday", "dsfix.voices", "dsfix.fontsharp"}
+            "dsfix.followers", "dsfix.hud", "dsfix.weather", "dsfix.timeofday", "dsfix.voices", "dsfix.fontsharp",
+            "dsfix.cinematics", "dsfix.display"}
 SKIN_APPLY = 0x435BE0         # the game's skin apply: dsfix.skins (dsfix.dll) + dsfix.bodies chain on its entry
 TEXT_VERY_HARD, TEXT_VERY_EASY = 0xC0110001, 0xC0110002
 DROP_JUMP = 0x431EC0          # jpfixes: item drop jp rel8 (0x56 the game's, 0x1A safe drop)
@@ -467,3 +472,15 @@ def test_developer_page_from_its_plugin(c):
     finally:
         _set_state(c, 1)
     assert c.frames_advancing(1.0)
+
+
+def test_display_and_intro_from_their_plugins(c, split):
+    # the test harness runs the game windowed (DisplayMode 1): the window was placed by dsfix.display
+    text = log_text(c, 20000)
+    assert "[dsfix.display] INFO [ok]   Display mode: window hooks" in text
+    assert "[dsfix.display] INFO Display: windowed" in text, "the window wasn't placed by the plugin"
+    assert "[dsfix.cinematics] INFO [ok]   Cutscene skip: movie-cancel hooks" in text
+    # SKIP INTRO (DesertStormFix's setting, read through dsfix.services): 0 = logos + intro film, 1 = straight to the menu
+    want = 0 if c.run('return dev.setting("SkipIntro")') else 1
+    assert c.read(0x5E6C80, "u32") in (0, want)    # the first front-end load clears it after the logos
+    assert c.read(0x5ED230, "u32") in (0, want)

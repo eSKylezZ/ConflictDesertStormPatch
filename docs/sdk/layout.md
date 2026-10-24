@@ -20,7 +20,7 @@ game starts, and what happens when a part is missing or fails.
     Plugins\
       dsfix.dll + dsfix.pse         DesertStormFix: the HOST plugin, registers the 60 dsfix.<feature> sub-plugins
       dsfix.discord.dll + .pse      DesertStormFix's Discord status (an ordinary plugin, SDK only)
-      dsfix.<feature>.dll + .pse    DesertStormFix features split out of dsfix.dll (21 so far; SDK + dsfix kit)
+      dsfix.<feature>.dll + .pse    DesertStormFix features split out of dsfix.dll (23 so far; SDK + dsfix kit)
       <name>.dll + <name>.pse       third-party plugins
   Mods\                             content mods (unchanged)
   PSE\Ports\<id>\                   another Conflict game's mission maps as empty levels (made from the player's copy)

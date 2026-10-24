@@ -15,6 +15,10 @@
 //   0x5386EA  menu cursor = GetCursorPos + ScreenToClient in back-buffer pixels -> ScreenToGame scales the client
 //             position when the client area is not the back-buffer size (borderless / shrunk window)
 // The mode is taken when the window is placed (after the launcher); OPTIONS > VIDEO changes it live (PlaceGameWindow).
+//
+// Its own PSE plugin since 2026-10-24 (PSE\Plugins\dsfix.display.dll, on the dsfix kit): DisplayMode / Renderer are
+// DesertStormFix's settings (DsfixSetting), dev background mode and +level through dsfix.services; publishes
+// interface dsfix.display (dsfix_display.h) for the live mode change. Without the DLL: fullscreen only.
 #include <windows.h>
 
 #include <algorithm>
@@ -22,10 +26,20 @@
 
 #include "core/log.h"
 #include "core/patch.h"
-#include "core/settings.h"
-#include "features/features.h"
+#include "display/dsfix_display.h"
+#include "kit/kit.h"
 
 namespace {
+enum class DisplayMode : uint32_t { Fullscreen, Windowed, Borderless };  // DesertStormFix's DisplayMode setting
+const DsfixServicesV1* g_services = nullptr;
+bool DevBackground() { return g_services->DevBackground() != 0; }
+// Renderer 3 presents through a DXGI flip swap chain into the window: no exclusive fullscreen, a borderless window
+// over the monitor instead (same latency with independent flip, instant Alt+Tab). (dsfix.dll has the same rule.)
+uint32_t EffectiveDisplayMode(uint32_t mode) {
+    if (mode == static_cast<uint32_t>(DisplayMode::Fullscreen) && g_services->DsfixSetting("Renderer") == 3)
+        return static_cast<uint32_t>(DisplayMode::Borderless);
+    return mode;
+}
 constexpr uint32_t kFullscreenImm = 0x448750;    // mov dword ptr [ebp+0x66c8], <imm32> at 0x44874A
 constexpr uint32_t kCreateWindowCall = 0x411569;
 constexpr uint32_t kPlaceWindowCall = 0x40B897;
@@ -44,7 +58,7 @@ constexpr LONG kBorderlessStyle = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS;
 using ShowCursorFn = void(__cdecl*)(int);
 const DPI_AWARENESS_CONTEXT kPerMonitorV2 = reinterpret_cast<DPI_AWARENESS_CONTEXT>(-4);
 
-features::DisplayMode g_mode = features::DisplayMode::Fullscreen;  // fixed once the window is placed
+DisplayMode g_mode = DisplayMode::Fullscreen;  // fixed once the window is placed
 uint8_t* g_renderer = nullptr;  // esi at the SetWindowPos call (the renderer, before 0x63C924 may be set)
 bool g_hooked = false;
 
@@ -100,12 +114,12 @@ HWND WINAPI CreateGameWindow(DWORD exStyle, LPCSTR cls, LPCSTR title, DWORD styl
     if (auto noGhosts = reinterpret_cast<void(WINAPI*)()>(GetProcAddress(GetModuleHandleA("user32.dll"),
                                                                          "DisableProcessWindowsGhosting")))
         noGhosts();
-    if (features::DevBackground()) {   // dev background tests: off-screen, never the active window
+    if (DevBackground()) {   // dev background tests: off-screen, never the active window
         exStyle |= WS_EX_NOACTIVATE;
         x = y = kBackgroundPos;
     }
     HWND wnd = CreateWindowExA(exStyle, cls, title, style, x, y, w, h, parent, menu, inst, param);
-    if (features::DevBackground()) *reinterpret_cast<volatile uint32_t*>(0x60EE2C) = 1;   // active: it never gets WM_ACTIVATE
+    if (DevBackground()) *reinterpret_cast<volatile uint32_t*>(0x60EE2C) = 1;   // active: it never gets WM_ACTIVATE
     if (old) SetThreadDpi(old);  // the launcher dialogs stay as they were (system-scaled)
     return wnd;
 }
@@ -114,7 +128,7 @@ HWND WINAPI CreateGameWindow(DWORD exStyle, LPCSTR cls, LPCSTR title, DWORD styl
 // take the foreground - the window stayed behind, inactive (the message loop waits, full screen never takes over, the
 // pads aren't acquired). Borrow the foreground thread's input state for the switch; an Alt tap is the fallback.
 void BringToFront(HWND wnd) {
-    if (features::DevBackground() || !features::QuickStartLevel() || GetForegroundWindow() == wnd) return;
+    if (DevBackground() || !g_services->QuickStartLevel() || GetForegroundWindow() == wnd) return;
     HWND fg = GetForegroundWindow();
     const DWORD me = GetCurrentThreadId(), other = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
     const bool attached = other && other != me && AttachThreadInput(other, me, TRUE);
@@ -140,7 +154,7 @@ BOOL PlaceFramed(HWND wnd, int w, int h) {
     GetMonitorInfoA(GameMonitor(wnd), &mi);
     SetWindowTextA(wnd, "Conflict: Desert Storm");
     RECT r;
-    if (g_mode == features::DisplayMode::Borderless) {
+    if (g_mode == DisplayMode::Borderless) {
         SetWindowLongA(wnd, GWL_STYLE, kBorderlessStyle);
         r = mi.rcMonitor;
     } else {
@@ -164,9 +178,9 @@ BOOL PlaceFramed(HWND wnd, int w, int h) {
                    work.top + ((work.bottom - work.top) - (r.bottom - r.top)) / 2 - r.top);
         if (r.top < work.top) OffsetRect(&r, 0, work.top - r.top);
     }
-    dslog::Write("Display: %s %dx%d, window %ld,%ld %ldx%ld", g_mode == features::DisplayMode::Borderless ? "borderless" : "windowed",
+    dslog::Write("Display: %s %dx%d, window %ld,%ld %ldx%ld", g_mode == DisplayMode::Borderless ? "borderless" : "windowed",
                  w, h, r.left, r.top, r.right - r.left, r.bottom - r.top);
-    if (features::DevBackground()) {   // dev background tests: same size, off-screen, behind everything, not activated
+    if (DevBackground()) {   // dev background tests: same size, off-screen, behind everything, not activated
         OffsetRect(&r, kBackgroundPos - r.left, kBackgroundPos - r.top);
         return SetWindowPos(wnd, HWND_BOTTOM, r.left, r.top, r.right - r.left, r.bottom - r.top,
                             SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS | SWP_NOACTIVATE);
@@ -179,15 +193,15 @@ BOOL PlaceFramed(HWND wnd, int w, int h) {
 }
 
 BOOL WINAPI PlaceWindow(HWND wnd, HWND after, int x, int y, int cx, int cy, UINT flags) {
-    g_mode = static_cast<features::DisplayMode>(features::EffectiveDisplayMode(settings::Get().displayMode));
+    g_mode = static_cast<DisplayMode>(EffectiveDisplayMode(g_services->DsfixSetting("DisplayMode")));
     // cx/cy = the mode size run through AdjustWindowRect(0xcf0000) by the game; undo that in its DPI context.
     RECT frame{};
     AdjustWindowRect(&frame, WS_OVERLAPPEDWINDOW, FALSE);
     const int w = cx - (frame.right - frame.left), h = cy - (frame.bottom - frame.top);
     SetThreadDpi(kPerMonitorV2);  // the game thread from here on: real pixels for the window, cursor, clipping
 
-    if (g_mode == features::DisplayMode::Fullscreen || w <= 0 || h <= 0) {
-        g_mode = features::DisplayMode::Fullscreen;
+    if (g_mode == DisplayMode::Fullscreen || w <= 0 || h <= 0) {
+        g_mode = DisplayMode::Fullscreen;
         const BOOL ok = SetWindowPos(wnd, after, x, y, cx, cy, flags);
         BringToFront(wnd);
         return ok;
@@ -205,7 +219,7 @@ __declspec(naked) void PlaceWindowStub() {
 
 // Replaces 0x4116AD..0x4116EC in the message loop (runs each active frame before the frame dispatch).
 void __cdecl StyleCheck() {
-    if (g_mode != features::DisplayMode::Fullscreen) return;
+    if (g_mode != DisplayMode::Fullscreen) return;
     HWND wnd = At<HWND>(Renderer(), 0x14);
     if (GetWindowLongA(wnd, GWL_STYLE) != kFullscreenStyle) {
         SetWindowLongA(wnd, GWL_STYLE, kFullscreenStyle);
@@ -215,10 +229,10 @@ void __cdecl StyleCheck() {
 
 // Replaces FUN_004112B0 (called each active frame and on move / size / focus).
 void __cdecl ClipToWindow() {
-    if (features::DevBackground()) return;  // dev background tests: never clip the PC user's mouse
+    if (DevBackground()) return;  // dev background tests: never clip the PC user's mouse
     HWND wnd = *reinterpret_cast<HWND*>(kGameWindow);
     RECT& r = *reinterpret_cast<RECT*>(kClipRect);
-    if (g_mode == features::DisplayMode::Fullscreen) {
+    if (g_mode == DisplayMode::Fullscreen) {
         GetWindowRect(wnd, &r);
         r.left += 4;
         r.right -= 4;
@@ -231,13 +245,13 @@ void __cdecl ClipToWindow() {
 }
 
 BOOL WINAPI ScreenToGame(HWND wnd, POINT* pt) {
-    if (features::DevBackground()) {  // dev background tests: the PC user's mouse is not the game's
+    if (DevBackground()) {  // dev background tests: the PC user's mouse is not the game's
         pt->x = pt->y = 1;
         return TRUE;
     }
     BOOL ok = ScreenToClient(wnd, pt);
     uint8_t* r = Renderer();
-    if (!ok || g_mode == features::DisplayMode::Fullscreen || !r) return ok;
+    if (!ok || g_mode == DisplayMode::Fullscreen || !r) return ok;
     RECT c;
     const int bw = At<int>(r, 0x40688), bh = At<int>(r, 0x4068C);
     if (GetClientRect(wnd, &c) && c.right > 0 && c.bottom > 0 && (c.right != bw || c.bottom != bh)) {
@@ -288,35 +302,25 @@ bool InstallHooks() {
                                sizeof kClipOrig) &&
            patch::ApplyGroup("Display: menu cursor mapping", loadPatch);
 }
-}  // namespace
-
 // OPTIONS > VIDEO (graphics.cpp ChangeDisplayMode): the window for a new mode, before the device is reset. Fullscreen:
 // the game's style (the message loop's StyleCheck keeps it) - D3D sizes the window itself.
-void features::PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode) {
+void PSE_CALL PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode) {
     HWND wnd = *reinterpret_cast<HWND*>(kGameWindow);
     if (!wnd) return;
-    g_mode = static_cast<features::DisplayMode>(features::EffectiveDisplayMode(std::min<uint32_t>(mode, 2)));
-    if (g_mode == features::DisplayMode::Fullscreen) {
+    g_mode = static_cast<DisplayMode>(EffectiveDisplayMode(std::min<uint32_t>(mode, 2)));
+    if (g_mode == DisplayMode::Fullscreen) {
         SetWindowLongA(wnd, GWL_STYLE, kFullscreenStyle);
         SetWindowTextA(wnd, "Pivotal Games Ltd");
-        const int x = features::DevBackground() ? kBackgroundPos : 0;
+        const int x = DevBackground() ? kBackgroundPos : 0;
         SetWindowPos(wnd, HWND_TOP, x, x, static_cast<int>(w), static_cast<int>(h),
-                     SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS | (features::DevBackground() ? SWP_NOACTIVATE : 0));
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOCOPYBITS | (DevBackground() ? SWP_NOACTIVATE : 0));
         dslog::Write("Display: fullscreen %ux%u", w, h);
         return;
     }
     PlaceFramed(wnd, static_cast<int>(w), static_cast<int>(h));
 }
 
-// Renderer 3 presents through a DXGI flip swap chain into the window: no exclusive fullscreen, a borderless window
-// over the monitor instead (same latency with independent flip, instant Alt+Tab).
-uint32_t features::EffectiveDisplayMode(uint32_t mode) {
-    if (mode == static_cast<uint32_t>(DisplayMode::Fullscreen) && settings::Get().renderer == 3)
-        return static_cast<uint32_t>(DisplayMode::Borderless);
-    return mode;
-}
-
-void features::ApplyDisplay() {
+void PSE_CALL ApplyDisplay() {
     if (!g_hooked) {
         g_hooked = InstallHooks();
         if (!g_hooked) return;
@@ -324,6 +328,20 @@ void features::ApplyDisplay() {
     }
     // Read by the launcher's OK handler, after the settings dialog may have changed the mode.
     const uint32_t fullscreen =
-        features::EffectiveDisplayMode(settings::Get().displayMode) == static_cast<uint32_t>(DisplayMode::Fullscreen);
+        EffectiveDisplayMode(g_services->DsfixSetting("DisplayMode")) == static_cast<uint32_t>(DisplayMode::Fullscreen);
     patch::WriteValue(kFullscreenImm, fullscreen);
 }
+
+const DsfixDisplayV1 kInterface = {sizeof(DsfixDisplayV1), 1, &PlaceGameWindow};
+
+bool Load() {
+    g_services = kit::Services();
+    if (!g_services) return false;
+    ApplyDisplay();
+    if (!g_hooked) return false;
+    g_services->SetSettingsListener(kit::Self(), &ApplyDisplay);   // the launcher's display mode (read at its OK)
+    return kit::Messaging()->RegisterInterface(kit::Self(), DSFIX_DISPLAY_INTERFACE, 1, &kInterface) == PSE_OK;
+}
+}  // namespace
+
+DSFIX_KIT_PLUGIN("dsfix.display", "Display mode", PSE_PLUGIN_CLIENT_ONLY, Load)

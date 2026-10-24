@@ -15,6 +15,11 @@
 // - is pressed by any player) or FUN_004867B0 (the same query without side effects). Both also cancel when the
 // developer start-up flag 'u' is set (FUN_004B9CD0(0x75) at 0x48676E / 0x4867ED); those two reads go through
 // MovieSkipFlag, which also answers yes while a mission cutscene runs and the setting is on.
+//
+// Its own PSE plugin since 2026-10-24 (PSE\Plugins\dsfix.cinematics.dll, on the dsfix kit): when to skip is
+// dsfix.dll's (dsfix.services MissionCutsceneSkip: SKIP CUTSCENES / the host's online, the automatic overview, the
+// restart after a vehicle change); SkipIntro is read with DsfixSetting. Without the DLL nothing is skipped (also not
+// the automatic overview after the briefing).
 #include <windows.h>
 
 #include <cstring>
@@ -22,8 +27,7 @@
 
 #include "core/log.h"
 #include "core/patch.h"
-#include "core/settings.h"
-#include "features/features.h"
+#include "kit/kit.h"
 
 namespace {
 constexpr uint32_t kFirstBoot = 0x5E6C80;                // 1 = logo slideshow on the first front-end load
@@ -34,6 +38,7 @@ constexpr uint32_t kGameState = 0x63C948;                // +0x1B8C bit 0 = cuts
 constexpr uint32_t kCurrentLevel = 0x606880;             // environment file of the loaded level
 
 using OptionFlagFn = int(__cdecl*)(int);
+const DsfixServicesV1* g_services = nullptr;
 
 bool InMissionCutscene() {
     auto state = *reinterpret_cast<const uint8_t**>(kGameState);
@@ -44,13 +49,10 @@ bool InMissionCutscene() {
 
 int __cdecl MovieSkipFlag(int option) {
     if (reinterpret_cast<OptionFlagFn>(kOptionFlag)(option)) return 1;
-    // (VehicleReloadSkip: the restart after a vehicle change on the loadout screen - the intro was just seen)
-    return (features::LockstepSkipCutscenes(settings::Get().skipCutscenes) || features::OverviewSkipPending() ||
-            features::VehicleReloadSkip()) && InMissionCutscene() ? 1 : 0;
+    return g_services->MissionCutsceneSkip() && InMissionCutscene() ? 1 : 0;
 }
-}  // namespace
 
-void features::ApplyCinematics() {
+void PSE_CALL ApplyCinematics() {
     static bool hooked = false;
     if (!hooked) {
         hooked = true;
@@ -58,9 +60,20 @@ void features::ApplyCinematics() {
         if (hooked) dslog::Write("[ok]   Cutscene skip: movie-cancel hooks");
     }
     // Both are only read by the first front-end load, which comes after the launcher; 0 / 1 are the valid values.
-    const uint32_t value = settings::Get().skipIntro ? 0 : 1;
+    const uint32_t value = g_services->DsfixSetting("SkipIntro") ? 0 : 1;
     for (uint32_t flag : {kFirstBoot, kPlayIntroFilm}) {
         const uint32_t current = *reinterpret_cast<volatile uint32_t*>(flag);
         if (current <= 1 && current != value) patch::WriteValue(flag, value);
     }
 }
+
+bool Load() {
+    g_services = kit::Services();
+    if (!g_services) return false;
+    ApplyCinematics();
+    g_services->SetSettingsListener(kit::Self(), &ApplyCinematics);   // the launcher's SKIP INTRO
+    return true;
+}
+}  // namespace
+
+DSFIX_KIT_PLUGIN("dsfix.cinematics", "Intro / cutscene skip", PSE_PLUGIN_SIMULATION, Load)

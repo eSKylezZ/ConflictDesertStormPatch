@@ -48,8 +48,6 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.launcher", "Launcher settings", kClient, &features::ApplyLauncher},
     {"dsfix.ingame_input", "Menus follow the input device", kClient, &features::ApplyInGameInput},
     {"dsfix.splitscreen", "Split screen", kSim, &features::ApplySplitScreen},
-    {"dsfix.display", "Display mode", kClient, &features::ApplyDisplay},
-    {"dsfix.cinematics", "Intro / cutscene skip", kSim, &features::ApplyCinematics},
     {"dsfix.graphics", "MSAA / anisotropy / V-Sync", kClient, &features::ApplyGraphics},
     {"dsfix.coop", "Co-op set-up + saves", kSim, &features::ApplyCoop},
     {"dsfix.versus", "Versus", kSim, &features::ApplyVersus},
@@ -127,6 +125,7 @@ bool Init(const PSELoadInterface* pse) {
     // Other external plugins (PSE\Plugins) are loaded by the loader after this returns; the split-out features among
     // them query dsfix.services in their Load.
     features::RegisterServices();
+    features::RegisterOverlayInterface();
     return true;
 }
 

@@ -43,8 +43,6 @@ cosmetic, UI or local input (may differ between peers). When in doubt a feature 
 | `dsfix.launcher` | Launcher settings | CLIENT_ONLY | `ApplyLauncher` |
 | `dsfix.ingame_input` | Menus follow the input device | CLIENT_ONLY | `ApplyInGameInput` |
 | `dsfix.splitscreen` | Split screen | SIMULATION | `ApplySplitScreen` |
-| `dsfix.display` | Display mode | CLIENT_ONLY | `ApplyDisplay` |
-| `dsfix.cinematics` | Intro / cutscene skip | SIMULATION | `ApplyCinematics` |
 | `dsfix.graphics` | MSAA / anisotropy / V-Sync | CLIENT_ONLY | `ApplyGraphics` |
 | `dsfix.coop` | Co-op set-up + saves | SIMULATION | `ApplyCoop` |
 | `dsfix.versus` | Versus | SIMULATION | `ApplyVersus` |
@@ -117,6 +115,8 @@ in `plugins/<name>/`, targets in the top-level `CMakeLists.txt` (`DSFIX_PLUGINS`
 | `dsfix.voices` 1.0.0 | `plugins/voices/` (+ `dsfix_voices.h`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Squad voices (SAS / Delta accents, `.skin` voices) + YOUR SOLDIER TALKS (byte group PLAYER_VOICE); until 2026-10-24 in dsfix.dll. Its VOICE choices are hidden settings `Voice<SP|Coop><role>` (copied once); `FeatVoices` / `FeatPlayerVoice` stay DesertStormFix's; the accent banks stay mods.cpp's (`SoundCache`). Publishes **`dsfix.voices` v1** (`Label`, `Choice`, `SetChoice`, `CoopChoice`, `Text`, `HasOwnVoice`) for dsfix.dll's VOICE row and the online token; without it: no VOICE row, everyone his own bank |
 | `dsfix.fontsharp` 1.0.0 | `plugins/fontsharp/fontsharp.cpp` | CLIENT_ONLY | `dsfix >= 3.3` | Sharper text (until 2026-10-24 dsfix.dll's `dsfix.fontsharp`): the font sheet's pages swapped for enlarged copies at the glyph texture bind `0x53CC9B` (last subscriber, priority 0). Setting `FeatSharpText` in its own key; reads DesertStormFix's `HudScaling` (`DsfixSetting` + `SetSettingsListener`). The texture reader is shared with dsfix.dll's barcolour.cpp as the header `src/core/texpixels.h`. Without it: the game's soft text |
 | `dsfix.developer` 1.0.0 | `plugins/developer/developer.cpp` | SIMULATION (fingerprint) | `dsfix >= 3.3` | CHEATS > DEVELOPER page (front-end state 0x46: debug displays, time speed, complete mission, resurrect) + Pivotal's debug key map (byte group DEBUG_KEYS, call `0x4473B5`); until 2026-10-24 dsfix.dll's `dsfix.developer`. Page through `SetScreenProvider`, texts `0xC00D....` through `SetTextProvider`. Only with DesertStormFix's `FeatCheats` on at start-up. Without it: dsfix.dll's CHEATS row DEVELOPER does nothing |
+| `dsfix.cinematics` 1.0.0 | `plugins/cinematics/cinematics.cpp` | SIMULATION (fingerprint) | `dsfix >= 3.3` | Intro / cutscene skip (until 2026-10-24 in dsfix.dll): the movie-cancel queries' flag reads (calls `0x48676E` / `0x4867ED`) + the first-boot / intro-film flags. When to skip is dsfix.dll's (`MissionCutsceneSkip`); `SkipIntro` / `SkipCutscenes` stay DesertStormFix's settings. Without it nothing is skipped, also not the automatic overview after the briefing |
+| `dsfix.display` 1.0.0 | `plugins/display/` (+ `dsfix_display.h`) | CLIENT_ONLY | `dsfix >= 3.3` | Display mode: fullscreen / windowed / borderless window (until 2026-10-24 in dsfix.dll). Reads DesertStormFix's `DisplayMode` / `Renderer` (`DsfixSetting`, re-applied through `SetSettingsListener`). Publishes **`dsfix.display` v1** (`PlaceGameWindow(w, h, mode)`) for OPTIONS > VIDEO's live mode change; without it: fullscreen only |
 
 The SIMULATION ones declare a simulation fingerprint (below), so a dev build and the release package still connect
 online. They load after `dsfix.dll`'s own features (the loader's second round), still before the game's WinMain.
@@ -146,10 +146,22 @@ manifest says `requires = dsfix >= 3.3`. `DsfixServicesV1 {size, version}` then:
 | `LinkedFrom()` | the level this one continues from (linked missions), `""` if none |
 | `SkinVoice(texture)` / `SpeechLanguage()` | the voice bank a `.skin` gives that texture (`""` = none); the game's speech language (0 UK / 6 US English, -1 another) |
 | `SetScreenProvider(plugin, fn)` | `fn(state)` returns the screen object for a front-end state dsfix.dll doesn't serve (its state -> screen hook on `FUN_00480930` asks after its own states), or NULL. One per plugin, NULL removes it; dropped at `PSE_MSG_EXIT`. Check `size` before calling (appended 2026-10-24) |
+| `MissionCutsceneSkip()` | 1 = DesertStormFix wants the running mission cutscene skipped: SKIP CUTSCENES (online: the host's), the automatic overview after the briefing, the restart after a vehicle change (appended 2026-10-24) |
+| `DevBackground()` / `QuickStartLevel()` | dev background test mode (off-screen, never activated); the level `+level <name>` asked for, or NULL (appended 2026-10-24) |
 
 The providers are plain cross-plugin calls (no crash guard); dsfix forgets them all at `PSE_MSG_EXIT`, before the
 loader unloads the plugins. Without `dsfix.rumble` the trigger feel is `DEFAULT` for every weapon; without a text
 provider the hashes fall through to the game's catalog.
+
+**`dsfix.overlay` v1** (`src/core/dsfix_overlay.h`, published by dsfix.dll's `features/overlay_iface.cpp` next to
+dsfix.services, 2026-10-24) is DesertStormFix's overlay drawing (`features/overlay.h`) as a plain-C table: queued icons /
+images / quads / rectangles / lines, texture loaders (`LoadTextureImage` for an encoded image at a given texture size,
+`LoadTextureFile`, `LoadTextureBytes`), `CreateTexture` / `UploadTexture` / `ReleaseTexture`, the late draws
+(`SetLateDraw`, `AddLateDraw`, `SetTopDraw`, `Flush`, `FillRects`), icon glyphs (`IconChar`, `GlyphsReady`) and the game's
+font (`MenuFont`, `TextWidth`, `DrawLabel`). Kit plugins don't use the table directly: the kit's overlay client
+(`plugins/kit/overlay_client.cpp`) implements `overlay.h` on it (`LoadTexture(resource)` reads the plugin's own RCDATA),
+so a moved feature's drawing code compiles unchanged. Every DLL has its own static C runtime, which is why these
+interfaces pass no C++ objects.
 
 **The dsfix kit** (`plugins/kit/`, static library `dsfix_kit`, 2026-10-23) is how a feature leaves `dsfix.dll` without
 being rewritten: it compiles DesertStormFix's `src/core/patch.cpp` into the plugin and supplies what that file and

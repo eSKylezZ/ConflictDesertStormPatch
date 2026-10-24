@@ -721,8 +721,6 @@ void features::OnSettingsChanged() {
     pse_host::RunAs("dsfix.ingame_input", &ApplyInGameInput);
     pse_host::RunAs("dsfix.framecap", &ApplyFrameCap);
     pse_host::RunAs("dsfix.graphics", &ApplyAnisotropy);
-    pse_host::RunAs("dsfix.display", &ApplyDisplay);
-    pse_host::RunAs("dsfix.cinematics", &ApplyCinematics);
     pse_host::RunAs("dsfix.diagnostics", &ApplyDiagnostics);
-    ServiceSettingsChanged();   // plugins on dsfix.services (dsfix.hud: HUD scaling / size)
+    ServiceSettingsChanged();   // plugins on dsfix.services (dsfix.hud, dsfix.display, dsfix.cinematics ...)
 }

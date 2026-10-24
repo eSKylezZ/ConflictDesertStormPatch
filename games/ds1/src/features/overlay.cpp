@@ -467,6 +467,11 @@ void* overlay::LoadTexture(int resource, int texW, int texH) {
     return cache.back().texture;
 }
 
+void* overlay::LoadTextureImage(const void* bytes, size_t size, int texW, int texH, const char* what) {
+    UINT w = 0, h = 0;
+    return TextureFromImage(bytes, size, texW, texH, w, h, what ? what : "(memory)");
+}
+
 void* overlay::LoadTextureFile(const char* path, int& w, int& h, int& texW, int& texH) {
     w = h = texW = texH = 0;
     HANDLE f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);

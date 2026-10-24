@@ -31,6 +31,8 @@ void QueueRect(float x, float y, float w, float h, uint32_t argb);
 void QueueLine(float x0, float y0, float x1, float y1, float width, uint32_t argb);
 // A PNG from this DLL's RCDATA `resource` as a texture of texW x texH (image top-left), cached per device.
 void* LoadTexture(int resource, int texW, int texH);
+// An encoded image (PNG ...) as a texW x texH texture (image top-left; not cached - the caller releases it).
+void* LoadTextureImage(const void* bytes, size_t size, int texW, int texH, const char* what);
 // An image file (PNG, DDS ...) as a managed A8R8G8B8 texture, sized up to powers of two (image at the top-left).
 void* LoadTextureFile(const char* path, int& w, int& h, int& texW, int& texH);
 // The same from an encoded image in memory (`what` names it in the log).

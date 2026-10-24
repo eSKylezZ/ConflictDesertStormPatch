@@ -108,4 +108,11 @@ typedef struct DsfixServicesV1 {
     // One screen provider per plugin (NULL removes it), asked in the order they were set after DesertStormFix's own
     // states (dsfix.developer: CHEATS > DEVELOPER, state 0x46).
     PSEResult(PSE_CALL* SetScreenProvider)(PSEPluginHandle plugin, DsfixScreenProvider fn);
+    // DesertStormFix wants the mission cutscene that is running skipped: SKIP CUTSCENES (online: the host's), the
+    // automatic overview after the briefing, the restart after a vehicle change (dsfix.cinematics asks it).
+    int(PSE_CALL* MissionCutsceneSkip)(void);
+    // Dev background test mode (Dev\RunInBackground in a dev build): off-screen, never activated, mouse left alone.
+    int(PSE_CALL* DevBackground)(void);
+    // The level the command line asked for (+level <name>; the launcher is skipped), or NULL.
+    const char*(PSE_CALL* QuickStartLevel)(void);
 } DsfixServicesV1;
