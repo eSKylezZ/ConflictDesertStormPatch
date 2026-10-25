@@ -413,6 +413,33 @@ const std::vector<std::string>& features::LoadedMods() {
     return out;
 }
 #endif
+#ifndef DSFIX_OWN_ModOrder
+std::vector<std::string> features::ModOrder() {
+    const auto* t = Table();
+    std::vector<std::string> out;
+    const char* j = nullptr;
+    if (t) {
+        j = t->ModOrder();
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
+}
+#endif
+#ifndef DSFIX_OWN_SetModOrder
+void features::SetModOrder(const std::string& order) {
+    const auto* t = Table();
+    if (t) {
+        t->SetModOrder((order).c_str());
+    }
+}
+#endif
 #ifndef DSFIX_OWN_LoadedPorts
 std::vector<std::string> features::LoadedPorts() {
     const auto* t = Table();

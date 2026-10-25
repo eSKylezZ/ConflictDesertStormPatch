@@ -45,7 +45,7 @@ Each PC sends a `pse::compat::Set`:
 | host | `"DesertStormFix <version>"` (the game layer in phase 1) | yes |
 | host simulation fingerprint | see below | yes – covers every built-in plugin |
 | plugins | every loaded plugin (`pse::compat::LocalPlugins`): name, version, flags, hash | simulation ones: see below |
-| mods | every switched-on mod (`features::LoadedMods`): folder name, content hash | yes, all of them |
+| mods | every switched-on mod (`features::LoadedMods`): folder name, content hash - **in load order**: the mods both PCs use must come in the same relative order (mod priority list, [mod-layout.md](mod-layout.md); "mod load order differs (here A, B; on the host B, A)") | yes, all of them |
 
 ### Plugins
 
@@ -167,6 +167,10 @@ mods", START waits, and the joiner offers to make its mods match the host's (`sr
 switched-off copy with the host's content, download a mod it lacks (or has another version of), switch off a mod the
 host doesn't use – after the player says yes (mods may contain scripts / DLLs). Then the mods reload in game, the
 joiner sends its list again and the check passes. Nothing is deleted: a replaced version stays as `_Name.yours`.
+The joiner also takes the host's **load order** (a `LOAD ORDER  as the host's` row when that is all that differs):
+right before the reload its priority list becomes the host's mods in the host's order, then its own others
+(`modorder::Adopt`; saved - the settings value `ModOrder` is this PC's list from then on); mods just downloaded or
+switched on take their host place instead of the end.
 
 ```text
 MS Q <xid> <name hex>                  joiner -> host: send me that mod (one of the host's switched-on mods only)

@@ -235,6 +235,19 @@ const char* PSE_CALL t_LoadedMods(void) {
     }
     return s.c_str();
 }
+const char* PSE_CALL t_ModOrder(void) {
+    const std::vector<std::string>& r = features::ModOrder();
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
+void PSE_CALL t_SetModOrder(const char* a0) {
+    features::SetModOrder(std::string(a0 ? a0 : ""));
+}
 const char* PSE_CALL t_LoadedPorts(void) {
     const std::vector<std::string>& r = features::LoadedPorts();
     static thread_local std::string s;
@@ -667,6 +680,8 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_ModsFolderEnabled,
     &t_ReloadMods,
     &t_LoadedMods,
+    &t_ModOrder,
+    &t_SetModOrder,
     &t_LoadedPorts,
     &t_CompatLocalPluginsText,
     &t_CoopVoiceChoice,

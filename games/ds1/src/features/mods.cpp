@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/modorder.h"
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
@@ -68,6 +69,7 @@ struct ModFile {
 };
 std::unordered_map<std::string, ModFile> g_files;  // upper-case file name -> file
 std::vector<std::string> g_mods;
+std::vector<std::string> g_modOrder;   // the mod priority list: every Mods folder (on and off, no '_'), load order
 std::unordered_map<std::string, std::vector<ModFile>> g_tables;  // .txt parts per upper-case name, in mod order
 // <TABLE>.replace.txt parts (key = "<TABLE>.TXT"): their rows replace every game row with the same first column
 // (case-insensitive) at the first such row's place; "-KEY" deletes; new keys are appended. Later mods win per key.
@@ -203,11 +205,23 @@ void LoadStrings(const std::string& path) {
 uint32_t g_largestFile = 0;  // see ScanFolder
 std::string g_largestName;
 
+// A mod's files, folder by folder with the names sorted case-insensitively (a folder's contents where its name sorts):
+// a name the mod has twice -> the last one wins, the same order everywhere (the ModKit's modlayout.files) instead of
+// whatever the file system lists first. Organised mods (evos\, dds\ ...) and flat ones are indexed alike.
 void ScanFolder(const std::string& dir, int mod, int& count) {
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do {
+    std::vector<WIN32_FIND_DATAA> entries;
+    {
+        WIN32_FIND_DATAA e;
+        HANDLE f = FindFirstFileA((dir + "\\*").c_str(), &e);
+        if (f == INVALID_HANDLE_VALUE) return;
+        do entries.push_back(e);
+        while (FindNextFileA(f, &e));
+        FindClose(f);
+    }
+    std::sort(entries.begin(), entries.end(), [](const WIN32_FIND_DATAA& a, const WIN32_FIND_DATAA& b) {
+        return _stricmp(a.cFileName, b.cFileName) < 0;
+    });
+    for (const WIN32_FIND_DATAA& fd : entries) {
         if (fd.cFileName[0] == '.') continue;
         const std::string path = dir + "\\" + fd.cFileName;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -319,12 +333,17 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             }
         }
         auto it = g_files.find(key);
-        if (it != g_files.end())
+        if (it != g_files.end() && it->second.mod == mod) {
+            const std::string base = g_modsRoot + "\\" + g_mods[mod] + "\\";
+            auto rel = [&](const std::string& p) { return p.rfind(base, 0) == 0 ? p.substr(base.size()) : p; };
+            features::ModLog("[warn] Mods: %s has two files named %s (%s, %s) - %s is used", g_mods[mod].c_str(),
+                             fd.cFileName, rel(it->second.path).c_str(), rel(path).c_str(), rel(path).c_str());
+        } else if (it != g_files.end()) {
             features::ModLog("Mods: %s replaces %s's %s", g_mods[mod].c_str(), g_mods[it->second.mod].c_str(), fd.cFileName);
+        }
         g_files[key] = {path, mod};
         ++count;
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
+    }
 }
 
 std::string GameDir() {
@@ -370,13 +389,26 @@ void BuildIndex() {
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((root + "\\*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
-    std::vector<std::string> names;
+    std::vector<std::string> on, present;
     do {
-        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.' && fd.cFileName[0] != '_')
-            names.push_back(fd.cFileName);
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.') continue;
+        const std::string bare = modorder::Bare(fd.cFileName);
+        if (bare.empty()) continue;
+        present.push_back(bare);
+        if (fd.cFileName[0] != '_') on.push_back(fd.cFileName);
     } while (FindNextFileA(h, &fd));
     FindClose(h);
-    std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return _stricmp(a.c_str(), b.c_str()) < 0; });
+    std::string saved;
+    settings::ReadString("ModOrder", saved);
+    g_modOrder = modorder::Resolve(present, modorder::Split(saved));
+    if (modorder::Join(g_modOrder) != saved) settings::WriteString("ModOrder", modorder::Join(g_modOrder));
+    std::vector<std::string> names;
+    for (const std::string& n : g_modOrder)
+        for (const std::string& o : on)
+            if (modorder::SameName(n, o)) names.push_back(o);
+    std::string order;
+    for (const std::string& n : names) order += (order.empty() ? "" : ", ") + n;
+    if (!names.empty()) features::ModLog("Mods: load order (the one loaded last wins a file name): %s", order.c_str());
     for (const std::string& name : names) {
         const int mod = static_cast<int>(g_mods.size());
         g_mods.push_back(name);
@@ -1353,6 +1385,17 @@ struct Pcm {
     uint32_t rate = 0;
 };
 
+// A file a .weapon / .skin names (shot / tail sounds, voice lines): next to that file, as written ("bang.wav",
+// "radio\\line01.wav", "..\\sounds\\bang.wav"); else - organised mods keep .weapon / .skin in defs\\ and sounds in
+// sounds\\ - the file of that bare name anywhere in the mods (the index: the mod loaded last wins).
+std::string BesideOrIndexed(const std::string& dir, const std::string& name) {
+    const std::string beside = dir + "\\" + name;
+    if (GetFileAttributesA(beside.c_str()) != INVALID_FILE_ATTRIBUTES) return beside;
+    const size_t slash = name.find_last_of("\\/");
+    auto it = g_files.find(Upper(slash == std::string::npos ? name : name.substr(slash + 1)));
+    return it != g_files.end() ? it->second.path : beside;
+}
+
 bool ReadWav(const std::string& path, Pcm& out) {
     std::string f;
     if (!ReadAll(path, f) || f.size() < 12 || memcmp(f.data(), "RIFF", 4) || memcmp(f.data() + 8, "WAVE", 4)) return false;
@@ -1537,7 +1580,7 @@ bool MakeSoundBank(const std::string& donor, const std::string& newName, const s
             continue;
         }
         Pcm pcm;
-        if (!ReadWav(dir + "\\" + it->second, pcm)) {
+        if (!ReadWav(BesideOrIndexed(dir, it->second), pcm)) {
             features::ModLog("[fail] Mods: %s - can't read %s (PCM or float WAV, up to 65535 Hz)", file.c_str(),
                          it->second.c_str());
             return false;
@@ -1579,7 +1622,7 @@ bool MakeVoiceBank(const std::string& hero, int lang, const std::string& newName
         auto wav = lines.find(static_cast<int>(n + 1));
         if (wav != lines.end()) {
             Pcm pcm;
-            if (!ReadWav(dir + "\\" + wav->second, pcm)) {
+            if (!ReadWav(BesideOrIndexed(dir, wav->second), pcm)) {
                 features::ModLog("[fail] Mods: %s - can't read %s (PCM or float WAV, up to 65535 Hz)", file.c_str(),
                                  wav->second.c_str());
                 return false;
@@ -3616,6 +3659,13 @@ void features::ModLog(const char* fmt, ...) {
 }
 
 // The mods in use - without the converted campaigns (PSE\Ports, see BuildIndex): those aren't mods to sync.
+std::vector<std::string> features::ModOrder() { return g_modOrder; }
+
+void features::SetModOrder(const std::string& order) {
+    g_modOrder = modorder::Split(order);
+    settings::WriteString("ModOrder", order);
+}
+
 const std::vector<std::string>& features::LoadedMods() {
     static std::vector<std::string> mods;
     mods.clear();

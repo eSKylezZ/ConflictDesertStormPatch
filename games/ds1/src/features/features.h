@@ -301,6 +301,11 @@ void ResetWeaponIcons();   // hot reload (mods.cpp)
 bool ReloadMods();         // mods.cpp: rebuild from the Mods folders + the game's tables again (front-end only)
 int ModsGeneration();      // bumped by every reload
 const std::vector<std::string>& LoadedMods();  // folder names of the mods in use (not the converted campaigns)
+// mods.cpp: the mod priority list (core/modorder.h) - every Mods folder, on and off (names without '_'), in load order
+// (the one loaded last wins a file name); SetModOrder saves a new one (the names joined by '|', modorder::Join -
+// settings value ModOrder), used at the next reload.
+std::vector<std::string> ModOrder();
+void SetModOrder(const std::string& order);
 std::vector<std::string> LoadedPorts();        // converted campaigns in use: <game>\PSE\Ports\<id> folder names
 // VERSUS menu (versus.cpp): LEGACY ONLINE (the game's network screens) / SPLIT SCREEN (local versus, to come).
 void* VersusScreen();                 // screen for front-end state 0x42

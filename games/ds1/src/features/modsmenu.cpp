@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/modorder.h"
 #include "core/patch.h"
 #include "features/features.h"
 #include "features/overlay.h"
@@ -84,8 +85,30 @@ void Scan() {
         g_mods.push_back({off ? fd.cFileName + 1 : fd.cFileName, !off});
     } while (FindNextFileA(h, &fd));
     FindClose(h);
-    std::sort(g_mods.begin(), g_mods.end(), [](const Mod& a, const Mod& b) { return _stricmp(a.name.c_str(), b.name.c_str()) < 0; });
+    // in the mod priority list's order (mods.cpp: the one loaded last wins a file name; new folders at the end)
+    std::vector<std::string> names;
+    for (const Mod& m : g_mods) names.push_back(m.name);
+    const std::vector<std::string> order = modorder::Resolve(names, features::ModOrder());
+    auto rank = [&](const Mod& m) {
+        for (size_t i = 0; i < order.size(); ++i)
+            if (modorder::SameName(order[i], m.name)) return i;
+        return order.size();
+    };
+    std::stable_sort(g_mods.begin(), g_mods.end(), [&](const Mod& a, const Mod& b) { return rank(a) < rank(b); });
     if (g_mods.size() > kMaxMods) g_mods.resize(kMaxMods);
+}
+
+// Moves mod i one place earlier / later in the priority list and saves it (used at the next Apply).
+bool MoveMod(int i, int delta) {
+    const int j = i + delta;
+    if (i < 0 || j < 0 || i >= static_cast<int>(g_mods.size()) || j >= static_cast<int>(g_mods.size())) return false;
+    std::swap(g_mods[i], g_mods[j]);
+    std::vector<std::string> order;
+    for (const Mod& m : g_mods) order.push_back(m.name);
+    features::SetModOrder(modorder::Join(order));
+    g_applyResult = nullptr;
+    dslog::Write("Mods menu: %s moved to load position %d (APPLY to use it)", g_mods[j].name.c_str(), j + 1);
+    return true;
 }
 
 void Toggle(int i) {
@@ -132,6 +155,10 @@ int PendingChanges() {
         for (const Mod& m : g_mods) listed |= _stricmp(m.name.c_str(), l.c_str()) == 0;
         n += !listed;
     }
+    std::vector<std::string> wanted;   // the switched-on mods in the menu's (= the saved) order
+    for (const Mod& m : g_mods)
+        if (m.on) wanted.push_back(m.name);
+    n += !modorder::SameRelativeOrder(wanted, loaded);   // the load order changed
     return n;
 }
 bool Pending() { return PendingChanges() > 0; }
@@ -277,8 +304,12 @@ void DrawApplyPrompt() {
     const int W = *reinterpret_cast<const int*>(r + 0x40688), H = *reinterpret_cast<const int*>(r + 0x4068C);
     const int n = PendingChanges();
     char text[64];
+    const bool hint = !n && !(g_applyResult && GetTickCount() - g_applyAt < 4000) && g_mods.size() > 1;
     if (n) snprintf(text, sizeof text, "Apply %d change%s", n, n == 1 ? "" : "s");
     else if (g_applyResult && GetTickCount() - g_applyAt < 4000) snprintf(text, sizeof text, "%s", g_applyResult);
+    else if (hint)   // the priority list: rows are numbered in load order
+        snprintf(text, sizeof text, "%s: load order - the last one wins",
+                 features::KeyboardInUse() ? "Left / Right" : "L1 / R1");
     else return;
     const int cap = overlay::TextWidth(font, "M"), iconSize = std::max(12, cap * 3 / 2), gap = iconSize / 4;
     const int textW = overlay::TextWidth(font, text), y = static_cast<int>(H * 0.92f);
@@ -293,12 +324,38 @@ void DrawApplyPrompt() {
                     static_cast<float>(iconSize + gap + textW), static_cast<float>(iconSize)};
         x += iconSize + gap;
     }
-    overlay::DrawLabel(font, text, x, y, n ? 0xFFFFFFFF : 0xFFE0D878);
+    overlay::DrawLabel(font, text, x, y, n ? 0xFFFFFFFF : hint ? 0xFFC8C8C8 : 0xFFE0D878);
+}
+
+// Load order: Left / Right (keyboard), the D-pad's left / right or L1 / R1 move the highlighted mod one place earlier /
+// later - each on its press. -1 / +1 / 0.
+int MovePressed() {
+    static bool left = false, right = false;
+    const bool front = features::GameFocused();
+    uint32_t pad = 0;
+    for (int j = 0, n = std::min(*reinterpret_cast<int*>(kJoystickCount), 8); front && j < n; ++j)
+        pad |= features::ReadJoystick(j);
+    const bool l = front && (Held(VK_LEFT) || (pad & (1u << 15 | 1u << 6)));   // D-pad left, L1
+    const bool r = front && (Held(VK_RIGHT) || (pad & (1u << 13 | 1u << 7)));  // D-pad right, R1
+    const int step = l && !left ? -1 : r && !right ? 1 : 0;
+    left = l, right = r;
+    return step;
 }
 
 int __fastcall Update(void* screen, void*) {
     void* list = At<void*>(screen, 8);
     Navigate(list);
+    if (const int step = MovePressed(); step && VisibleMods() > 0) {
+        int16_t& row = At<int16_t>(list, 0x28);
+        const int i = g_offset + row;
+        if (MoveMod(i, step)) {   // the cursor stays on the mod it moved
+            const int j = i + step;
+            if (j < g_offset) g_offset = j;
+            else if (j >= g_offset + VisibleMods()) g_offset = j - VisibleMods() + 1;
+            row = static_cast<int16_t>(j - g_offset);
+            g_lastRow = row;
+        }
+    }
     const short id = reinterpret_cast<short(__thiscall*)(void*)>(kListSelected)(list);
     if (id >= kItemRow0 && id < kItemRow0 + VisibleMods()) Toggle(g_offset + (id - kItemRow0));
     if (ApplyPressed() && Pending()) {
@@ -425,7 +482,7 @@ const char* features::ModsMenuText(uint32_t hash) {
         if (i >= g_mods.size()) return "";
         std::string name = g_mods[i].name.substr(0, 40);
         for (char& c : name) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-        snprintf(rows[k], sizeof rows[k], "%s:  %s", name.c_str(), g_mods[i].on ? "ON" : "OFF");
+        snprintf(rows[k], sizeof rows[k], "%zu. %s:  %s", i + 1, name.c_str(), g_mods[i].on ? "ON" : "OFF");
         return rows[k];
     }
     return nullptr;

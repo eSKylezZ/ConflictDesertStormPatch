@@ -407,8 +407,13 @@ Developer console (Options -> DESERTSTORMFIX -> DEVELOPER CONSOLE: ON)
 Mods (new skins and other content, no programming needed)
   Make a folder called Mods in the game folder and put each mod in its own
   folder inside it, for example Mods\PinkSAS\. Files can sit in any sub
-  folders. Mods load in name order; to switch one off, put _ in front of
-  its folder name (Mods\_PinkSAS).
+  folders: new mods keep them in folders by type (evos, dds, anims, sounds,
+  tables, defs, levels), older mods have them all in the mod's folder -
+  both work. To switch a mod off, put _ in front of its folder name
+  (Mods\_PinkSAS), or use the main menu's MODS screen.
+  Load order: when two mods have a file of the same name, the mod loaded
+  last wins. The MODS screen numbers the mods in load order; Left / Right
+  (pad: L1 / R1) moves the highlighted one, then apply. New mods load last.
   Each start writes Mods\DesertStormFix-report.txt: what the mods added
   and any problems ([fail] lines) - look there when a mod doesn't show up.
   The main menu says "N PROBLEMS" when there are some.

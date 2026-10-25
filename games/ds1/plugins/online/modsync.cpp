@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "core/log.h"
+#include "core/modorder.h"
 #include "core/net.h"
 #include "features/features.h"
 #include "features/lobby.h"
@@ -267,7 +268,7 @@ void HostFrame(const net::Snapshot& snap) {
 }
 
 // ================================================= joiner =================================================
-enum class Kind { Download, Enable, Disable };
+enum class Kind { Download, Enable, Disable, Order };   // Order: take the host's load order (applied at the reload)
 enum class Step { Waiting, Manifest, Ready, Running, Done, Failed };
 struct Item {
     Kind kind;
@@ -350,6 +351,15 @@ void BuildPlan(std::vector<pse::compat::ModEntry> host, std::vector<pse::compat:
         Item it;
         it.kind = Kind::Disable;
         it.mod = l.name, it.from = l.name;
+        plan.push_back(std::move(it));
+    }
+    // the mod priority list: the shared mods in another order load different files (the one loaded last wins)
+    std::vector<std::string> hostNames, localNames;
+    for (const auto& m : host) hostNames.push_back(m.name);
+    for (const auto& l : local) localNames.push_back(l.name);
+    if (!modorder::SameRelativeOrder(hostNames, localNames)) {
+        Item it;
+        it.kind = Kind::Order;
         plan.push_back(std::move(it));
     }
     std::lock_guard<std::mutex> lk(g_planMx);
@@ -480,6 +490,10 @@ void StartDownload(Item& it) {
 void Apply() {   // switches, then the downloads one at a time, then the reload
     for (Item& it : g_items) {
         if (it.step == Step::Done || it.kind == Kind::Download) continue;
+        if (it.kind == Kind::Order) {   // done at the reload (every sync takes the host's order then)
+            it.step = Step::Done;
+            continue;
+        }
         std::string error;
         const bool ok = it.kind == Kind::Enable ? PutInPlace(it.from, it.mod, error) : Move(it.from, FreeName("_" + it.from), error);
         if (!ok) return Fail(error);
@@ -563,7 +577,17 @@ void JoinerFrame(const net::Snapshot& snap) {
             if (state == onlinecompat::State::ModsDiffer && GetTickCount() - g_doneAt > 20000)
                 Fail("the mods still differ from the host's after the switch - see DesertStormFix-online.log");
             return;
-        case Phase::Reload:
+        case Phase::Reload: {
+            // the host's load order for its mods (saved: this PC's priority list from now on), this PC's others after
+            // them - also places mods just downloaded or switched on, which would otherwise go to the end
+            std::vector<std::string> hostNames;
+            for (const auto& m : onlinecompat::RemoteMods(1)) hostNames.push_back(m.name);
+            const std::string order = modorder::Join(modorder::Adopt(features::ModOrder(), hostNames));
+            if (order != modorder::Join(features::ModOrder())) {
+                features::SetModOrder(order);
+                dslog::Write("Mod sync: load order set to the host's (%s)", order.c_str());
+            }
+        }
             features::ReloadMods();   // the check notices the new mod list and sends it again (onlinecompat.cpp)
             g_phase = Phase::Done;
             g_doneAt = GetTickCount();
@@ -683,6 +707,7 @@ std::vector<features::ModSyncRow> features::ModSyncRows(std::string& title, std:
         switch (it.kind) {
             case Kind::Enable: r.text = "SWITCH ON   " + it.mod + "   (you have the host's version)"; break;
             case Kind::Disable: r.text = "SWITCH OFF  " + it.mod + "   (the host doesn't use it)"; break;
+            case Kind::Order: r.text = "LOAD ORDER  as the host's   (the mod loaded last wins a file)"; break;
             case Kind::Download:
                 r.text = "DOWNLOAD    " + it.mod + "   " + (it.step == Step::Manifest ? "asking the host ..." : Size(it.total));
                 if (it.runs) r.text += "   - has scripts / DLLs";

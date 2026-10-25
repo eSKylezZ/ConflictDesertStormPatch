@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0xFDA3371Au
+#define DSFIX_HOST_LAYOUT 0x7AB8F2EDu
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -65,6 +65,8 @@ typedef struct DsfixHostV1 {
     int (PSE_CALL* ModsFolderEnabled)(void);
     int (PSE_CALL* ReloadMods)(void);
     const char* (PSE_CALL* LoadedMods)(void);
+    const char* (PSE_CALL* ModOrder)(void);
+    void (PSE_CALL* SetModOrder)(const char*);
     const char* (PSE_CALL* LoadedPorts)(void);
     const char* (PSE_CALL* CompatLocalPluginsText)(void);
     int (PSE_CALL* CoopVoiceChoice)(int);

@@ -262,6 +262,23 @@ std::vector<std::string> Compare(const Set& local, const Set& remote, const std:
         else if (!b) out.push_back("mod " + a->name + " is switched on here, not on " + who);
         else if (a->hash != b->hash) out.push_back("mod " + a->name + " differs (its files aren't the same)");
     }
+    // load order (mod priority list - the mod loaded last wins a file name): the lists come in load order, so the
+    // mods both PCs use must come in the same relative order, or the PCs load different files
+    std::vector<std::string> myOrder, theirOrder;
+    for (const ModEntry& m : local.mods)
+        if (theirMods.count(Lower(m.name))) myOrder.push_back(m.name);
+    for (const ModEntry& m : remote.mods)
+        if (myMods.count(Lower(m.name))) theirOrder.push_back(m.name);
+    bool sameOrder = myOrder.size() == theirOrder.size();
+    for (size_t i = 0; sameOrder && i < myOrder.size(); ++i) sameOrder = Lower(myOrder[i]) == Lower(theirOrder[i]);
+    if (!sameOrder) {
+        auto list = [](const std::vector<std::string>& v) {
+            std::string s;
+            for (const std::string& n : v) s += (s.empty() ? "" : ", ") + n;
+            return s;
+        };
+        out.push_back("mod load order differs (here " + list(myOrder) + "; on " + who + " " + list(theirOrder) + ")");
+    }
     return out;
 }
 

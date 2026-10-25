@@ -23,6 +23,12 @@ Both PCs in an online session need the same build – older ones are refused whe
 - CUSTOM CAMPAIGNS is in the CO-OPERATIVE CAMPAIGN menu too (split screen and online); a custom campaign starts at its
   first mission without the co-op mission list
 - Mods' `.strings` texts now also answer the mission text lookup used by cutscene / movie texts and subtitles
+- **Mod load order**: the MODS screen numbers the mods in load order and Left / Right (pad: L1 / R1) moves one - when
+  two mods have a file of the same name, the mod loaded last wins. New mods load last; the first start keeps the old
+  alphabetical order. Online, a joiner takes the host's order along with its mods
+- Mods may keep their files in folders by type (`evos`, `dds`, `anims`, `sounds`, `tables`, `defs`, `levels` - what
+  the ModKit now makes for new mods); flat mods work as before. A mod with two files of one name in different folders
+  uses the last by sorted path and the mod report says so
 
 **Online co-op**
 

@@ -15,6 +15,7 @@ Conflict: Desert Storm II runs on the same shim + loader with its layer `PSE\Gam
 | [API_CHANGELOG.md](API_CHANGELOG.md) | Every interface version and what changed |
 | [ds1-plugins.md](ds1-plugins.md) | DesertStormFix's features as internal plugins `dsfix.<feature>`: names, flags, owner scopes, shared hook sites; its external plugins (`dsfix.discord`) |
 | [data-files.md](data-files.md) | PSE data files (Lua-table literals, canonical form) and the records: `ds1:` IDs, record types, the schema |
+| [mod-layout.md](mod-layout.md) | Mod folders for all six games: files found by name in any sub folder, the organised layout new mods use (evos, dds, anims, sounds, tables, defs, levels), paths that must stay put, the mod priority list (load order: the mod loaded last wins) |
 | [online-compat.md](online-compat.md) | Online: the plugin-set check – what is compared (simulation plugins, host fingerprint, mods), messages, flags guidance for plugin authors |
 | [ds1-settings.md](ds1-settings.md) | Where DesertStormFix's settings live (pse.settings plugin `dsfix`), the one-time move from the old key, every value |
 

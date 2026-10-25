@@ -189,6 +189,7 @@ wasn't given, so both share the key.
 | Voice\<SP\|Coop\>\<role\> | DWORD | **moved 2026-10-24** to plugin `dsfix.voices`'s own key (hidden int settings, copied once from here) | 0 auto, 1 SAS, 2 Delta, 3 own |
 | Weather | DWORD | **moved 2026-10-24** to plugin `dsfix.weather`'s own key (hidden int setting, copied once from here) | 0–12 (MISSION DEFAULT … RANDOM) |
 | Vehicles\<SP\|Coop\>\<Level\> | REG_SZ | vehicles.cpp | "ORIGINAL=NEW;…" vehicle swaps |
+| ModOrder | REG_SZ | mods.cpp, modsmenu.cpp, plugins/online/modsync.cpp | mod priority list (2026-10-25): every Mods folder name without the `_` off-prefix, joined by `\|`, in load order - the mod loaded last wins a file name. Written at the first start (alphabetical), when the MODS menu moves a mod (Left / Right, L1 / R1), and when an online joiner takes the host's order. New folders go to the end, gone ones drop off ([mod-layout.md](mod-layout.md)) |
 
 ## Testing
 
