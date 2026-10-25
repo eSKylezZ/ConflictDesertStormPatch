@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0x7AB8F2EDu
+#define DSFIX_HOST_LAYOUT 0x5BB0DD97u
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -159,4 +159,15 @@ typedef struct DsfixHostV1 {
     float (PSE_CALL* PhotoFov)(void);
     void (PSE_CALL* SetImageProbe)(void*);
     void (PSE_CALL* NoteHudStart)(void);
+    uint32_t (PSE_CALL* EffectiveDisplayMode)(uint32_t);
+    void (PSE_CALL* PlaceGameWindow)(uint32_t, uint32_t, uint32_t);
+    uint32_t (PSE_CALL* LauncherCaps)(uint32_t*);
+    void (PSE_CALL* ApplyFrameCap)(void);
+    void (PSE_CALL* NoteTexture)(void*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+    void (PSE_CALL* PhotoBeforePresent)(void*);
+    void (PSE_CALL* PhotoAfterPresent)(void*);
+    int (PSE_CALL* LockstepSkipRender)(void);
+    double (PSE_CALL* Now)(void);
+    void (PSE_CALL* AddPresent)(double, double);
+    void (PSE_CALL* AddTexture)(uint32_t, uint32_t, uint32_t, double);
 } DsfixHostV1;

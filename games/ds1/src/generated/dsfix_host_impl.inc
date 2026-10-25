@@ -627,6 +627,43 @@ void PSE_CALL t_SetImageProbe(void* a0) {
 void PSE_CALL t_NoteHudStart(void) {
     render::NoteHudStart();
 }
+uint32_t PSE_CALL t_EffectiveDisplayMode(uint32_t a0) {
+    auto r = features::EffectiveDisplayMode(a0);
+    return r;
+}
+void PSE_CALL t_PlaceGameWindow(uint32_t a0, uint32_t a1, uint32_t a2) {
+    features::PlaceGameWindow(a0, a1, a2);
+}
+uint32_t PSE_CALL t_LauncherCaps(uint32_t* a0) {
+    auto r = features::LauncherCaps(*a0);
+    return r;
+}
+void PSE_CALL t_ApplyFrameCap(void) {
+    features::ApplyFrameCap();
+}
+void PSE_CALL t_NoteTexture(void* a0, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5) {
+    features::NoteTexture(a0, a1, a2, a3, a4, a5);
+}
+void PSE_CALL t_PhotoBeforePresent(void* a0) {
+    features::PhotoBeforePresent(a0);
+}
+void PSE_CALL t_PhotoAfterPresent(void* a0) {
+    features::PhotoAfterPresent(a0);
+}
+int PSE_CALL t_LockstepSkipRender(void) {
+    auto r = features::LockstepSkipRender();
+    return (r) ? 1 : 0;
+}
+double PSE_CALL t_Now(void) {
+    auto r = framerec::Now();
+    return r;
+}
+void PSE_CALL t_AddPresent(double a0, double a1) {
+    framerec::AddPresent(a0, a1);
+}
+void PSE_CALL t_AddTexture(uint32_t a0, uint32_t a1, uint32_t a2, double a3) {
+    framerec::AddTexture(a0, a1, a2, a3);
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -773,5 +810,16 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_ViewHidden,
     &t_PhotoFov,
     &t_SetImageProbe,
-    &t_NoteHudStart};
+    &t_NoteHudStart,
+    &t_EffectiveDisplayMode,
+    &t_PlaceGameWindow,
+    &t_LauncherCaps,
+    &t_ApplyFrameCap,
+    &t_NoteTexture,
+    &t_PhotoBeforePresent,
+    &t_PhotoAfterPresent,
+    &t_LockstepSkipRender,
+    &t_Now,
+    &t_AddPresent,
+    &t_AddTexture};
 }  // namespace

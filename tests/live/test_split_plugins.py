@@ -55,6 +55,9 @@ SPLIT = {
     # split screen / co-op / controls / pads / versus (2026-10-25): the analog input (the pad poll's fix-up only with
     # the Controller setting: test_broker_features)
     "dsfix.coop": (SIM, None, [(0x450920, "function")]),
+    # graphics + renderers + OPTIONS > VIDEO (2026-10-25): the Direct3DCreate8 import slot (the device hooks follow at
+    # run time: test_d3d_hooks)
+    "dsfix.graphics": (CLIENT, None, [(0x5D8308, "pointer")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)
@@ -131,8 +134,10 @@ def test_hooks_owned_by_the_plugins(c, split):
     sites = {va for _k, _s, wanted in SPLIT.values() for va, _kind in wanted} | {SHOT_SITE}
     for h in hooks:
         if h["va"] in sites:
-            # dev builds: dsfix.missions' API trace chains on every script API slot (priority 1000) - a tracer, not a leftover
-            assert h["owner"] in SPLIT or (h["owner"] == "dsfix.missions" and h["kind"] == "pointer"), h
+            # dev builds: dsfix.missions' API trace chains on every script API slot (priority 1000) - a tracer, not a leftover;
+            # the game layer shares some sites (pse.game.ds1's Direct3DCreate8 hook: device events) - not dsfix.dll either
+            assert h["owner"] in SPLIT or h["owner"] == "pse.game.ds1" or \
+                (h["owner"] == "dsfix.missions" and h["kind"] == "pointer"), h
 
 
 def test_limits_interface_sizes_the_heap(c, split):
@@ -480,6 +485,36 @@ def test_developer_page_from_its_plugin(c):
         assert c.frames_advancing(1.0)
         assert c.run("return dev.fe_state()") == 0x46
         assert "[dsfix.developer] INFO Developer: screen built" in log_text(c, 20000)
+    finally:
+        _set_state(c, 1)
+    assert c.frames_advancing(1.0)
+
+
+def test_video_page_from_the_graphics_plugin(c):
+    # OPTIONS > VIDEO (front-end state 0x4C) is dsfix.graphics' (2026-10-25): dsfix.dll's screen router and Lookup hook
+    # reach it through the interface dsfix.graphics; the overlay draws on the game layer's PSE_EVENT_END_SCENE in
+    # dsfix.dll, no longer from the plugin's EndScene hook
+    ps = plugins(c)
+    if "dsfix.graphics" not in ps:
+        pytest.skip("dsfix.graphics not installed")
+    p = ps["dsfix.graphics"]
+    assert p["external"] and not p["disabled"] and p["flags"] & CLIENT and not p["flags"] & INTERNAL, p
+    assert "dsfix.restart" in ps and ps["dsfix.restart"]["flags"] & INTERNAL   # the "+restart" wait stays in dsfix.dll
+    owners = [h["owner"] for h in c.run("return dev.pse_hooks()") if h["va"] == 0x5D8308]
+    assert "dsfix.graphics" in owners, owners   # the Direct3DCreate8 import slot
+    text = log_text(c, 20000)
+    assert "[fail] Overlay: no PSE_EVENT_END_SCENE" not in text
+    assert c.run("return dev.game_text(%d)" % 0xC0120001) == "VIDEO"
+    _main_menu(c)
+    try:
+        _set_state(c, 0x4C)
+        t0 = time.time()
+        while time.time() - t0 < 5 and "Video menu: screen built" not in log_text(c, 20000):
+            time.sleep(0.2)
+        assert "Video menu: screen built" in log_text(c, 20000)
+        assert c.frames_advancing(1.0)
+        # the page's row texts come from the plugin (row 0 = the first row's label)
+        assert c.run("return dev.game_text(%d)" % 0xC0120010)
     finally:
         _set_state(c, 1)
     assert c.frames_advancing(1.0)

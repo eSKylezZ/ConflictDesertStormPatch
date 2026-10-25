@@ -32,6 +32,7 @@
 #include "core/patch.h"
 #include "core/pse_host.h"
 #include "features/features.h"
+#include "loader.h"
 
 namespace {
 // Direct3D 8 vtable indices / values (no d3d8.h in the SDK).
@@ -667,6 +668,26 @@ void overlay::Render(void* dev) {
         g_topDraw();
         DrawQueue(dev);
     }
+}
+
+// The game layer's EndScene hook (pse/games/ds1/ds1_events.cpp, PSE_DS1_LAYER_PRIORITY_INNER) raises
+// PSE_EVENT_END_SCENE with the device right before the game's EndScene - after the plugin dsfix.graphics' own EndScene
+// hook (priority 0) has put the game's fog states back, so the 2D is drawn unfogged as before. Until 2026-10-25
+// graphics.cpp called Render itself; here the overlay draws with or without that plugin. First subscriber: other
+// plugins' END_SCENE drawing lies on top of it, as when it ran in front of the layer's hook.
+namespace {
+int PSE_CALL OnEndScene(PSEEventId, void* device, void*) {
+    if (device) overlay::Render(device);
+    return 0;
+}
+}  // namespace
+
+void overlay::ApplyEndScene() {
+    static bool subscribed = false;
+    if (subscribed) return;
+    subscribed = pse::MessagingInterface()->Subscribe(pse_host::Find("dsfix.overlay"), PSE_EVENT_END_SCENE, &OnEndScene,
+                                                      nullptr, 1000000) != 0;
+    if (!subscribed) dslog::Write("[fail] Overlay: no PSE_EVENT_END_SCENE subscription - icons / late draws won't show");
 }
 
 void overlay::FillRects(const float (*rects)[4], int count, uint32_t argb) {

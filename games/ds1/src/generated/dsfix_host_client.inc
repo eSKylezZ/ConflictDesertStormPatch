@@ -1122,3 +1122,83 @@ void render::NoteHudStart() {
     }
 }
 #endif
+#ifndef DSFIX_OWN_EffectiveDisplayMode
+uint32_t features::EffectiveDisplayMode(uint32_t mode) {
+    const auto* t = Table();
+    return t ? t->EffectiveDisplayMode(mode) : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_PlaceGameWindow
+void features::PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode) {
+    const auto* t = Table();
+    if (t) {
+        t->PlaceGameWindow(w, h, mode);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LauncherCaps
+uint32_t features::LauncherCaps(uint32_t& stencil) {
+    const auto* t = Table();
+    return t ? t->LauncherCaps(&(stencil)) : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_ApplyFrameCap
+void features::ApplyFrameCap() {
+    const auto* t = Table();
+    if (t) {
+        t->ApplyFrameCap();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_NoteTexture
+void features::NoteTexture(void* tex, uint32_t w, uint32_t h, uint32_t levels, uint32_t format, uint32_t pool) {
+    const auto* t = Table();
+    if (t) {
+        t->NoteTexture(tex, w, h, levels, format, pool);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_PhotoBeforePresent
+void features::PhotoBeforePresent(void* device) {
+    const auto* t = Table();
+    if (t) {
+        t->PhotoBeforePresent(device);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_PhotoAfterPresent
+void features::PhotoAfterPresent(void* device) {
+    const auto* t = Table();
+    if (t) {
+        t->PhotoAfterPresent(device);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LockstepSkipRender
+bool features::LockstepSkipRender() {
+    const auto* t = Table();
+    return t ? (t->LockstepSkipRender()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_Now
+double framerec::Now() {
+    const auto* t = Table();
+    return t ? t->Now() : double{};
+}
+#endif
+#ifndef DSFIX_OWN_AddPresent
+void framerec::AddPresent(double vblankWaitMs, double presentMs) {
+    const auto* t = Table();
+    if (t) {
+        t->AddPresent(vblankWaitMs, presentMs);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_AddTexture
+void framerec::AddTexture(uint32_t w, uint32_t h, uint32_t format, double ms) {
+    const auto* t = Table();
+    if (t) {
+        t->AddTexture(w, h, format, ms);
+    }
+}
+#endif

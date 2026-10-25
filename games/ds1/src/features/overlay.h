@@ -56,6 +56,8 @@ void AddLateDraw(LateDraw fn);
 void SetTopDraw(LateDraw fn);
 // Draws the queued icons (called before the game's EndScene) and empties the queue.
 void Render(void* device);
+// dsfix.overlay's Apply (dsfix.dll only): Render on the game layer's PSE_EVENT_END_SCENE, first of its subscribers.
+void ApplyEndScene();
 // Inside a late draw: draws what is queued so far right now (so text drawn next lies on top of it).
 void Flush();
 // Draws solid rectangles {x, y, w, h} (back-buffer pixels) right now, over whatever is drawn so far this frame.

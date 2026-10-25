@@ -71,6 +71,12 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   `dsfix.gear`, `dsfix.vehicles`, `dsfix.overview` and `dsfix.skins` are gone; `GEAR` / `VEHS` co-save chunks are
   written under `dsfix.loadout` now (old names adopted). `dsfix.host` gained text-row versions of mods.cpp's struct lists
   (`ModGearRows`, `ModPouchSetRows`, `ModVehicleRows`, `SkinVariantRows`), `BorrowVehicleDataList`, `SetLoadoutSpin`.
+- 2026-10-25 – **`dsfix.graphics`**: the D3D8 device hooks (MSAA, anisotropy, V-Sync, scene fog, photo capture),
+  the D3D9 / D3D9On12 / DXGI renderers and OPTIONS > VIDEO are one plugin DLL (`plugins/graphics/graphics.spec`; the
+  HDR / water shaders compile into it). DesertStormFix's overlay now draws on the game layer's `PSE_EVENT_END_SCENE`
+  (first subscriber) instead of from that EndScene hook, so it works without the plugin. The internal plugin
+  `dsfix.videomenu` is `dsfix.restart` now (only the `+restart` wait); the frame cap, frame timing and frame recorder
+  stay in dsfix.dll.
 - 2026-10-25 – **`dsfix.coop`**: split screen, co-op, the CONTROLS menu / pad layouts, controllers, hot-plug, pad I/O,
   several keyboards / mice and VERSUS are one plugin DLL (`plugins/coop/coop.spec`; the controller pictures moved to its
   `coop.rc`). The main menu's CO-OP / VERSUS / MODS items and the front-end screen router stay in dsfix.dll as the new

@@ -13,6 +13,7 @@
 #include "core/net.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/framerec.h"
 #include "features/overlay.h"
 #include "features/padio.h"
 #include "render/d3d8to9.h"

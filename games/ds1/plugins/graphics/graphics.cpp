@@ -335,9 +335,10 @@ void EndSceneFog(void* dev) {
         for (int i = 0; i < 6; ++i) g_setRs(dev, kFogStates[i], g_fog.game[i]);
 }
 
+// The game's fog states back before anything else draws: the overlay (dsfix.dll, on the game layer's
+// PSE_EVENT_END_SCENE - the layer's EndScene hook runs after this one) and other plugins' END_SCENE drawing.
 HRESULT __stdcall EndScene(void* dev) {
     EndSceneFog(dev);
-    overlay::Render(dev);
     return g_endScene(dev);
 }
 

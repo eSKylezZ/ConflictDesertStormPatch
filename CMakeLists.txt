@@ -119,12 +119,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/core/pse_saves.cpp games/ds1/src/core/pse_saves_format.cpp
     games/ds1/src/core/settings.cpp
     games/ds1/src/core/gamepad.cpp
-    games/ds1/src/render/d3d8to9.cpp
-    games/ds1/src/render/shader8.cpp
-    games/ds1/src/render/presenter.cpp
-    games/ds1/src/render/water.cpp
-    ${HDR_SHADERS}
-    ${WATER_SHADERS}
     games/ds1/src/features/timing.cpp
     games/ds1/src/features/framecap.cpp
     games/ds1/src/features/launcher.cpp
@@ -132,7 +126,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/ingame_input.cpp
     games/ds1/src/features/dev.cpp
     games/ds1/src/features/campaigns.cpp
-    games/ds1/src/features/graphics.cpp
     games/ds1/src/features/frontend.cpp
     games/ds1/src/features/overlay.cpp
     games/ds1/src/features/barcolour.cpp
@@ -150,7 +143,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/weaponicons.cpp
     games/ds1/src/features/modsmenu.cpp
     games/ds1/src/features/fixmenu.cpp
-    games/ds1/src/features/videomenu.cpp
     games/ds1/src/features/pluginsmenu.cpp
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
@@ -267,6 +259,10 @@ target_include_directories(dsfix_loadout PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader 
 dsfix_add_plugin(dsfix_coop coop "Split screen + co-op + controllers" games/ds1/plugins/coop/coop.rc)
 target_include_directories(dsfix_coop PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
 target_link_libraries(dsfix_coop PRIVATE dxguid dinput8.lib hid setupapi cfgmgr32 winmm)
+# MSAA / anisotropy / V-Sync, the D3D9 / D3D9On12 / DXGI renderers + their compiled shaders, OPTIONS > VIDEO
+dsfix_add_plugin(dsfix_graphics graphics "Graphics + renderers" ${HDR_SHADERS} ${WATER_SHADERS})
+target_include_directories(dsfix_graphics PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
+target_link_libraries(dsfix_graphics PRIVATE dxguid ole32)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

@@ -292,8 +292,9 @@ messages: "pse". A hook the broker refuses costs only its event (a `[fail]` line
 - level init: the layer first (NEW_GAME, LEVEL_LOAD_BEGIN), then `dsfix.missions` (Lua level set-up, unit / vehicle
   file borrowing), the game, then LEVEL_LOAD_END.
 - D3D: the layer's `Direct3DCreate8` hook is outer, so with Renderer 1-3 it sees DesertStormFix's D3D9-wrapper object
-  and chains on that class; `dsfix.graphics` (priority 0) runs before the layer's EndScene / Present (its overlay is
-  drawn before `PSE_EVENT_END_SCENE`, its V-Sync wait and photo capture before `PSE_EVENT_PRESENT`) and inside the
+  and chains on that class; the plugin `dsfix.graphics` (priority 0) runs before the layer's EndScene / Present (it
+  puts the game's fog states back before `PSE_EVENT_END_SCENE`, whose first subscriber is DesertStormFix's overlay -
+  dsfix.dll's `dsfix.overlay` since 2026-10-25; its V-Sync wait and photo capture run before `PSE_EVENT_PRESENT`) and inside the
   layer's Reset / CreateDevice (MSAA fallback included before `DEVICE_RESET` / `DEVICE_CREATED`).
 - saves: DesertStormFix's chunks and the old sidecar reader - [serialization.md](serialization.md#ds1-when-the-co-save-is-written-and-read).
 

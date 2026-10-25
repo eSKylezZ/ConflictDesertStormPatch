@@ -304,7 +304,8 @@ void __fastcall OptionsSetup(void* screen, void*) {
         uint32_t text;
     };
     for (const Ours& o : {Ours{g_videoItem, kVideoItem, kTextVideoItem}, Ours{g_optionsItem, kOptionsItem, kTextItem}}) {
-        if (!o.item) continue;
+        // VIDEO only with its page: the plugin dsfix.graphics (null without it - state 0x4C would have no screen)
+        if (!o.item || (o.id == kVideoItem && !features::VideoMenuScreen())) continue;
         reinterpret_cast<ItemSetFn>(kItemSet)(o.item, o.id, o.text, 0, 0x24, o.text, 0, kOptionsItemDraw, 0);
         AddToList(list, o.item);
         At<int16_t>(list, 0x40) = static_cast<int16_t>(At<int16_t>(list, 0x40) + At<int16_t>(list, 0x38));

@@ -13,6 +13,7 @@
 #include "core/pse_host.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/overlay.h"
 
 // ---- the real system dinput8.dll (gamepad / hot-plug enumerate with their own DirectInput) ----
 namespace {
@@ -39,13 +40,12 @@ namespace {
 constexpr uint32_t kSim = PSE_PLUGIN_SIMULATION, kClient = PSE_PLUGIN_CLIENT_ONLY;
 const pse_host::Feature kFeatures[] = {
     // first: a restart waits for the old process to quit
-    {"dsfix.videomenu", "Video options / restart", kClient, &features::ApplyRestart},
+    {"dsfix.restart", "Restart from OPTIONS > VIDEO (waits for the old process)", kClient, &features::ApplyRestart},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevBackground},
     {"dsfix.timing", "Frame timing + physics", kSim, &features::ApplyTiming},
     {"dsfix.framecap", "Frame cap", kClient, &features::ApplyFrameCap},
     {"dsfix.launcher", "Launcher settings", kClient, &features::ApplyLauncher},
     {"dsfix.ingame_input", "Menus follow the input device", kClient, &features::ApplyInGameInput},
-    {"dsfix.graphics", "MSAA / anisotropy / V-Sync", kClient, &features::ApplyGraphics},
     {"dsfix.frontend", "Front-end menus (main menu items, screen router)", kClient, &features::ApplyFrontEnd},
     // before WinMain registers the debug bindings (0x4108F9)
     {"dsfix.modsmenu", "MODS menu", kClient, &features::ApplyModsMenu},
@@ -68,8 +68,8 @@ const pse_host::Feature kFeatures[] = {
     // dsfix.handling, dsfix.tooltips, dsfix.rumble, dsfix.bodies, dsfix.followers, dsfix.hud, dsfix.weather (+ footprints), dsfix.timeofday, dsfix.voices, dsfix.fontsharp, dsfix.developer, dsfix.cinematics, dsfix.display,
     // dsfix.photo, dsfix.online (+ nameplates, own view, lockstep / authority, determinism), dsfix.missions (Lua
     // levels, translated missions, co-op scripts, API trace), dsfix.loadout (briefing / loadout screen, kits, gear,
-    // vehicle swaps, overview, mid-level skins), dsfix.coop (split screen, co-op, controls, pads, versus) - loaded
-    // after this DLL's
+    // vehicle swaps, overview, mid-level skins), dsfix.coop (split screen, co-op, controls, pads, versus), dsfix.graphics (MSAA / anisotropy /
+    // V-Sync / scene fog, the D3D9 renderers, OPTIONS > VIDEO) - loaded after this DLL's
     // features.
     // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
     // after the asset store + the mission translations have read them: the originals move to PSE\Originals
@@ -77,8 +77,8 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.campaigns", "Custom campaigns", kSim, &features::ApplyCampaigns},
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevHooks},
-    // Plugins whose hooks are made later, at run time (their own OwnerScope):
-    {"dsfix.overlay", "Overlay drawing (icons, late draws)", kClient, nullptr},
+    // its drawing: on the game layer's PSE_EVENT_END_SCENE; its glyph hooks are made later, at run time (own OwnerScope)
+    {"dsfix.overlay", "Overlay drawing (icons, late draws)", kClient, &overlay::ApplyEndScene},
 };
 
 bool Init(const PSELoadInterface* pse) {

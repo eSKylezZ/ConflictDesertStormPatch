@@ -25,3 +25,7 @@
 #include "features/padio.h"
 #include "coop/generated/coop_iface.h"
 #include "generated/coop_wrappers.inc"
+#include "render/d3d8to9.h"
+#include "render/water.h"
+#include "graphics/generated/graphics_iface.h"
+#include "generated/graphics_wrappers.inc"

@@ -723,8 +723,6 @@ void Build() {
     dslog::Write(g_built ? "Video menu: screen built" : "[fail] Video menu: screen not built");
 }
 
-DWORD g_restartedFrom = 0;
-
 void SnapshotDisplay(DisplayValues& d) {
     for (int r = 0; r < kRowCount; ++r) d.row[r] = kRows[r].when == When::Display ? kRows[r].get() : 0;
 }
@@ -813,20 +811,3 @@ void features::OnFrameVideoMenu() {
             break;
     }
 }
-
-// "+restart <pid>" (APPLY & RESTART): wait for the old process to finish quitting before this one goes on, and start
-// without the launcher (the player has just picked the settings in the game).
-void features::ApplyRestart() {
-    const char* cmd = GetCommandLineA();
-    const char* at = cmd ? strstr(cmd, " +restart ") : nullptr;
-    if (!at) return;
-    g_restartedFrom = strtoul(at + 10, nullptr, 10);
-    if (HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, g_restartedFrom)) {
-        const DWORD r = WaitForSingleObject(old, 20000);
-        CloseHandle(old);
-        dslog::Write("Video menu: restarted from process %lu (%s)", g_restartedFrom,
-                     r == WAIT_OBJECT_0 ? "it has quit" : "still running after 20 s");
-    }
-}
-
-bool features::Restarting() { return g_restartedFrom != 0; }

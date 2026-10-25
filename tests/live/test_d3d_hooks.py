@@ -81,7 +81,7 @@ def test_device_vtable_slots_are_broker_records(c, game):
     renderer = c.run("return dev.setting('Renderer')") or 0
     owner = _mapped_file(game.pid, vt)
     print("[live] Renderer %d: device vtable 0x%08X in %s, IDirect3D8 vtable 0x%08X" % (renderer, vt, owner, c.read(d3d)))
-    ours = {"dinput8.dll", "dsfix.dll", "pse_ds1.dll"}   # (the DSFix plugin DLL once the build is split)
+    ours = {"dinput8.dll", "dsfix.dll", "pse_ds1.dll", "dsfix.graphics.dll"}   # (the wrapper is dsfix.graphics' since 2026-10-25)
     if renderer >= 1:   # the D3D9 wrapper's own classes
         assert owner in ours, owner
     else:               # the system's (d3d8.dll keeps the device vtable in private memory on Windows 10/11)

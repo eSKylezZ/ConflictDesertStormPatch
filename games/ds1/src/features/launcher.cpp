@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -719,7 +720,29 @@ void features::OnSettingsChanged() {
     // Each inside its feature's PSE plugin scope (dllmain.cpp kFeatures): patches it makes belong to that plugin.
     pse_host::RunAs("dsfix.ingame_input", &ApplyInGameInput);
     pse_host::RunAs("dsfix.framecap", &ApplyFrameCap);
-    pse_host::RunAs("dsfix.graphics", &ApplyAnisotropy);
     pse_host::RunAs("dsfix.diagnostics", &ApplyDiagnostics);
     ServiceSettingsChanged();   // plugins on dsfix.services (dsfix.hud, dsfix.display, dsfix.cinematics ...)
 }
+
+// "+restart <pid>" (APPLY & RESTART): wait for the old process to finish quitting before this one goes on, and start
+// without the launcher (the player has just picked the settings in the game).
+// (moved from videomenu.cpp 2026-10-25: it must run first, before the Apply loop touches the game's files - the
+// OPTIONS > VIDEO screen that starts the restart is the plugin dsfix.graphics)
+namespace {
+DWORD g_restartedFrom = 0;
+}  // namespace
+
+void features::ApplyRestart() {
+    const char* cmd = GetCommandLineA();
+    const char* at = cmd ? strstr(cmd, " +restart ") : nullptr;
+    if (!at) return;
+    g_restartedFrom = strtoul(at + 10, nullptr, 10);
+    if (HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, g_restartedFrom)) {
+        const DWORD r = WaitForSingleObject(old, 20000);
+        CloseHandle(old);
+        dslog::Write("Video menu: restarted from process %lu (%s)", g_restartedFrom,
+                     r == WAIT_OBJECT_0 ? "it has quit" : "still running after 20 s");
+    }
+}
+
+bool features::Restarting() { return g_restartedFrom != 0; }
