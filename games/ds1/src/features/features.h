@@ -73,9 +73,8 @@ void KbmSetPlayers(const int keyboard[4], const int mouse[4]);   // session: pla
 void* KbmSmoother(const void* block);    // that keyboard player's look smoother, null = the game's
 int KbmEnter(const void* block);         // the game reads this block's input (returns the previous context)
 void KbmLeave(int previous);
-#ifndef DS_DIST
-void KbmInject(int fake, bool mouse, int code, bool up, int dx, int dy, int buttonFlags, int wheel);   // dev tests
-#endif
+// dev tests (in dsfix.coop's table in every build: a release build's stub does nothing)
+void KbmInject(int fake, bool mouse, int code, bool up, int dx, int dy, int buttonFlags, int wheel);
 void ApplyCoopScripts();  // the mission scripts' co-op branches: API slot 0x8A8 = player count (coopscripts.cpp)
 void* GiveSpawnedWeapon(void* soldier, const char* weapon, int mags);  // loadout.cpp: weapon in his hands, no unlock
 bool GiveSpawnedMedikit(void* soldier);                                // loadout.cpp: a MediKit (level's own record)
