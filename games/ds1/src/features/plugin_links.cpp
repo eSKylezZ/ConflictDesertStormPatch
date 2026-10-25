@@ -18,3 +18,5 @@
 #include "core/settings.h"
 #include "online/generated/online_iface.h"
 #include "generated/online_wrappers.inc"
+#include "missions/generated/missions_iface.h"
+#include "generated/missions_wrappers.inc"

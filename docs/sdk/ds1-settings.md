@@ -147,10 +147,11 @@ The default stays OFF until the user decides to turn it on for everyone. Dev bui
 global fallback, 2 = exact copies only), `PseRebuild` ≥ 2 forces a rebuild, `PseNoBorrow` = 1 switches the Borrow*
 copies off even with `PseStore` = 2 (the control run). Release builds read only the two values above.
 
-## Translated missions: dsfix.missionsource
+## Translated missions: dsfix.missions
 
-Declared by `src/features/missionsource.cpp` at start-up; key `HKCU\Software\PSE\ds1\Plugins\dsfix.missionsource`,
-menu **OPTIONS > DESERTSTORMFIX > PLUGINS > Translated missions**:
+Declared by `plugins/missions/missionsource.cpp` at start-up; key `HKCU\Software\PSE\ds1\Plugins\dsfix.missions`
+(until 2026-10-25 `dsfix.missionsource`'s key - copied once), menu **OPTIONS > DESERTSTORMFIX > PLUGINS > Mission
+scripts**:
 
 | Value | Type | Default | Flags | Menu text | Meaning |
 | --- | --- | --- | --- | --- | --- |

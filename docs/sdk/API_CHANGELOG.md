@@ -56,6 +56,12 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   `dsfix.views`, `dsfix.determinism`, `dsfix.lockstep` and `dsfix.authority` are gone; their hooks are owned by
   `dsfix.online`. The loader's online check is split: `pse/loader/compat.cpp` (pure: encoding, comparison, SHA-256) and
   `compat_local.cpp` (`LocalPlugins`, loader state). Generator: the wrappers' table getter is named per group.
+- 2026-10-25 – **`dsfix.missions`**: the Lua script host, Lua films, translated missions + `x86rt`, the co-op mission
+  scripts and the dev API trace are one plugin DLL (`plugins/missions/missions.spec`). The internal plugins
+  `dsfix.scripthost`, `dsfix.missionrt`, `dsfix.missionsource`, `dsfix.apitrace` and `dsfix.coopscripts` are gone; the
+  setting `TranslatedMissions` moved to `dsfix.missions`' key (copied once). `pse.lua.host` stays host-plugins-only:
+  dsfix.dll passes its table on (`dsfix.host` `LuaHostTable`; `lua_bridge.h` gained `AttachTable`). Plugin Lua
+  namespaces (pse.lua) are unchanged for plugin authors. `features::SetScriptKit` takes the four slots as strings.
 - 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
   levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
   `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).

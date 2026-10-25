@@ -540,11 +540,11 @@ std::string Field(lua_State* L, int t, const char* name) {
 int LuaKit(lua_State* L) {
     const int id = static_cast<int>(luaL_checkinteger(L, 1));
     luaL_checktype(L, 2, LUA_TTABLE);
-    const std::string slots[4] = {Field(L, 2, "main"), Field(L, 2, "sidearm"), Field(L, 2, "launcher"), Field(L, 2, "grenades")};
     lua_getfield(L, 2, "lock");
     const bool lock = lua_isnil(L, -1) || lua_toboolean(L, -1);
     lua_pop(L, 1);
-    features::SetScriptKit(id, Field(L, 2, "uniform"), slots, lock);
+    features::SetScriptKit(id, Field(L, 2, "uniform"), Field(L, 2, "main"), Field(L, 2, "sidearm"), Field(L, 2, "launcher"),
+                           Field(L, 2, "grenades"), lock);
     if (g_updates > 0) features::ApplyScriptKitNow(id);
     return 0;
 }
@@ -1410,8 +1410,9 @@ HMODULE WINAPI LoadMissionDll(const char* name) {
 
 void features::ApplyScriptHost() {
     ParseCommandLine();
-    // pse.lua: plugin Lua functions + CallGlobal for this host's state (private pse.lua.host, host plugins only)
-    if (!pse::lua_bridge::g_api && !pse::lua_bridge::Attach(pse::LoadInterfaceFor(pse_host::Core())))
+    // pse.lua: plugin Lua functions + CallGlobal for this host's state (private pse.lua.host - the loader gives it to
+    // host plugins only, dsfix.dll hands it on: features::LuaHostTable)
+    if (!pse::lua_bridge::g_api && !pse::lua_bridge::AttachTable(features::LuaHostTable()))
         dslog::Write("Script host: no pse.lua.host from the loader - plugin Lua functions unavailable");
     if (patch::HookCall(kTextLevelCall, reinterpret_cast<const void*>(&LoadTextLevel), kTextLevelLoad) &&
         patch::SubscribeCall(kLevelInitCall, reinterpret_cast<const void*>(&LevelInit), kLevelInit, 0,

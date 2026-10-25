@@ -7,6 +7,7 @@ pod padio::JoyState
 pod settings::Values
 pod ::DsfixWeatherV1
 enum features::PadType
+pod features::HostSettings
 
 # input / window (dev.cpp, ingame_input.cpp, controller.cpp, padio.cpp)
 bool features::GameFocused()
@@ -84,3 +85,20 @@ const ::DsfixWeatherV1* features::WeatherPlugin()
 uint32_t features::CheatFlags()
 void features::SetCheatFlags(uint32_t flags)
 bool features::PhotoModeOpen()
+# the mission scripts group (scripthost, missionrt, missionsource, movie, apitrace, coopscripts)
+const void* features::LuaHostTable()
+std::string features::ModFilePath(const char* name)
+std::string features::OriginalPath(const char* name)
+void features::BorrowUnitData(const char* level)
+void features::VehiclesLevelStart(const char* level)
+bool features::VehicleSwapsThisLoad()
+const char* features::CampaignNext(const char* level)
+void features::ResetScriptLoadout()
+void features::SetScriptLoadout(bool on)
+void features::SetScriptBriefing(const std::string& text)
+void features::SetScriptKit(int id, const std::string& uniform, const std::string& main, const std::string& sidearm, const std::string& launcher, const std::string& grenades, bool lock)
+void features::ApplyScriptKitNow(int id)
+# the online plugin's answers, through dsfix.dll's wrappers (scripthost: dormancy, Lua seed; coopscripts: the host's settings)
+bool features::LockstepActive()
+uint32_t features::LockstepSeed()
+const features::HostSettings* features::HostSync()

@@ -4,7 +4,7 @@
   - the layer's broker hooks (owner pse.game.ds1) sit on the frame / render / level / save / load sites and the
     Direct3DCreate8 slot, the D3D device slots of the running device;
   - dsfix.framecap runs in FRONT of the layer at the frame call (wait + lockstep, then PSE's frame, then the game's),
-    dsfix.scripthost BEHIND it at Level_Init (NEW_GAME / LEVEL_LOAD_BEGIN before dsfix's level work);
+    dsfix.missions (the Lua script host) BEHIND it at Level_Init (NEW_GAME / LEVEL_LOAD_BEGIN before dsfix's level work);
   - example.events_logger (deployed by the live runner, PSE_EXAMPLE_PLUGINS=1) saw the events and messages: front end
     ready, device created, frames, render / EndScene / Present, a level change with NEW_GAME before its load begins.
 
@@ -58,7 +58,7 @@ def test_dsfix_chains_in_its_old_order(c):
     assert render == [("dsfix.diagnostics", 0), (LAYER, INNER)] or [o for o, _ in render][-1] == LAYER, render
     level = _owners(_chain(hooks, LEVEL_INIT_CALL, "call_site"))
     print("[live] level init chain:", level)
-    assert level[0] == (LAYER, OUTER) and ("dsfix.scripthost", 0) in level, level
+    assert level[0] == (LAYER, OUTER) and ("dsfix.missions", 0) in level, level
     d3d = _owners(_chain(hooks, IAT_D3D, "pointer"))
     assert d3d[0] == (LAYER, OUTER) and ("dsfix.graphics", 0) in d3d, d3d
 

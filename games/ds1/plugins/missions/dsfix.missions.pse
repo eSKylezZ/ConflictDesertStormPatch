@@ -1,0 +1,3 @@
+# Mission scripts for Conflict: Desert Storm (DesertStormFix): Lua levels, translated mission DLLs, co-op scripts.
+name     = dsfix.missions
+requires = dsfix >= 3.3

@@ -352,13 +352,17 @@ inline const lua::Host kHost = {&CallGlobal, &Running};
 // The owner of the Lua state: Attach(its PSELoadInterface) once at start-up (false = the loader hands it no
 // pse.lua.host: not a host / built-in plugin, or an older loader - plugin functions are then simply absent);
 // SetState(L) when a level's state is ready (after Install), SetState(nullptr) before closing it.
-inline bool Attach(const PSELoadInterface* li) {
-    if (!li || !li->Query) return false;
-    auto t = static_cast<const lua::HostInterface*>(li->Query(li->plugin, PSE_LUA_HOST_INTERFACE, 1));
+// A table the owner got another way (DS1: DesertStormFix's mission plugin gets it from its host plugin, dsfix.dll).
+inline bool AttachTable(const void* table) {
+    auto t = static_cast<const lua::HostInterface*>(table);
     if (!t || t->size < sizeof(lua::HostInterface)) return false;
     g_api = t;
     g_api->SetHost(&kHost);
     return true;
+}
+inline bool Attach(const PSELoadInterface* li) {
+    if (!li || !li->Query) return false;
+    return AttachTable(li->Query(li->plugin, PSE_LUA_HOST_INTERFACE, 1));
 }
 inline void SetState(lua_State* L) {
     g_state = L;

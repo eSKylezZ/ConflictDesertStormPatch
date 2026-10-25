@@ -14,6 +14,7 @@
 #include "features/padio.h"
 #include "generated/dsfix_host.h"
 #include "loader.h"
+#include "lua_iface.h"
 
 // Not plain C as they are, so through these (dsfix_host.spec): DesertStormFix's settings struct (plain data) and the
 // online check's list of loaded plugins (lines "name<TAB>version<TAB>flags<TAB>hash"; dsfix.online parses them back).
@@ -28,6 +29,13 @@ std::string features::CompatLocalPluginsText() {
         out += e.name + num + e.hash;
     }
     return out;
+}
+
+// The loader gives its private pse.lua.host only to host plugins; dsfix.dll passes it on to its own mission plugin
+// (dsfix.missions owns the Lua state of .lua levels and translated missions).
+const void* features::LuaHostTable() {
+    const PSELoadInterface* li = pse::LoadInterfaceFor(pse_host::Core());
+    return li && li->Query ? li->Query(li->plugin, PSE_LUA_HOST_INTERFACE, 1) : nullptr;
 }
 
 #include "generated/dsfix_host_impl.inc"

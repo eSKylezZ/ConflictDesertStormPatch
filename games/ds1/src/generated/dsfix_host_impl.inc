@@ -291,6 +291,61 @@ int PSE_CALL t_PhotoModeOpen(void) {
     auto r = features::PhotoModeOpen();
     return (r) ? 1 : 0;
 }
+const void* PSE_CALL t_LuaHostTable(void) {
+    auto r = features::LuaHostTable();
+    return r;
+}
+const char* PSE_CALL t_ModFilePath(const char* a0) {
+    static thread_local std::string s;
+    s = features::ModFilePath(a0);
+    return s.c_str();
+}
+const char* PSE_CALL t_OriginalPath(const char* a0) {
+    static thread_local std::string s;
+    s = features::OriginalPath(a0);
+    return s.c_str();
+}
+void PSE_CALL t_BorrowUnitData(const char* a0) {
+    features::BorrowUnitData(a0);
+}
+void PSE_CALL t_VehiclesLevelStart(const char* a0) {
+    features::VehiclesLevelStart(a0);
+}
+int PSE_CALL t_VehicleSwapsThisLoad(void) {
+    auto r = features::VehicleSwapsThisLoad();
+    return (r) ? 1 : 0;
+}
+const char* PSE_CALL t_CampaignNext(const char* a0) {
+    auto r = features::CampaignNext(a0);
+    return r;
+}
+void PSE_CALL t_ResetScriptLoadout(void) {
+    features::ResetScriptLoadout();
+}
+void PSE_CALL t_SetScriptLoadout(int a0) {
+    features::SetScriptLoadout(a0 != 0);
+}
+void PSE_CALL t_SetScriptBriefing(const char* a0) {
+    features::SetScriptBriefing(std::string(a0 ? a0 : ""));
+}
+void PSE_CALL t_SetScriptKit(int a0, const char* a1, const char* a2, const char* a3, const char* a4, const char* a5, int a6) {
+    features::SetScriptKit(a0, std::string(a1 ? a1 : ""), std::string(a2 ? a2 : ""), std::string(a3 ? a3 : ""), std::string(a4 ? a4 : ""), std::string(a5 ? a5 : ""), a6 != 0);
+}
+void PSE_CALL t_ApplyScriptKitNow(int a0) {
+    features::ApplyScriptKitNow(a0);
+}
+int PSE_CALL t_LockstepActive(void) {
+    auto r = features::LockstepActive();
+    return (r) ? 1 : 0;
+}
+uint32_t PSE_CALL t_LockstepSeed(void) {
+    auto r = features::LockstepSeed();
+    return r;
+}
+const features::HostSettings* PSE_CALL t_HostSync(void) {
+    auto r = features::HostSync();
+    return r;
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -356,5 +411,20 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_WeatherPlugin,
     &t_CheatFlags,
     &t_SetCheatFlags,
-    &t_PhotoModeOpen};
+    &t_PhotoModeOpen,
+    &t_LuaHostTable,
+    &t_ModFilePath,
+    &t_OriginalPath,
+    &t_BorrowUnitData,
+    &t_VehiclesLevelStart,
+    &t_VehicleSwapsThisLoad,
+    &t_CampaignNext,
+    &t_ResetScriptLoadout,
+    &t_SetScriptLoadout,
+    &t_SetScriptBriefing,
+    &t_SetScriptKit,
+    &t_ApplyScriptKitNow,
+    &t_LockstepActive,
+    &t_LockstepSeed,
+    &t_HostSync};
 }  // namespace

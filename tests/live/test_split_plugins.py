@@ -47,6 +47,8 @@ SPLIT = {
     # online co-op group (2026-10-25): own view's per-view draw / after-loop / listener calls (nameplates and the
     # lockstep / authority hooks come and go with the setting / a session); publishes dsfix.online
     "dsfix.online": (SIM, None, [(0x40F0CB, "call_site"), (0x40F16F, "call_site"), (0x40EF60, "call_site")]),
+    # mission scripts (2026-10-25): the text-manifest level load (.lua levels) + the level archive open (--@archive)
+    "dsfix.missions": (SIM, None, [(0x40C405, "call_site"), (0x40C19C, "call_site")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)
@@ -123,8 +125,8 @@ def test_hooks_owned_by_the_plugins(c, split):
     sites = {va for _k, _s, wanted in SPLIT.values() for va, _kind in wanted} | {SHOT_SITE}
     for h in hooks:
         if h["va"] in sites:
-            # dev builds: dsfix.apitrace chains on every script API slot (priority 1000) - a tracer, not a leftover
-            assert h["owner"] in SPLIT or (h["owner"] == "dsfix.apitrace" and h["kind"] == "pointer"), h
+            # dev builds: dsfix.missions' API trace chains on every script API slot (priority 1000) - a tracer, not a leftover
+            assert h["owner"] in SPLIT or (h["owner"] == "dsfix.missions" and h["kind"] == "pointer"), h
 
 
 def test_limits_interface_sizes_the_heap(c, split):

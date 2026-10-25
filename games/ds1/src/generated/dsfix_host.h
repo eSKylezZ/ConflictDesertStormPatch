@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0x7AE5C6BEu
+#define DSFIX_HOST_LAYOUT 0xD9DDE9A8u
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -78,4 +78,19 @@ typedef struct DsfixHostV1 {
     uint32_t (PSE_CALL* CheatFlags)(void);
     void (PSE_CALL* SetCheatFlags)(uint32_t);
     int (PSE_CALL* PhotoModeOpen)(void);
+    const void* (PSE_CALL* LuaHostTable)(void);
+    const char* (PSE_CALL* ModFilePath)(const char*);
+    const char* (PSE_CALL* OriginalPath)(const char*);
+    void (PSE_CALL* BorrowUnitData)(const char*);
+    void (PSE_CALL* VehiclesLevelStart)(const char*);
+    int (PSE_CALL* VehicleSwapsThisLoad)(void);
+    const char* (PSE_CALL* CampaignNext)(const char*);
+    void (PSE_CALL* ResetScriptLoadout)(void);
+    void (PSE_CALL* SetScriptLoadout)(int);
+    void (PSE_CALL* SetScriptBriefing)(const char*);
+    void (PSE_CALL* SetScriptKit)(int, const char*, const char*, const char*, const char*, const char*, int);
+    void (PSE_CALL* ApplyScriptKitNow)(int);
+    int (PSE_CALL* LockstepActive)(void);
+    uint32_t (PSE_CALL* LockstepSeed)(void);
+    const features::HostSettings* (PSE_CALL* HostSync)(void);
 } DsfixHostV1;

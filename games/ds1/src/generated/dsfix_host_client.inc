@@ -510,3 +510,115 @@ bool features::PhotoModeOpen() {
     return t ? (t->PhotoModeOpen()) != 0 : false;
 }
 #endif
+#ifndef DSFIX_OWN_LuaHostTable
+const void* features::LuaHostTable() {
+    const auto* t = Table();
+    return t ? t->LuaHostTable() : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_ModFilePath
+std::string features::ModFilePath(const char* name) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->ModFilePath(name);
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_OriginalPath
+std::string features::OriginalPath(const char* name) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->OriginalPath(name);
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_BorrowUnitData
+void features::BorrowUnitData(const char* level) {
+    const auto* t = Table();
+    if (t) {
+        t->BorrowUnitData(level);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_VehiclesLevelStart
+void features::VehiclesLevelStart(const char* level) {
+    const auto* t = Table();
+    if (t) {
+        t->VehiclesLevelStart(level);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_VehicleSwapsThisLoad
+bool features::VehicleSwapsThisLoad() {
+    const auto* t = Table();
+    return t ? (t->VehicleSwapsThisLoad()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_CampaignNext
+const char* features::CampaignNext(const char* level) {
+    const auto* t = Table();
+    return t ? t->CampaignNext(level) : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_ResetScriptLoadout
+void features::ResetScriptLoadout() {
+    const auto* t = Table();
+    if (t) {
+        t->ResetScriptLoadout();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetScriptLoadout
+void features::SetScriptLoadout(bool on) {
+    const auto* t = Table();
+    if (t) {
+        t->SetScriptLoadout((on) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetScriptBriefing
+void features::SetScriptBriefing(const std::string& text) {
+    const auto* t = Table();
+    if (t) {
+        t->SetScriptBriefing((text).c_str());
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetScriptKit
+void features::SetScriptKit(int id, const std::string& uniform, const std::string& main, const std::string& sidearm, const std::string& launcher, const std::string& grenades, bool lock) {
+    const auto* t = Table();
+    if (t) {
+        t->SetScriptKit(id, (uniform).c_str(), (main).c_str(), (sidearm).c_str(), (launcher).c_str(), (grenades).c_str(), (lock) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ApplyScriptKitNow
+void features::ApplyScriptKitNow(int id) {
+    const auto* t = Table();
+    if (t) {
+        t->ApplyScriptKitNow(id);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LockstepActive
+bool features::LockstepActive() {
+    const auto* t = Table();
+    return t ? (t->LockstepActive()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LockstepSeed
+uint32_t features::LockstepSeed() {
+    const auto* t = Table();
+    return t ? t->LockstepSeed() : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_HostSync
+const features::HostSettings* features::HostSync() {
+    const auto* t = Table();
+    return t ? t->HostSync() : nullptr;
+}
+#endif

@@ -28,6 +28,7 @@ void RegisterHostInterface();            // host_iface.cpp: publishes dsfix.host
 bool PluginsLoaded();                    // services.cpp: PSE_MSG_POST_LOAD seen (every plugin is loaded)
 const settings::Values* DsfixSettingsValues();   // host_iface.cpp: for the kit's settings::Get() in the plugins
 std::string CompatLocalPluginsText();     // host_iface.cpp: pse::compat::LocalPlugins() as text lines (dsfix.online)
+const void* LuaHostTable();             // host_iface.cpp: the loader's private pse.lua.host (dsfix.missions)
 // dsfix.online (plugins/online/glue.cpp): the lobby name of a player ("" = no such player), the connected PCs (bit =
 // PC number) / peers, the console's "net ..." command and the connection's news (lines to print), goodbye at exit
 std::string LobbyPlayerName(int player);
@@ -160,7 +161,8 @@ bool CustomiseDevVehicle(int dir);   // dev / tests: VEHICLE tab, choice stepped
 void ResetScriptLoadout();
 void SetScriptLoadout(bool on);
 void SetScriptBriefing(const std::string& text);
-void SetScriptKit(int id, const std::string& uniform, const std::string (&slots)[4], bool lock);
+void SetScriptKit(int id, const std::string& uniform, const std::string& main, const std::string& sidearm,
+                  const std::string& launcher, const std::string& grenades, bool lock);
 void ApplyScriptKitNow(int id);
 bool ScriptLevelActive();    // scripthost.cpp: a .lua level is running
 bool ScriptLoadingSave();    // ... and it was started by LOAD GAME

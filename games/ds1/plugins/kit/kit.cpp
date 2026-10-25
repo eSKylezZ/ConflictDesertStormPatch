@@ -38,7 +38,7 @@ std::string KeyOf(const char* plugin) {
 
 // One-time copy of `value` from dsfix's key into ours (only when ours has none), before Declare reads it. The marker
 // is set once per plugin, after its first import pass; settings a later version adds are copied while it is absent.
-void ImportOld(const char* value) {
+void ImportOld(const char* value, const char* from = kOldPlugin) {
     HKEY key;
     if (RegCreateKeyExA(HKEY_CURRENT_USER, KeyOf(g_name.c_str()).c_str(), 0, nullptr, 0,
                         KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
@@ -51,11 +51,11 @@ void ImportOld(const char* value) {
     if (!imported && !haveOwn) {
         DWORD old = 0;
         size = sizeof old;
-        if (RegGetValueA(HKEY_CURRENT_USER, KeyOf(kOldPlugin).c_str(), value, RRF_RT_REG_DWORD, nullptr, &old, &size) ==
+        if (RegGetValueA(HKEY_CURRENT_USER, KeyOf(from).c_str(), value, RRF_RT_REG_DWORD, nullptr, &old, &size) ==
             ERROR_SUCCESS) {
             const bool ok =
                 RegSetValueExA(key, value, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&old), sizeof old) == ERROR_SUCCESS;
-            dslog::Write("%s: %s %lu copied from plugin dsfix's settings%s", g_name.c_str(), value, old,
+            dslog::Write("%s: %s %lu copied from plugin %s's settings%s", g_name.c_str(), value, old, from,
                          ok ? "" : " - FAILED");
         }
     }
@@ -117,6 +117,9 @@ const PSEMessagingInterface* Messaging() { return g_messaging; }
 const void* Query(const char* id, uint32_t minVersion) {
     return g_pse ? g_pse->Query(g_self, id, minVersion) : nullptr;
 }
+
+void ImportFrom(const char* plugin, const char* value) { ImportOld(value, plugin); }
+const PSELoadInterface* LoadInterface() { return g_pse; }
 
 bool DeclareBool(const char* key, bool defaultOn, const char* label, const char* help, const char* group,
                  void (*changed)(bool on), uint32_t flags) {
@@ -205,6 +208,15 @@ DWORD DevDword(const char* name, DWORD fallback) {
 
 namespace pse {
 const PSEHooksInterface* HooksInterface() { return kit::Hooks(); }
+// Moved code asks the loader-side accessors (loader.h) as dsfix.dll did: the plugin's own interfaces answer.
+const PSEMessagingInterface* MessagingInterface() { return kit::Messaging(); }
+const PSESettingsInterface* SettingsInterface() { return kit::Settings(); }
+const PSELoadInterface* LoadInterfaceFor(PSEPluginHandle) { return kit::LoadInterface(); }
+// lua_bridge.h logs as plugin "pse" through these; a kit plugin writes the line under its own name.
+PSEPluginHandle FindPlugin(const char*) { return kit::Self(); }
+void LogLine(PSEPluginHandle, PSELogLevel level, const char* text) {
+    if (const PSELogInterface* log = kit::Log()) log->Write(kit::Self(), level, "%s", text);
+}
 
 // Owner names for patch.cpp's log lines: our own, else the broker's records (a plugin that owns nothing has no name
 // there - it never shows up in a conflict line then either).

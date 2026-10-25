@@ -6,7 +6,7 @@ script comes from the mod. This is how an edited **readable mission** (ModKit `c
 made from the player's own DLL) is played, and how the ModKit example **RestoredMissions**
 (`examples/restored_missions/build.py`) puts cut content back into the training missions and Mission 1.
 
-Needs DesertStormFix 3.3 (the `dsfix.missionsource` plugin, `src/features/missionsource.cpp`). Works in every build,
+Needs DesertStormFix 3.3 (the `dsfix.missions` plugin, `plugins/missions/missionsource.cpp`). Works in every build,
 with the MISSIONS FROM LUA setting on or off.
 
 ## The file
@@ -43,7 +43,7 @@ F11 overlay shows "mission script: Lua (mod mission)" while one runs.
 
 The same host as the translated missions: its own Lua 5.4 state (base, string, table, math, utf8, coroutine), then
 
-- `x86rt.install()` – DesertStormFix's mission runtime (`dsfix.missionrt`): `X86RT.load_image`, memory access
+- `x86rt.install()` – DesertStormFix's mission runtime (in `dsfix.missions`): `X86RT.load_image`, memory access
   (`r8 … wd`, SEH-guarded), native calls, `set_object`, `anim_loaded`, `stack_top`, `fnstcw`;
 - `game.log(...)` / `print(...)` → `DesertStormFix.log` ("Mission source: [lua] …");
 - every plugin's Lua namespace ([lua.md](lua.md)); the events `pse.lua.level_start` / `level_end` fire for it.

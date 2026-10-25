@@ -24,6 +24,7 @@ namespace kit {
 bool Load(const PSELoadInterface* pse);
 
 PSEPluginHandle Self();
+const PSELoadInterface* LoadInterface();   // the loader's PSEPlugin_Load argument for this plugin
 const char* Name();   // PSEPlugin_Info.name
 const char* GameId();
 const PSELogInterface* Log();
@@ -32,6 +33,9 @@ const PSESettingsInterface* Settings();
 const PSEMessagingInterface* Messaging();
 const void* Query(const char* id, uint32_t minVersion);
 
+// Before declaring it: copy `value` once from another plugin's key (a setting that lived in an internal dsfix.<x>
+// sub-plugin's key before its feature moved into this DLL); only while ours has none.
+void ImportFrom(const char* plugin, const char* value);
 // An ON / OFF setting under its old DesertStormFix name (imported once from "dsfix"'s key). `changed` runs on the
 // thread that changed it (the menu: the game thread). flags: PSE_SETTING_LIVE = takes effect at once (the default);
 // 0 = "restart the game" (the DESERTSTORMFIX / PLUGINS menus mark the row). False when Declare failed.

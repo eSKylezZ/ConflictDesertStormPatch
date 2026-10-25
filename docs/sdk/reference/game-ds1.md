@@ -289,7 +289,7 @@ messages: "pse". A hook the broker refuses costs only its event (a `[fail]` line
   itself.
 - render: `dsfix.diagnostics`' frame recorder times the layer's PRE / POST_RENDER events as render time. On a lost
   device online, DesertStormFix skips the render (no PRE / POST_RENDER, no PRESENT that frame).
-- level init: the layer first (NEW_GAME, LEVEL_LOAD_BEGIN), then `dsfix.scripthost` (Lua level set-up, unit / vehicle
+- level init: the layer first (NEW_GAME, LEVEL_LOAD_BEGIN), then `dsfix.missions` (Lua level set-up, unit / vehicle
   file borrowing), the game, then LEVEL_LOAD_END.
 - D3D: the layer's `Direct3DCreate8` hook is outer, so with Renderer 1-3 it sees DesertStormFix's D3D9-wrapper object
   and chains on that class; `dsfix.graphics` (priority 0) runs before the layer's EndScene / Present (its overlay is

@@ -2374,10 +2374,11 @@ void features::ResetScriptLoadout() {
 }
 void features::SetScriptLoadout(bool on) { g_scriptLoadout = on; }
 void features::SetScriptBriefing(const std::string& text) { g_scriptBriefing = text; }
-void features::SetScriptKit(int id, const std::string& uniform, const std::string (&slots)[4], bool lock) {
+void features::SetScriptKit(int id, const std::string& uniform, const std::string& main, const std::string& sidearm,
+                            const std::string& launcher, const std::string& grenades, bool lock) {
     ScriptKit& k = g_scriptKits[id];
     k.uniform = uniform;
-    for (int i = 0; i < 4; ++i) k.slot[i] = slots[i];
+    k.slot[0] = main, k.slot[1] = sidearm, k.slot[2] = launcher, k.slot[3] = grenades;
     k.lock = lock;
 }
 void features::ApplyScriptKitNow(int id) {   // game.kit after the start: at once

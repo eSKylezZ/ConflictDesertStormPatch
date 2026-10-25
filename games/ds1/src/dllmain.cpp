@@ -57,7 +57,6 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.barcolour", "Menu bar / HUD colour", kClient, &features::ApplyBarColour},
     {"dsfix.controls", "Controls menu", kClient, &features::ApplyControls},
     {"dsfix.multikbm", "Several keyboards and mice", kClient, &features::ApplyMultiKbm},
-    {"dsfix.coopscripts", "Co-op mission scripts", kSim, &features::ApplyCoopScripts},
     // before every reader of the game's archives / sound caches / mission DLLs: they may be in PSE\Originals
     {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsRedirect},
     {"dsfix.mods", "Mods folder", kSim, &features::ApplyMods},
@@ -78,17 +77,14 @@ const pse_host::Feature kFeatures[] = {
     // Own DLLs in PSE\Plugins (games/ds1/plugins, on the dsfix kit): dsfix.widescreen, dsfix.textfit, dsfix.mouse,
     // dsfix.menus, dsfix.units, dsfix.limits, dsfix.audio, dsfix.shadows, dsfix.difficulty, dsfix.jpfixes,
     // dsfix.handling, dsfix.tooltips, dsfix.rumble, dsfix.bodies, dsfix.followers, dsfix.hud, dsfix.weather (+ footprints), dsfix.timeofday, dsfix.voices, dsfix.fontsharp, dsfix.developer, dsfix.cinematics, dsfix.display,
-    // dsfix.photo, dsfix.online (+ nameplates, own view, lockstep / authority, determinism) - loaded after this DLL's
+    // dsfix.photo, dsfix.online (+ nameplates, own view, lockstep / authority, determinism), dsfix.missions (Lua
+    // levels, translated missions, co-op scripts, API trace) - loaded after this DLL's
     // features.
-    {"dsfix.scripthost", "Lua mission scripts", kSim, &features::ApplyScriptHost},
-    {"dsfix.missionrt", "Translated mission runtime", kSim, &features::ApplyMissionRt},
     // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
-    {"dsfix.missionsource", "Translated missions", kSim, &features::ApplyMissionSource},
     // after the asset store + the mission translations have read them: the originals move to PSE\Originals
     {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsMove},
     {"dsfix.campaigns", "Custom campaigns", kSim, &features::ApplyCampaigns},
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
-    {"dsfix.apitrace", "Script API trace (dev)", kSim, &features::ApplyApiTrace},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevHooks},
     // Plugins whose hooks are made later, at run time (their own OwnerScope):
     {"dsfix.vehicles", "Vehicle swaps", kSim, nullptr},

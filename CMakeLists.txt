@@ -35,7 +35,7 @@ set(DS_GAME_DIR "" CACHE PATH "Conflict: Desert Storm install folder (optional d
 # Distribution build: no log file, no debug output, no PDB. Packages games/ds1/dist/ + a zip.
 option(DS_DIST "Build the release package (no diagnostics)" OFF)
 
-# Lua 5.4.7 (MIT, third_party/lua): mission scripts (games/ds1/src/features/scripthost.cpp). Library sources only.
+# Lua 5.4.7 (MIT, third_party/lua): mission scripts (games/ds1/plugins/missions/scripthost.cpp; dsfix.dll's dev server). Library sources only.
 file(GLOB LUA_SOURCES CONFIGURE_DEPENDS third_party/lua/*.c)
 add_library(lua_static STATIC ${LUA_SOURCES})
 target_compile_definitions(lua_static PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -133,8 +133,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/ingame_input.cpp
     games/ds1/src/features/splitscreen.cpp
     games/ds1/src/features/dev.cpp
-    games/ds1/src/features/scripthost.cpp
-    games/ds1/src/features/movie.cpp
     games/ds1/src/features/campaigns.cpp
     games/ds1/src/features/graphics.cpp
     games/ds1/src/features/coop.cpp
@@ -144,7 +142,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/controls.cpp
     games/ds1/src/features/padio.cpp
     games/ds1/src/features/hotplug.cpp
-    games/ds1/src/features/coopscripts.cpp
     games/ds1/src/features/multikbm.cpp
     games/ds1/src/features/services.cpp
     games/ds1/src/features/overlay_iface.cpp
@@ -172,7 +169,7 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
     games/ds1/src/features/devserver.cpp
-    games/ds1/src/features/missionrt.cpp games/ds1/src/features/apitrace.cpp games/ds1/src/features/missionsource.cpp games/ds1/src/features/originals.cpp
+    games/ds1/src/features/originals.cpp
     games/ds1/src/game_icons.rc
 )
 target_include_directories(dsfix PRIVATE games/ds1/src games/ds1/plugins ${CMAKE_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/pse/loader
@@ -273,6 +270,10 @@ target_link_libraries(dsfix_photo PRIVATE shlwapi)
 dsfix_add_plugin(dsfix_online online "Online co-op" pse/loader/compat.cpp)
 target_include_directories(dsfix_online PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
 target_link_libraries(dsfix_online PRIVATE bcrypt ws2_32 iphlpapi)
+# mission scripts: its own Lua (lua_static) and the mission translator (pse_build_lib = pse_m2l)
+dsfix_add_plugin(dsfix_missions missions "Mission scripts")
+target_include_directories(dsfix_missions PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
+target_link_libraries(dsfix_missions PRIVATE lua_static pse_build_lib winmm)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)
