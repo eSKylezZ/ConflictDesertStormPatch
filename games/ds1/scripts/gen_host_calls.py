@@ -35,7 +35,7 @@ SRC = os.path.join(DS1, "src")
 GEN = os.path.join(SRC, "generated")
 SCALARS = {"void", "bool", "char", "int", "unsigned", "float", "double", "size_t", "DWORD", "HWND", "HMODULE",
            "int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "int64_t", "uint64_t", "uintptr_t",
-           "LONG", "UINT", "BOOL", "WORD", "BYTE"}
+           "LONG", "UINT", "BOOL", "WORD", "BYTE", "long long", "LONGLONG"}
 SEP = "\\x1E"
 
 

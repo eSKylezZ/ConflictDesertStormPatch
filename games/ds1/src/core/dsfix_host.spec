@@ -186,3 +186,7 @@ bool features::LockstepSkipRender()
 double framerec::Now()
 void framerec::AddPresent(double vblankWaitMs, double presentMs)
 void framerec::AddTexture(uint32_t w, uint32_t h, uint32_t format, double ms)
+# frame timing (the plugin dsfix.timing): the frame cap's frame start, the online / determinism virtual clock, V-Sync
+long long features::FrameStartQpc()
+bool features::DetActive()
+uint32_t features::VsyncFps()

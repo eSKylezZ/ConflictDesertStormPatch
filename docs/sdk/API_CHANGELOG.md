@@ -71,6 +71,11 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   `dsfix.gear`, `dsfix.vehicles`, `dsfix.overview` and `dsfix.skins` are gone; `GEAR` / `VEHS` co-save chunks are
   written under `dsfix.loadout` now (old names adopted). `dsfix.host` gained text-row versions of mods.cpp's struct lists
   (`ModGearRows`, `ModPouchSetRows`, `ModVehicleRows`, `SkinVariantRows`), `BorrowVehicleDataList`, `SetLoadoutSpin`.
+- 2026-10-25 – **`dsfix.timing`** and **`dsfix.barcolour`**: frame timing (exact frame time, high-FPS landing /
+  physics) and the menu bar / HUD colour with its colour wheel are plugin DLLs (`plugins/timing/`,
+  `plugins/barcolour/barcolour.spec`; the PLUGINS menu's colour settings use that wheel through the interface
+  `dsfix.barcolour`). `scripts/gen_host_calls.py` passes `long long` / `LONGLONG`. The developer console and
+  diagnostics stay in dsfix.dll (host layer).
 - 2026-10-25 – **`dsfix.graphics`**: the D3D8 device hooks (MSAA, anisotropy, V-Sync, scene fog, photo capture),
   the D3D9 / D3D9On12 / DXGI renderers and OPTIONS > VIDEO are one plugin DLL (`plugins/graphics/graphics.spec`; the
   HDR / water shaders compile into it). DesertStormFix's overlay now draws on the game layer's `PSE_EVENT_END_SCENE`

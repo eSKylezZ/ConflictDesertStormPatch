@@ -1,0 +1,4 @@
+# Menu bar / HUD colour for Conflict: Desert Storm (DesertStormFix): recoloured menu bars and HUD panels, readable text
+# on them, and the colour wheel.
+name     = dsfix.barcolour
+requires = dsfix >= 3.3

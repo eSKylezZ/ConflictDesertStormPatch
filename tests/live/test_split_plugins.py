@@ -58,6 +58,11 @@ SPLIT = {
     # graphics + renderers + OPTIONS > VIDEO (2026-10-25): the Direct3DCreate8 import slot (the device hooks follow at
     # run time: test_d3d_hooks)
     "dsfix.graphics": (CLIENT, None, [(0x5D8308, "pointer")]),
+    # frame timing (2026-10-25): the frame timer, the mover's timescale call (landing fix), the Karma world step
+    "dsfix.timing": (SIM, None, [(0x4BA5B0, "function"), (0x50E177, "call_site"), (0x4FE61C, "call_site")]),
+    # menu bar / HUD colour (2026-10-25): a stretched image draw's texture bind, the menu item text colour (the shared
+    # glyph bind 0x53CC9B chain: test_pse.py test_glyph_bind_is_a_shared_chain)
+    "dsfix.barcolour": (CLIENT, None, [(0x53D868, "call_site"), (0x456BAA, "call_site")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)

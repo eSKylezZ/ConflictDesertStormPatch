@@ -664,6 +664,18 @@ void PSE_CALL t_AddPresent(double a0, double a1) {
 void PSE_CALL t_AddTexture(uint32_t a0, uint32_t a1, uint32_t a2, double a3) {
     framerec::AddTexture(a0, a1, a2, a3);
 }
+long long PSE_CALL t_FrameStartQpc(void) {
+    auto r = features::FrameStartQpc();
+    return r;
+}
+int PSE_CALL t_DetActive(void) {
+    auto r = features::DetActive();
+    return (r) ? 1 : 0;
+}
+uint32_t PSE_CALL t_VsyncFps(void) {
+    auto r = features::VsyncFps();
+    return r;
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -821,5 +833,8 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_LockstepSkipRender,
     &t_Now,
     &t_AddPresent,
-    &t_AddTexture};
+    &t_AddTexture,
+    &t_FrameStartQpc,
+    &t_DetActive,
+    &t_VsyncFps};
 }  // namespace

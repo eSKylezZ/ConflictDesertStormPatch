@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0x5BB0DD97u
+#define DSFIX_HOST_LAYOUT 0xA0F33B1Fu
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -170,4 +170,7 @@ typedef struct DsfixHostV1 {
     double (PSE_CALL* Now)(void);
     void (PSE_CALL* AddPresent)(double, double);
     void (PSE_CALL* AddTexture)(uint32_t, uint32_t, uint32_t, double);
+    long long (PSE_CALL* FrameStartQpc)(void);
+    int (PSE_CALL* DetActive)(void);
+    uint32_t (PSE_CALL* VsyncFps)(void);
 } DsfixHostV1;

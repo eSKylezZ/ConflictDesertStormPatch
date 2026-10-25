@@ -42,7 +42,6 @@ const pse_host::Feature kFeatures[] = {
     // first: a restart waits for the old process to quit
     {"dsfix.restart", "Restart from OPTIONS > VIDEO (waits for the old process)", kClient, &features::ApplyRestart},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevBackground},
-    {"dsfix.timing", "Frame timing + physics", kSim, &features::ApplyTiming},
     {"dsfix.framecap", "Frame cap", kClient, &features::ApplyFrameCap},
     {"dsfix.launcher", "Launcher settings", kClient, &features::ApplyLauncher},
     {"dsfix.ingame_input", "Menus follow the input device", kClient, &features::ApplyInGameInput},
@@ -50,7 +49,6 @@ const pse_host::Feature kFeatures[] = {
     // before WinMain registers the debug bindings (0x4108F9)
     {"dsfix.modsmenu", "MODS menu", kClient, &features::ApplyModsMenu},
     {"dsfix.fixmenu", "DESERTSTORMFIX menu", kClient, &features::ApplyFixMenu},
-    {"dsfix.barcolour", "Menu bar / HUD colour", kClient, &features::ApplyBarColour},
     // before every reader of the game's archives / sound caches / mission DLLs: they may be in PSE\Originals
     {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsRedirect},
     {"dsfix.mods", "Mods folder", kSim, &features::ApplyMods},
@@ -69,7 +67,8 @@ const pse_host::Feature kFeatures[] = {
     // dsfix.photo, dsfix.online (+ nameplates, own view, lockstep / authority, determinism), dsfix.missions (Lua
     // levels, translated missions, co-op scripts, API trace), dsfix.loadout (briefing / loadout screen, kits, gear,
     // vehicle swaps, overview, mid-level skins), dsfix.coop (split screen, co-op, controls, pads, versus), dsfix.graphics (MSAA / anisotropy /
-    // V-Sync / scene fog, the D3D9 renderers, OPTIONS > VIDEO) - loaded after this DLL's
+    // V-Sync / scene fog, the D3D9 renderers, OPTIONS > VIDEO), dsfix.timing (exact frame time, high-FPS landing /
+    // physics), dsfix.barcolour (menu bar / HUD colour, the colour wheel) - loaded after this DLL's
     // features.
     // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
     // after the asset store + the mission translations have read them: the originals move to PSE\Originals

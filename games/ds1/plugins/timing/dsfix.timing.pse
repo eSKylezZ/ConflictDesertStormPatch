@@ -1,0 +1,3 @@
+# Frame timing for Conflict: Desert Storm (DesertStormFix): exact frame time, the high-FPS landing and physics fixes.
+name     = dsfix.timing
+requires = dsfix >= 3.3

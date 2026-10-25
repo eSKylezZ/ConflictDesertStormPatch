@@ -12,8 +12,8 @@ SIM, CLIENT, INTERNAL = 0x1, 0x2, 0x80000000
 # A sample of the feature table (dllmain.cpp kFeatures) with the flag each must carry. Features split into their own
 # DLLs (dsfix.widescreen, dsfix.limits, ...) are external now - test_split_plugins.py covers them.
 FEATURES = {
-    "dsfix.frontend": CLIENT, "dsfix.timing": SIM,
-    "dsfix.barcolour": CLIENT, "dsfix.weaponicons": CLIENT,
+    "dsfix.frontend": CLIENT, "dsfix.dev": SIM,
+    "dsfix.weaponicons": CLIENT,
     "dsfix.ingame_input": CLIENT, "dsfix.overlay": CLIENT,
     "dsfix.diagnostics": CLIENT, "dsfix.mods": SIM, "dsfix.restart": CLIENT,
 }

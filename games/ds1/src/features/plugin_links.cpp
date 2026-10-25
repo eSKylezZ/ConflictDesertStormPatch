@@ -29,3 +29,5 @@
 #include "render/water.h"
 #include "graphics/generated/graphics_iface.h"
 #include "generated/graphics_wrappers.inc"
+#include "barcolour/generated/barcolour_iface.h"
+#include "generated/barcolour_wrappers.inc"

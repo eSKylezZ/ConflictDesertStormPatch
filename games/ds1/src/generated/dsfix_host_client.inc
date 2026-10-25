@@ -1202,3 +1202,21 @@ void framerec::AddTexture(uint32_t w, uint32_t h, uint32_t format, double ms) {
     }
 }
 #endif
+#ifndef DSFIX_OWN_FrameStartQpc
+long long features::FrameStartQpc() {
+    const auto* t = Table();
+    return t ? t->FrameStartQpc() : long long{};
+}
+#endif
+#ifndef DSFIX_OWN_DetActive
+bool features::DetActive() {
+    const auto* t = Table();
+    return t ? (t->DetActive()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_VsyncFps
+uint32_t features::VsyncFps() {
+    const auto* t = Table();
+    return t ? t->VsyncFps() : uint32_t{};
+}
+#endif

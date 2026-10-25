@@ -119,7 +119,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/core/pse_saves.cpp games/ds1/src/core/pse_saves_format.cpp
     games/ds1/src/core/settings.cpp
     games/ds1/src/core/gamepad.cpp
-    games/ds1/src/features/timing.cpp
     games/ds1/src/features/framecap.cpp
     games/ds1/src/features/launcher.cpp
     games/ds1/src/features/launcher_pad.cpp
@@ -128,7 +127,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/campaigns.cpp
     games/ds1/src/features/frontend.cpp
     games/ds1/src/features/overlay.cpp
-    games/ds1/src/features/barcolour.cpp
     games/ds1/src/features/services.cpp
     games/ds1/src/features/overlay_iface.cpp
     games/ds1/src/features/host_iface.cpp
@@ -263,6 +261,10 @@ target_link_libraries(dsfix_coop PRIVATE dxguid dinput8.lib hid setupapi cfgmgr3
 dsfix_add_plugin(dsfix_graphics graphics "Graphics + renderers" ${HDR_SHADERS} ${WATER_SHADERS})
 target_include_directories(dsfix_graphics PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
 target_link_libraries(dsfix_graphics PRIVATE dxguid ole32)
+# exact frame time, the high-FPS landing + physics fixes (SIMULATION)
+dsfix_add_plugin(dsfix_timing timing "Frame timing")
+# menu bar / HUD colour + the colour wheel
+dsfix_add_plugin(dsfix_barcolour barcolour "Menu bar / HUD colour")
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)
