@@ -52,11 +52,15 @@ def run():
     wcopy = s.record(call("duplicate", line=line("NEWENVWAYPT", id=1))["line"])
     res = {"med": med, "copy_sid": copy["script_id"], "copy_stat": s.record(copy["line"])["stat"],
            "wp_new": wcopy["id"], "guard": s.env.find("HLOI", script_id=4)[0]["pos"]}
-    res["save"] = call("save_mod", mod=MOD)
-    res["records"] = open(os.path.join(folder, "records", "mission1.placed.lua"), encoding="utf-8").read()
-    res["patch"] = open(os.path.join(folder, "MISSION1.envpatch"), encoding="latin-1").read()
-    print("\n[e2e] save", res["save"], "\n" + res["records"] + res["patch"])
-    try:
+    try:   # from the save on: the mod is removed whatever fails (a left-over zz_EditorE2E changes other tests' scenes)
+        res["save"] = call("save_mod", mod=MOD)
+        res["records"] = open(os.path.join(folder, "records", "mission1.placed.lua"), encoding="utf-8").read()
+        # wherever the mod's layout put it (new mods: levels\MISSION1.envpatch; the game finds it by name either way)
+        from conflict_ds_tools import modlayout
+        patch = modlayout.find(folder, "MISSION1.envpatch")
+        assert patch, "save_mod wrote no MISSION1.envpatch into Mods\\%s" % MOD
+        res["patch"] = open(patch, encoding="latin-1").read()
+        print("\n[e2e] save", res["save"], "\n" + res["records"] + res["patch"])
         dev = {"StartLevel": "", "SplitPlayers": 0, "NoErrorBoxes": 1}
         enh = {"FeatLoadout": 0, "SkipCutscenes": 1, "FpsCap": 60, "FeatMods": 1}
         with bg.Game(dev=dev, enh=enh) as g:
