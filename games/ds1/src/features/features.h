@@ -106,6 +106,7 @@ std::string ModFilePath(const char* name);  // mods.cpp: full path of that file 
 const char* ModText(uint32_t hash);  // mods.cpp: texts mods define (weapon display names), by catalog hash
 const std::vector<std::string>& ModWeapons();  // mods.cpp: weapon ids made by .weapon files
 void ModLog(const char* fmt, ...);  // mods.cpp: a mod message - log + Mods\DesertStormFix-report.txt ("[fail]" = problem)
+void BeginModReport(const std::string& modsRoot);  // modhost.cpp (dsfix.dll): Mods\DesertStormFix-report.txt afresh
 int ModProblems();                  // mods.cpp: "[fail]" messages since the last build of the mod state
 int ModWeaponMagazines(const std::string& id);   // mods.cpp: a .weapon file's "magazines" (0 = not set)
 std::string SkinBody(const char* texture);        // mods.cpp: body model a .skin gives the soldiers wearing this texture
@@ -235,6 +236,8 @@ struct VehicleHandling {
     float spin = -1.0f;  // chassis spin damping, < 0 = the game's (0.2)
 };
 const std::vector<VehicleHandling>& ModVehicleHandling();   // .vehicle grip / spin damping (handling.cpp)
+uint32_t ModVehicleHandlingCount();     // dsfix.mods (glue.cpp): ModVehicleHandling() for dsfix.services
+bool ModVehicleHandlingAt(uint32_t i, std::string& model, float& grip, float& spin);
 void BorrowUnitData(const char* level);   // .unit soldier types: model + kit files and banks the level lacks
 void BorrowVehicleData(const char* level, const std::vector<std::string>& units);   // files the level lacks
 bool VehicleDataComplete(const std::string& unit);   // its model and its guns' models exist (game data or a mod)
@@ -471,6 +474,7 @@ struct ModLevel {
     bool built;
 };
 std::vector<ModLevel> ModLevels();
+std::string ModLevelRows();             // dsfix.mods (glue.cpp): ModLevels() as name TAB mod TAB built (1 / 0) per line
 
 PadType JoystickType(int joystick);  // the game's joystick j by vendor (Xbox, else PlayStation layout)
 // Reads joystick j now: bits 0-15 = the game's buttons (after the per-pad fix-up), 16-19 left stick up/right/down/left.
@@ -672,4 +676,6 @@ struct MemoryStats {
 };
 MemoryStats GetMemoryStats();  // refreshed at most once a second
 uint32_t LargestModFile(std::string* name);  // mods.cpp: size of the largest file the enabled mods add (0 = none)
+uint32_t LargestModFileSize(std::string& name);  // dsfix.mods (glue.cpp): LargestModFile for dsfix.dll's memory.cpp
+// (memory.cpp is dsfix.dll's: the plugin dsfix.limits' enlarged pools come out of the heap it sizes)
 }  // namespace features

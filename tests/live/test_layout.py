@@ -39,9 +39,12 @@ def test_loader_game_layer_and_host_plugin(c):
     # plugins; everything else named dsfix.* is a sub-plugin inside dsfix.dll.
     own_dlls = {n for n, p in plugins.items() if n.startswith("dsfix.") and p["external"]}
     subs = {n: p for n, p in plugins.items() if n.startswith("dsfix.") and n not in own_dlls}
-    # every split moves features from subs to own_dlls; a group DLL takes several at once (2026-10-25: 20 inside + 29
-    # DLLs, dsfix.coop alone took 7): what's left inside is the host layer - at least the menus, settings and overlay
-    assert len(subs) >= 12 and len(own_dlls) >= 25, (len(subs), len(own_dlls))
+    # The plugin split is finished (2026-10-25): what stays inside dsfix.dll is the host layer (docs/sdk/ds1-host-layer.md)
+    # - any new internal plugin should be a plugin DLL instead; every feature is one of the own DLLs
+    host_layer = {"dsfix.console", "dsfix.dev", "dsfix.diagnostics", "dsfix.fixmenu", "dsfix.framecap", "dsfix.frontend",
+                  "dsfix.ingame_input", "dsfix.launcher", "dsfix.memory", "dsfix.originals", "dsfix.overlay", "dsfix.restart"}
+    assert set(subs) == host_layer, sorted(set(subs) ^ host_layer)
+    assert len(own_dlls) >= 33, len(own_dlls)
     for n, p in subs.items():
         assert p["flags"] & INTERNAL and not p["external"] and not p["host"] and not p["disabled"], (n, p)
     for n in own_dlls:

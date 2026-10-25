@@ -131,19 +131,19 @@ host's `pse::MigrateRegistryValues`; plain registry calls on the documented key 
 HKCU\Software\PSE\ds1\Plugins\dsfix`. The old value stays in `dsfix`'s key, unused (`settings::Save` no longer writes
 it). A user who never had the value gets the default (on).
 
-## Shared asset store: dsfix.assetstore
+## Shared asset store: dsfix.mods
 
-The asset store (one shared copy of every archive file and level sound cache) is a DesertStormFix sub-plugin with settings of its own (declared
-by `src/features/assetstore.cpp` at start-up), so they live in that plugin's key
-`HKCU\Software\PSE\ds1\Plugins\dsfix.assetstore` and appear in **OPTIONS > DESERTSTORMFIX > PLUGINS > Shared asset
-store** (the PLUGINS list shows DesertStormFix sub-plugins that declare settings, next to the external plugins):
+The asset store (one shared copy of every archive file and level sound cache) is part of the plugin `dsfix.mods`
+(`plugins/mods/assetstore.cpp`, since 2026-10-25 - before, the internal plugin `dsfix.assetstore`). Its settings live
+in that plugin's key `HKCU\Software\PSE\ds1\Plugins\dsfix.mods` (the first start copies them once from the old
+`...\Plugins\dsfix.assetstore` key) and appear in **OPTIONS > DESERTSTORMFIX > PLUGINS**:
 
 | Value | Type | Default | Flags | Menu text | Meaning |
 | --- | --- | --- | --- | --- | --- |
-| SharedAssetStore | bool | **0** | R | SHARED ASSET STORE | 1 = build / check the store at start-up (progress window on the first start) and serve every archive file and level sound cache from it; mods.cpp's Borrow* copies are switched off |
+| SharedAssetStore | bool | **1** | R | SHARED ASSET STORE | 1 = build / check the store at start-up (progress window on the first start) and serve every archive file and level sound cache from it; mods.cpp's Borrow* copies are switched off |
 | RebuildCache | bool | 0 | R | REBUILD CACHE AT NEXT START | 1 = build the store again at the next start (with the window), then set back to 0 |
 
-The default stays OFF until the user decides to turn it on for everyone. Dev builds: `HKCU\Software\DesertStormFix\Dev\PseStore` = 1 / 2 overrides `SharedAssetStore` (1 = store +
+Default ON since 2026-10-24 (the converted campaigns need it). Dev builds: `HKCU\Software\DesertStormFix\Dev\PseStore` = 1 / 2 overrides `SharedAssetStore` (1 = store +
 global fallback, 2 = exact copies only), `PseRebuild` ≥ 2 forces a rebuild, `PseNoBorrow` = 1 switches the Borrow*
 copies off even with `PseStore` = 2 (the control run). Release builds read only the two values above.
 

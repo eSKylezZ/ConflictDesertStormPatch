@@ -1,3 +1,5 @@
 # Display mode for Conflict: Desert Storm (DesertStormFix): fullscreen, windowed or borderless window.
 name     = dsfix.display
 requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

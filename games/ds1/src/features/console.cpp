@@ -125,8 +125,17 @@ std::vector<Level> AllLevels() {
     for (const char* pattern : {"*.dll", "*.lua"})   // game folder + PSE\Originals (moved mission DLLs, originals.cpp)
         for (const std::string& file : features::GameFiles(pattern))
             if (pattern[2] == 'l' || GameLevelName(file.c_str())) out.push_back({file, "game"});
-    for (const features::ModLevel& m : features::ModLevels())
-        out.push_back({m.name, m.mod + (m.built ? " (dllpatch)" : "")});
+    // the mods' levels (dsfix.mods: name TAB mod TAB built per line)
+    const std::string rows = features::ModLevelRows();
+    for (size_t pos = 0; pos < rows.size();) {
+        size_t end = rows.find('\n', pos);
+        if (end == std::string::npos) end = rows.size();
+        const std::string line = rows.substr(pos, end - pos);
+        pos = end + 1;
+        const size_t a = line.find('\t'), b = a == std::string::npos ? a : line.find('\t', a + 1);
+        if (b == std::string::npos) continue;
+        out.push_back({line.substr(0, a), line.substr(a + 1, b - a - 1) + (line.substr(b + 1) == "1" ? " (dllpatch)" : "")});
+    }
     std::sort(out.begin(), out.end(), [](const Level& a, const Level& b) {
         if (a.source != b.source) return a.source == "game" || (b.source != "game" && a.source < b.source);
         return _stricmp(a.name.c_str(), b.name.c_str()) < 0;

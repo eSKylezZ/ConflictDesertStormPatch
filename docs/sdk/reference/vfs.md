@@ -79,7 +79,7 @@ reached through `pse.vfs` calls (plugins, tools) but not yet by the game's own l
 
 Nothing in the shipped game asks `pse.vfs` yet: the hooks are part of the asset store, a player setting
 (SHARED ASSET STORE, default off; dev `Dev\PseStore`). With it on, the store is the provider `ds1.store` (priority 0,
-owner `dsfix.assetstore`) and the game's current-archive lookup `FUN_004be360` + opener `FUN_004bd8a0` ask `pse.vfs`
+owner `dsfix.mods` - the internal `dsfix.assetstore` until 2026-10-25) and the game's current-archive lookup `FUN_004be360` + opener `FUN_004bd8a0` ask `pse.vfs`
 first, with `context` = the archive the game is using.
 
 Not in v1: `MergedDir`, table-merge helpers (DesertStormFix's `mods.cpp` still merges tables itself).

@@ -71,6 +71,14 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   `dsfix.gear`, `dsfix.vehicles`, `dsfix.overview` and `dsfix.skins` are gone; `GEAR` / `VEHS` co-save chunks are
   written under `dsfix.loadout` now (old names adopted). `dsfix.host` gained text-row versions of mods.cpp's struct lists
   (`ModGearRows`, `ModPouchSetRows`, `ModVehicleRows`, `SkinVariantRows`), `BorrowVehicleDataList`, `SetLoadoutSpin`.
+- 2026-10-25 – **`dsfix.mods`**: the Mods folder, the shared asset store (pse.vfs provider `ds1.store`), mod weapon
+  pictures, the MODS menu, custom campaigns and the kit weapon list are one plugin DLL (`plugins/mods/mods.spec`). The
+  Global Heap (`dsfix.memory`) stays in dsfix.dll: `dsfix.limits`' enlarged pools come out of it. It loads first of DesertStormFix's plugins - every other one's
+  manifest has `after = dsfix.mods`. Its asset store settings (`SharedAssetStore`, `RebuildCache`) are in the
+  `dsfix.mods` key now (copied once from `dsfix.assetstore`'s). dsfix.dll keeps the mod report (`ModLog`, new host
+  calls `BeginModReport` / `ModProblems`), `ModsFolderEnabled` and the original game files. The plugin split is
+  finished: dsfix.dll holds 12 internal plugins (the host layer, [ds1-host-layer.md](ds1-host-layer.md)) and
+  DesertStormFix ships 33 plugin DLLs.
 - 2026-10-25 – **`dsfix.timing`** and **`dsfix.barcolour`**: frame timing (exact frame time, high-FPS landing /
   physics) and the menu bar / HUD colour with its colour wheel are plugin DLLs (`plugins/timing/`,
   `plugins/barcolour/barcolour.spec`; the PLUGINS menu's colour settings use that wheel through the interface

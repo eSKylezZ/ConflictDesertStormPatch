@@ -57,13 +57,15 @@ int PSE_CALL HostValue(const char* name) {
 }
 
 int PSE_CALL ModsGeneration() { return features::ModsGeneration(); }
-uint32_t PSE_CALL VehicleHandlingCount() { return static_cast<uint32_t>(features::ModVehicleHandling().size()); }
+// (the .vehicle files are the plugin dsfix.mods': its list through the interface dsfix.mods; none without it)
+uint32_t PSE_CALL VehicleHandlingCount() { return features::ModVehicleHandlingCount(); }
 int PSE_CALL VehicleHandlingAt(uint32_t i, const char** model, float* grip, float* spin) {
-    const auto& all = features::ModVehicleHandling();
-    if (i >= all.size()) return 0;
-    if (model) *model = all[i].model.c_str();
-    if (grip) *grip = all[i].grip;
-    if (spin) *spin = all[i].spin;
+    thread_local std::string name;   // (valid until the next call on this thread - the reader copies it at once)
+    float g = 0, s = 0;
+    if (!features::ModVehicleHandlingAt(i, name, g, s)) return 0;
+    if (model) *model = name.c_str();
+    if (grip) *grip = g;
+    if (spin) *spin = s;
     return 1;
 }
 

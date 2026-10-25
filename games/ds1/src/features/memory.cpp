@@ -165,7 +165,7 @@ uint32_t LargestFileInModsFolder(std::string& name) {
 uint32_t WantedHeap(uint32_t original) {
     if (const DWORD mb = DevDword("HeapMB")) return std::max<uint32_t>(original, mb * kMB);  // dev: forced size
     std::string name;
-    uint32_t largest = features::LargestModFile(&name);
+    uint32_t largest = features::LargestModFileSize(name);   // (the plugin dsfix.mods; 0 without it)
     if (features::ModsFolderEnabled()) {
         std::string any;
         const uint32_t all = LargestFileInModsFolder(any);

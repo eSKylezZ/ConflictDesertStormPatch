@@ -42,6 +42,7 @@
 #include <set>
 #include <string>
 
+#include "kit/kit.h"
 #include "core/gamepad.h"
 #include "core/log.h"
 #include "core/patch.h"
@@ -247,8 +248,11 @@ std::wstring GameDir() {
     return dir.substr(0, dir.find_last_of(L"\\/"));
 }
 
-// ---- player settings (plugin dsfix.assetstore, shown in OPTIONS > DESERTSTORMFIX > PLUGINS) ----
-constexpr const char* kPlugin = "dsfix.assetstore";
+// ---- player settings (shown in OPTIONS > DESERTSTORMFIX > PLUGINS) ----
+// In the plugin dsfix.mods since 2026-10-25: pse_host::Find answers the plugin itself (the kit), so the settings live in
+// dsfix.mods' key; the values of the old internal plugin dsfix.assetstore's key are copied over once (kit::ImportFrom).
+constexpr const char* kPlugin = "dsfix.mods";
+constexpr const char* kOldPlugin = "dsfix.assetstore";
 constexpr const char* kSetOn = "SharedAssetStore";
 constexpr const char* kSetRebuild = "RebuildCache";
 
@@ -262,6 +266,8 @@ void DeclareSettings() {
     const PSESettingsInterface* set = pse::SettingsInterface();
     if (done || !set || !Self()) return;
     done = true;
+    kit::ImportFrom(kOldPlugin, kSetOn);
+    kit::ImportFrom(kOldPlugin, kSetRebuild);
     PSESettingDesc d{};
     d.size = sizeof d;
     d.key = kSetOn;

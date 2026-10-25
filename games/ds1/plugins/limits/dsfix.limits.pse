@@ -1,2 +1,4 @@
 # Engine limits raised for big battles (DesertStormFix). Publishes interface dsfix.limits v1 (dsfix_limits.h).
 name     = dsfix.limits
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

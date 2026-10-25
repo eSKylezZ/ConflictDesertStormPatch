@@ -1,3 +1,5 @@
 # Frame timing for Conflict: Desert Storm (DesertStormFix): exact frame time, the high-FPS landing and physics fixes.
 name     = dsfix.timing
 requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

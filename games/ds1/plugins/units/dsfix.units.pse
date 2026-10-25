@@ -1,2 +1,4 @@
 # Unit / vehicle tables for Conflict: Desert Storm (DesertStormFix).
 name     = dsfix.units
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

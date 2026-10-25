@@ -124,7 +124,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/launcher_pad.cpp
     games/ds1/src/features/ingame_input.cpp
     games/ds1/src/features/dev.cpp
-    games/ds1/src/features/campaigns.cpp
     games/ds1/src/features/frontend.cpp
     games/ds1/src/features/overlay.cpp
     games/ds1/src/features/services.cpp
@@ -132,20 +131,15 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/host_iface.cpp
     games/ds1/src/features/plugin_links.cpp
     games/ds1/src/features/diagnostics.cpp
-    games/ds1/src/features/memory.cpp
     games/ds1/src/features/console.cpp
     games/ds1/src/features/framerec.cpp
     games/ds1/src/features/renderdiff.cpp
-    games/ds1/src/features/mods.cpp
-    games/ds1/src/features/assetstore.cpp
-    games/ds1/src/features/weaponicons.cpp
-    games/ds1/src/features/modsmenu.cpp
     games/ds1/src/features/fixmenu.cpp
     games/ds1/src/features/pluginsmenu.cpp
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
     games/ds1/src/features/devserver.cpp
-    games/ds1/src/features/originals.cpp games/ds1/src/features/kitweapons.cpp
+    games/ds1/src/features/originals.cpp games/ds1/src/features/modhost.cpp games/ds1/src/features/memory.cpp
     games/ds1/src/game_icons.rc
 )
 target_include_directories(dsfix PRIVATE games/ds1/src games/ds1/plugins ${CMAKE_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/pse/loader
@@ -265,6 +259,11 @@ target_link_libraries(dsfix_graphics PRIVATE dxguid ole32)
 dsfix_add_plugin(dsfix_timing timing "Frame timing")
 # menu bar / HUD colour + the colour wheel
 dsfix_add_plugin(dsfix_barcolour barcolour "Menu bar / HUD colour")
+# the Mods folder + asset store + big textures + mod weapon pictures + MODS menu + custom campaigns (records / store
+# / translator code from pse_build_lib; the pad reading of the asset store's first-boot window: core/gamepad.cpp)
+dsfix_add_plugin(dsfix_mods mods "Mods folder + asset store" games/ds1/src/core/gamepad.cpp)
+target_include_directories(dsfix_mods PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
+target_link_libraries(dsfix_mods PRIVATE pse_build_lib shlwapi ole32 windowscodecs winmm dxguid dinput8.lib)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

@@ -47,18 +47,16 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.ingame_input", "Menus follow the input device", kClient, &features::ApplyInGameInput},
     {"dsfix.frontend", "Front-end menus (main menu items, screen router)", kClient, &features::ApplyFrontEnd},
     // before WinMain registers the debug bindings (0x4108F9)
-    {"dsfix.modsmenu", "MODS menu", kClient, &features::ApplyModsMenu},
     {"dsfix.fixmenu", "DESERTSTORMFIX menu", kClient, &features::ApplyFixMenu},
     // before every reader of the game's archives / sound caches / mission DLLs: they may be in PSE\Originals
     {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsRedirect},
-    {"dsfix.mods", "Mods folder", kSim, &features::ApplyMods},
+    // the Global Heap: dsfix.limits' enlarged pools come out of it, so it stays in dsfix.dll (sized when the game creates
+    // it, after the plugins loaded: + dsfix.limits' HeapExtra + the largest mod file from dsfix.mods)
+    {"dsfix.memory", "Global Heap + big textures", kSim, &features::ApplyMemory},
     // after ApplyMods (its resolver / opener hooks): pse.vfs + the asset store (setting SHARED ASSET STORE in the
     // PLUGINS menu, default off; dev: Dev\PseStore). ApplyMods' sound work opens it first (features::AssetStoreSound).
-    {"dsfix.assetstore", "Shared asset store", kSim, &features::ApplyAssetStore},
     // after ApplyMods: the heap is sized to the largest mod file
-    {"dsfix.memory", "Global Heap + big textures", kSim, &features::ApplyMemory},
     // after ApplyMods: the .weapon files name the icons
-    {"dsfix.weaponicons", "Weapon pictures from mods", kClient, &features::ApplyWeaponIcons},
     // skins applied mid-level (loadout screen, loaded saves); the mod bodies are plugin dsfix.bodies
     {"dsfix.diagnostics", "Diagnostics + performance overlay", kClient, &features::ApplyDiagnostics},
     // Own DLLs in PSE\Plugins (games/ds1/plugins, on the dsfix kit): dsfix.widescreen, dsfix.textfit, dsfix.mouse,
@@ -73,7 +71,6 @@ const pse_host::Feature kFeatures[] = {
     // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
     // after the asset store + the mission translations have read them: the originals move to PSE\Originals
     {"dsfix.originals", "Original game files", kSim, &features::ApplyOriginalsMove},
-    {"dsfix.campaigns", "Custom campaigns", kSim, &features::ApplyCampaigns},
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevHooks},
     // its drawing: on the game layer's PSE_EVENT_END_SCENE; its glyph hooks are made later, at run time (own OwnerScope)

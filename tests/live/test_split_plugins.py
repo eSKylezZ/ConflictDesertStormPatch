@@ -63,6 +63,9 @@ SPLIT = {
     # menu bar / HUD colour (2026-10-25): a stretched image draw's texture bind, the menu item text colour (the shared
     # glyph bind 0x53CC9B chain: test_pse.py test_glyph_bind_is_a_shared_chain)
     "dsfix.barcolour": (CLIENT, None, [(0x53D868, "call_site"), (0x456BAA, "call_site")]),
+    # the Mods folder group (2026-10-25: mods, asset store, weapon icons, MODS menu, campaigns - the Global Heap stays
+    # dsfix.dll's): the file resolver's entry (installed even with no mods)
+    "dsfix.mods": (SIM, None, [(0x4BE810, "function")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)

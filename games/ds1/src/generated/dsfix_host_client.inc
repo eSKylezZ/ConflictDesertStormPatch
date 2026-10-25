@@ -1220,3 +1220,56 @@ uint32_t features::VsyncFps() {
     return t ? t->VsyncFps() : uint32_t{};
 }
 #endif
+#ifndef DSFIX_OWN_BeginModReport
+void features::BeginModReport(const std::string& modsRoot) {
+    const auto* t = Table();
+    if (t) {
+        t->BeginModReport((modsRoot).c_str());
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ModProblems
+int features::ModProblems() {
+    const auto* t = Table();
+    return t ? t->ModProblems() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_GameFiles
+std::vector<std::string> features::GameFiles(const char* pattern) {
+    const auto* t = Table();
+    std::vector<std::string> out;
+    const char* j = nullptr;
+    if (t) {
+        j = t->GameFiles(pattern);
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
+}
+#endif
+#ifndef DSFIX_OWN_ReloadPhotoFrames
+void features::ReloadPhotoFrames() {
+    const auto* t = Table();
+    if (t) {
+        t->ReloadPhotoFrames();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_Install
+bool overlay::Install() {
+    const auto* t = Table();
+    return t ? (t->Install()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LargeAddressAware
+bool features::LargeAddressAware() {
+    const auto* t = Table();
+    return t ? (t->LargeAddressAware()) != 0 : false;
+}
+#endif

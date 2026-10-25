@@ -1,2 +1,4 @@
 # Mouse acceleration off by default (DesertStormFix); setting MouseAcceleration.
 name     = dsfix.mouse
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

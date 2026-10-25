@@ -1,6 +1,6 @@
 """Live: the asset store as players get it (src/features/assetstore.cpp, docs/internal/asset-store.md "For players").
 
-The player setting (plugin dsfix.assetstore: SharedAssetStore = 1), no Dev\\PseStore. Three games of its own, one after
+The player setting (plugin dsfix.mods since 2026-10-25, was dsfix.assetstore: SharedAssetStore = 1), no Dev\\PseStore. Three games of its own, one after
 the other (tools/bg.py, off-screen):
   1. first boot, cancelled with the pad (Dev\\PadInject = Circle) while the progress window is up: the window is
      screenshotted (PrintWindow), the game starts without the store, no stamp is left behind;
@@ -33,7 +33,7 @@ try:
 except ImportError:
     pytest.skip("needs tools/bg.py (local tooling)", allow_module_level=True)
 
-STORE_KEY = r"Software\PSE\ds1\Plugins\dsfix.assetstore"
+STORE_KEY = r"Software\PSE\ds1\Plugins\dsfix.mods"
 SWAP_NAME, SWAP = "VehiclesSPMission9", "US_VEH_M2A1_Bradley=IR_VEH_BMP-2"
 LOADOUT = "Bradley=US_WPN_SAW_lightmg;Foley=IR_WPN_AKSU"
 MOD = os.path.join(bg.GAME, "Mods", "PseStoreTest")

@@ -13,9 +13,9 @@ SIM, CLIENT, INTERNAL = 0x1, 0x2, 0x80000000
 # DLLs (dsfix.widescreen, dsfix.limits, ...) are external now - test_split_plugins.py covers them.
 FEATURES = {
     "dsfix.frontend": CLIENT, "dsfix.dev": SIM,
-    "dsfix.weaponicons": CLIENT,
+    "dsfix.originals": SIM,
     "dsfix.ingame_input": CLIENT, "dsfix.overlay": CLIENT,
-    "dsfix.diagnostics": CLIENT, "dsfix.mods": SIM, "dsfix.restart": CLIENT,
+    "dsfix.diagnostics": CLIENT, "dsfix.console": SIM, "dsfix.restart": CLIENT,
 }
 GLYPH_BIND = 0x53CC9B   # texture bind of the plain image draw: weaponicons 200 -> barcolour 100 -> fontsharp 0
 # (dsfix.fontsharp is its own DLL since 2026-10-24; the chain spans dsfix.dll and that plugin)
@@ -69,14 +69,14 @@ def test_glyph_bind_is_a_shared_chain(c):
     plugins = _plugins(c)
     # weaponicons subscribes only with the Mods folder on (FeatMods); the other two always.
     want = ["dsfix.barcolour", "dsfix.fontsharp"]
-    if "dsfix.weaponicons" in owners:
-        want.insert(0, "dsfix.weaponicons")
+    if "dsfix.mods" in owners:   # mod weapon pictures (weaponicons.cpp, in dsfix.mods)
+        want.insert(0, "dsfix.mods")
     print("\n[live] 0x%08X chain: %s" % (GLYPH_BIND, " -> ".join("%s(%d)" % (h["owner"], h["priority"]) for h in hooks)))
     assert owners == want, owners
     prio = {h["owner"]: h["priority"] for h in hooks}
     assert prio["dsfix.barcolour"] == 100 and prio["dsfix.fontsharp"] == 0
-    if "dsfix.weaponicons" in prio:
-        assert prio["dsfix.weaponicons"] == 200
+    if "dsfix.mods" in prio:
+        assert prio["dsfix.mods"] == 200
     assert c.read(GLYPH_BIND, "u8") == 0xE8   # still a call (to the first subscriber)
     assert "dsfix.fontsharp" in plugins
 

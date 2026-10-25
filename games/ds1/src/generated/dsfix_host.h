@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0xA0F33B1Fu
+#define DSFIX_HOST_LAYOUT 0x0B29D267u
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -173,4 +173,10 @@ typedef struct DsfixHostV1 {
     long long (PSE_CALL* FrameStartQpc)(void);
     int (PSE_CALL* DetActive)(void);
     uint32_t (PSE_CALL* VsyncFps)(void);
+    void (PSE_CALL* BeginModReport)(const char*);
+    int (PSE_CALL* ModProblems)(void);
+    const char* (PSE_CALL* GameFiles)(const char*);
+    void (PSE_CALL* ReloadPhotoFrames)(void);
+    int (PSE_CALL* Install)(void);
+    int (PSE_CALL* LargeAddressAware)(void);
 } DsfixHostV1;

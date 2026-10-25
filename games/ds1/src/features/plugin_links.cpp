@@ -31,3 +31,5 @@
 #include "generated/graphics_wrappers.inc"
 #include "barcolour/generated/barcolour_iface.h"
 #include "generated/barcolour_wrappers.inc"
+#include "mods/generated/mods_iface.h"
+#include "generated/mods_wrappers.inc"

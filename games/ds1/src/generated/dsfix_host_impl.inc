@@ -676,6 +676,34 @@ uint32_t PSE_CALL t_VsyncFps(void) {
     auto r = features::VsyncFps();
     return r;
 }
+void PSE_CALL t_BeginModReport(const char* a0) {
+    features::BeginModReport(std::string(a0 ? a0 : ""));
+}
+int PSE_CALL t_ModProblems(void) {
+    auto r = features::ModProblems();
+    return r;
+}
+const char* PSE_CALL t_GameFiles(const char* a0) {
+    const std::vector<std::string>& r = features::GameFiles(a0);
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
+void PSE_CALL t_ReloadPhotoFrames(void) {
+    features::ReloadPhotoFrames();
+}
+int PSE_CALL t_Install(void) {
+    auto r = overlay::Install();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_LargeAddressAware(void) {
+    auto r = features::LargeAddressAware();
+    return (r) ? 1 : 0;
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -836,5 +864,11 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_AddTexture,
     &t_FrameStartQpc,
     &t_DetActive,
-    &t_VsyncFps};
+    &t_VsyncFps,
+    &t_BeginModReport,
+    &t_ModProblems,
+    &t_GameFiles,
+    &t_ReloadPhotoFrames,
+    &t_Install,
+    &t_LargeAddressAware};
 }  // namespace

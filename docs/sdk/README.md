@@ -13,7 +13,8 @@ Conflict: Desert Storm II runs on the same shim + loader with its layer `PSE\Gam
 | --- | --- |
 | [layout.md](layout.md) | The files in an install, the start-up sequence (shim → loader → game layer → host plugin → plugins), what happens when a part is missing, uninstall |
 | [API_CHANGELOG.md](API_CHANGELOG.md) | Every interface version and what changed |
-| [ds1-plugins.md](ds1-plugins.md) | DesertStormFix's features as internal plugins `dsfix.<feature>`: names, flags, owner scopes, shared hook sites; its external plugins (`dsfix.discord`) |
+| [ds1-plugins.md](ds1-plugins.md) | DesertStormFix's plugins: the internal ones left in dsfix.dll (the host layer) and the 33 plugin DLLs - names, flags, owner scopes, shared hook sites, what happens without each |
+| [ds1-host-layer.md](ds1-host-layer.md) | The host layer dsfix.dll keeps (settings, dsfix.host / dsfix.services / dsfix.overlay, menus, frame dispatcher, ...) and, per plugin, which host services it uses - the map for porting a feature to another game |
 | [data-files.md](data-files.md) | PSE data files (Lua-table literals, canonical form) and the records: `ds1:` IDs, record types, the schema |
 | [mod-layout.md](mod-layout.md) | Mod folders for all six games: files found by name in any sub folder, the organised layout new mods use (evos, dds, anims, sounds, tables, defs, levels), paths that must stay put, the mod priority list (load order: the mod loaded last wins) |
 | [online-compat.md](online-compat.md) | Online: the plugin-set check – what is compared (simulation plugins, host fingerprint, mods), messages, flags guidance for plugin authors |
@@ -69,7 +70,8 @@ Headers: [`pse/include/pse/pse_api.h`](../../pse/include/pse/pse_api.h) (loader)
   [reference/plugins.md](reference/plugins.md#host-plugins)) that registers the 60 `dsfix.<feature>` sub-plugins.
   Missing loader / game layer / unknown exe = vanilla game ([layout.md](layout.md)).
 - Built and tested: all interfaces above, the plugin registry, the DS1 host glue (`src/core/pse_host.cpp`).
-- In the game: every DesertStormFix feature is an internal plugin `dsfix.<feature>` (60, [ds1-plugins.md](ds1-plugins.md)),
+- In the game: every DesertStormFix feature was first an internal plugin `dsfix.<feature>` (60); since 2026-10-25 they
+  are plugin DLLs around a small host layer ([ds1-plugins.md](ds1-plugins.md), [ds1-host-layer.md](ds1-host-layer.md)),
   and everything `core/patch` does goes through the broker owned by that plugin – byte groups, call hooks, indirect
   call hooks, jumps (`jmp@0x…` groups) – with the old semantics kept ([reference/hooks.md](reference/hooks.md#ds1-host-desertstormfixs-corepatch-on-the-broker)).
   First shared chain: the texture bind `0x53CC9B` (weaponicons → barcolour → fontsharp).

@@ -1,3 +1,5 @@
 # Intro / cutscene skip for Conflict: Desert Storm (DesertStormFix): SKIP INTRO, SKIP CUTSCENES, the automatic overview.
 name     = dsfix.cinematics
 requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods
