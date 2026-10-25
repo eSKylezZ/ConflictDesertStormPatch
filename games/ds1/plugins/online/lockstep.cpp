@@ -1919,6 +1919,8 @@ void features::LockstepAxisTrace(const uint8_t* block, int action, float value, 
     dslog::Write("#a %u action %X %s %.4f ret %08X", g_tick, action, synced ? "synced" : "LOCAL", value,
                  reinterpret_cast<uint32_t>(_ReturnAddress()));
 }
+#else
+void features::LockstepAxisTrace(const uint8_t*, int, float, bool) {}   // in dsfix.online's table in every build
 #endif
 
 void features::OnlineLogLine(const char* text) { OnlineLog("%s", text); }

@@ -35,7 +35,6 @@
 
 #include "core/log.h"
 #include "core/pse_host.h"
-#include "core/net.h"
 #include "core/patch.h"
 #include "core/settings.h"
 #include "features/features.h"
@@ -248,17 +247,6 @@ std::string LevelToRestart() {
     return level;
 }
 
-void SetClipboard(const std::string& text) {
-    if (!OpenClipboard(g_wnd)) return;
-    EmptyClipboard();
-    if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1)) {
-        memcpy(GlobalLock(h), text.c_str(), text.size() + 1);
-        GlobalUnlock(h);
-        if (!SetClipboardData(CF_TEXT, h)) GlobalFree(h);
-    }
-    CloseClipboard();
-}
-
 std::string GetClipboard() {
     std::string text;
     if (!OpenClipboard(g_wnd)) return text;
@@ -349,51 +337,6 @@ void Pse(const std::string& arg) {
     else Print("pse plugins | hooks [text]");
 }
 
-void Net(const std::string& arg) {
-    std::string sub = arg, rest;
-    if (const size_t sp = arg.find(' '); sp != std::string::npos) {
-        sub = arg.substr(0, sp);
-        rest = arg.substr(std::min(arg.size(), arg.find_first_not_of(' ', sp)));
-    }
-    auto is = [&](const char* c) { return _stricmp(sub.c_str(), c) == 0; };
-    if (is("host")) {
-        net::Map m = net::Map::Auto;
-        if (_stricmp(rest.c_str(), "pcp") == 0) m = net::Map::Pcp;
-        else if (_stricmp(rest.c_str(), "natpmp") == 0) m = net::Map::NatPmp;
-        else if (_stricmp(rest.c_str(), "upnp") == 0) m = net::Map::Upnp;
-        else if (_stricmp(rest.c_str(), "none") == 0) m = net::Map::None;
-        else if (!rest.empty()) return Print("net host [pcp | natpmp | upnp | none] - how to open the router port (default: try all)");
-        net::Host(m);
-    } else if (is("join") || is("reply")) {
-        // the code may contain spaces (pasted with them); a trailing lan / public / v6 picks the addresses to try
-        // trailing options (tests): lan / public / v6, noport = the joiner opens no router port, punchonly = it waits
-        // for the host's punches (reply code)
-        std::string code = rest;
-        net::Paths paths = net::Paths::All;
-        bool openPort = true, hello = true;
-        for (size_t sp; is("join") && (sp = code.find_last_of(' ')) != std::string::npos;) {
-            const std::string last = code.substr(sp + 1);
-            if (_stricmp(last.c_str(), "lan") == 0) paths = net::Paths::Lan;
-            else if (_stricmp(last.c_str(), "public") == 0) paths = net::Paths::Public;
-            else if (_stricmp(last.c_str(), "v6") == 0) paths = net::Paths::V6;
-            else if (_stricmp(last.c_str(), "noport") == 0) openPort = false;
-            else if (_stricmp(last.c_str(), "punchonly") == 0) hello = false;
-            else break;
-            code.resize(sp);
-        }
-        if (code.empty()) return Print(is("join") ? "net join <code> - the host's join code" : "net reply <code> - the joiner's reply code");
-        if (is("join")) net::Join(code, paths, openPort, hello);
-        else net::AddReplyCode(code);
-    } else if (is("say")) {
-        if (rest.empty()) return Print("net say <text>");
-        if (net::Say(rest)) Print("you: %s", rest.c_str());
-    } else if (is("status") || sub.empty()) {
-        for (const std::string& l : net::Status()) Print("%s", l.c_str());
-    } else if (is("stop")) {
-        net::Stop();
-    } else Print("net host | join <code> | reply <code> | say <text> | status | stop");
-}
-
 void Execute(const std::string& line) {
     Print("> %s", line.c_str());
     std::string cmd = line, arg;
@@ -419,7 +362,7 @@ void Execute(const std::string& line) {
         else
             for (const std::string& m : mods) Print("  %s", m.c_str());
     } else if (_stricmp(cmd.c_str(), "net") == 0) {
-        Net(arg);
+        for (const std::string& l : features::OnlineConsoleNet(arg)) Print("%s", l.c_str());
     } else if (_stricmp(cmd.c_str(), "pse") == 0) {
         Pse(arg);
     } else if (_stricmp(cmd.c_str(), "lobby") == 0) {
@@ -565,7 +508,7 @@ LRESULT CALLBACK ConsoleProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
     }
     if (msg == WM_DESTROY) {
-        net::Stop();            // goodbye to peers, router port closed again
+        features::OnlineShutdown();   // goodbye to peers, router port closed again (dsfix.online)
         pse_host::Shutdown();   // PSE_MSG_EXIT + external plugins unloaded
     }
     return CallWindowProcA(g_prevProc, wnd, msg, wp, lp);
@@ -721,17 +664,7 @@ void features::OnFrameConsole() {
         g_prevProc = reinterpret_cast<WNDPROC>(SetWindowLongA(wnd, GWL_WNDPROC, reinterpret_cast<LONG>(&ConsoleProc)));
         g_wnd = g_prevProc ? wnd : nullptr;
     }
-    for (const net::Event& e : net::TakeEvents()) {
-        if (e.kind == net::Event::Code) {
-            SetClipboard(e.text);
-            Print("JOIN CODE (copied to the clipboard): %s", e.text.c_str());
-            Print("your friend types: net join <code>  (Ctrl+V pastes)");
-        } else if (e.kind == net::Event::ReplyCode) {
-            SetClipboard(e.text);
-            Print("not connected yet - send the host this REPLY CODE (copied): %s", e.text.c_str());
-            Print("the host types: net reply <code>");
-        } else Print("%s%s", e.kind == net::Event::Message ? "" : "net: ", e.text.c_str());
-    }
+    for (const std::string& l : features::OnlineConsoleEvents()) Print("%s", l.c_str());   // codes, messages
     if (!Enabled()) {
         g_open = false;
         if (!g_plainRestart) g_pending.clear();

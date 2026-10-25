@@ -50,6 +50,12 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   generated cross-DLL tables (`games/ds1/scripts/gen_host_calls.py`): **`dsfix.host`** (`src/core/dsfix_host.spec`,
   what the plugins call in dsfix.dll) and **`dsfix.photo`** (`plugins/photo/photo.spec`) - DesertStormFix-internal,
   not part of the SDK (the layout hash changes with every build). `CheatsUnlocked` moved to `dsfix.photo`'s key.
+- 2026-10-25 – **`dsfix.online`**: online co-op (connection, lobby, plugin-set check + mod sync, lockstep / host
+  authority, own view, nameplates, determinism harness) is one plugin DLL on the generated tables (`plugins/online/online.spec`;
+  `dsfix.host` gained `CompatLocalPluginsText` / `DsfixSettingsValues`). The internal plugins `dsfix.nameplates`,
+  `dsfix.views`, `dsfix.determinism`, `dsfix.lockstep` and `dsfix.authority` are gone; their hooks are owned by
+  `dsfix.online`. The loader's online check is split: `pse/loader/compat.cpp` (pure: encoding, comparison, SHA-256) and
+  `compat_local.cpp` (`LocalPlugins`, loader state). Generator: the wrappers' table getter is named per group.
 - 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
   levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
   `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).

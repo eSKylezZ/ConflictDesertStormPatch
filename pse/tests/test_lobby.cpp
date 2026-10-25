@@ -1,5 +1,5 @@
-// The co-op lobby table (src/features/lobby.cpp): host rules, per-PC player masks, wire format, joiners' requests.
-#include "features/lobby.cpp"  // NOLINT: the unit under test (pure code)
+// The co-op lobby table (games/ds1/plugins/online/lobby.cpp): host rules, per-PC player masks, wire format, joiners' requests.
+#include "../../games/ds1/plugins/online/lobby.cpp"  // NOLINT: the unit under test (pure code)
 #include "pse_test.h"
 
 using namespace lobby;

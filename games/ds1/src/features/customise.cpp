@@ -44,7 +44,6 @@
 #include "loader.h"
 #include "pse/pse_game_ds1.h"
 #include "weather/dsfix_weather.h"
-#include "features/lobbynet.h"
 #include "features/overlay.h"
 
 namespace {
@@ -1722,9 +1721,7 @@ void SendKits(bool all) {
 
 void CheckGo() {   // host: every connected PC done -> all screens close
     if (net::LocalPlayer() != 1 || !(g_doneMask & 2)) return;
-    const net::Snapshot snap = net::Snap();
-    for (const auto& p : snap.peers)
-        if (p.connected && p.pc < 32 && !(g_doneMask & (1u << p.pc))) return;
+    if (features::OnlineConnectedPcMask() & ~g_doneMask) return;   // a connected PC (bit = its number) not done yet
     dslog::Write("Customise: every PC done - the mission starts");
     g_doneMask = 0;   // once (CheckGo runs every frame while the host's own bit is set)
     SendLo("G");
@@ -2181,8 +2178,8 @@ void LateDraw() {
     if (W <= 0) return;
     constexpr uint32_t kWhite = 0xFFFFFFFF, kDim = 0xFFA0A8B0, kGoldText = 0xFFE8C060;
     char title[64];
-    if (Online() && g_turn < lobby::kMaxPlayers && lobbynet::Current().slots[g_turn].used)
-        snprintf(title, sizeof title, "MISSION BRIEFING - %s", lobby::CleanName(lobbynet::Current().slots[g_turn].name).c_str());
+    if (const std::string name = Online() ? features::LobbyPlayerName(g_turn) : std::string(); !name.empty())
+        snprintf(title, sizeof title, "MISSION BRIEFING - %s", name.c_str());
     else if (Players()) snprintf(title, sizeof title, "MISSION BRIEFING - PLAYER %d", g_turn + 1);
     else strcpy_s(title, "MISSION BRIEFING");
     Text(title, W * 0.5f, H * 0.065f, kGoldText, true, true);

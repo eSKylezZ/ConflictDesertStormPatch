@@ -334,8 +334,9 @@ const %(S)s* Table() {
 """
 
 GETTER_PLUGIN = """namespace {
-// Resolved once the plugins are loaded (features::PluginsLoaded); asked again before that.
-const %(S)s* Table() {
+// Resolved once the plugins are loaded (features::PluginsLoaded); asked again before that. Named per group: every
+// group's wrappers are included into one file (features/plugin_links.cpp).
+const %(S)s* %(T)s() {
     static const %(S)s* t = nullptr;
     static bool settled = false;
     if (t || settled) return t;
@@ -388,11 +389,12 @@ def generate(path):
         files[os.path.join(pdir, "own_functions.h")] = banner + "#pragma once\n" + "".join(
             "#define DSFIX_OWN_%s\n" % f.member for f in funcs)
         wr = banner + "// dsfix.dll: features::X calls the plugin %s, or answers the default without it.\n" % plugin
-        wr += GETTER_PLUGIN % {"S": S, "G": G}
+        getter = "%sTable" % "".join(p.capitalize() for p in base.split("_"))
+        wr += GETTER_PLUGIN % {"S": S, "G": G, "T": getter}
         for f in funcs:
             if f.default is None and f.ret.cpp != "void":
                 raise SystemExit("%s: %s needs a default ('= value') for dsfix.dll without the plugin" % (path, f.member))
-            wr += definition(f, client_body(f, "Table", f.default))
+            wr += definition(f, client_body(f, getter, f.default))
         files[os.path.join(GEN, base + "_wrappers.inc")] = wr
     return files
 

@@ -13,3 +13,8 @@
 
 #include "photo/generated/photo_iface.h"
 #include "generated/photo_wrappers.inc"
+
+#include "core/net.h"
+#include "core/settings.h"
+#include "online/generated/online_iface.h"
+#include "generated/online_wrappers.inc"

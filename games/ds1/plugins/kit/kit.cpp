@@ -223,9 +223,11 @@ const char* PluginName(PSEPluginHandle plugin) {
 }  // namespace pse
 
 PSEPluginHandle pse_host::Core() { return kit::Self(); }
+// Moved code that took a sub-plugin's handle for its hooks' owner (patch::OwnerScope) owns them as this plugin now.
+PSEPluginHandle pse_host::Find(const char*) { return kit::Self(); }
 
 // ---- the online check's simulation fingerprint (pse_api.h PSEPlugin_SimFingerprint) ----------------------------------
-// Every dsfix kit plugin declares the same rule as dsfix.dll's own fingerprint (features/onlinecompat.cpp): DesertStormFix
+// Every dsfix kit plugin declares the same rule as dsfix.dll's own fingerprint (plugins/online/onlinecompat.cpp): DesertStormFix
 // version + dsfix::kSimRevision + the generated patch tables, plus its own name and version. A dev build and the release
 // package of one source give the same string, so they connect online; the loader compares its SHA-256.
 extern "C" __declspec(dllexport) const char* PSE_CALL PSEPlugin_SimFingerprint(void) {

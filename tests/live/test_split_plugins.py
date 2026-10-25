@@ -44,9 +44,12 @@ SPLIT = {
     "dsfix.cinematics": (SIM, None, [(0x48676E, "call_site"), (0x4867ED, "call_site")]),
     # ClipCursor replacement; publishes dsfix.display (the live mode change in OPTIONS > VIDEO)
     "dsfix.display": (CLIENT, None, [(0x4112B0, "function")]),
+    # online co-op group (2026-10-25): own view's per-view draw / after-loop / listener calls (nameplates and the
+    # lockstep / authority hooks come and go with the setting / a session); publishes dsfix.online
+    "dsfix.online": (SIM, None, [(0x40F0CB, "call_site"), (0x40F16F, "call_site"), (0x40EF60, "call_site")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
-TRANSPARENTS = 0x40E356       # chained: dsfix.nameplates (dsfix.dll, priority 50) + dsfix.weather (100)
+TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)
 HUD_SCALE = 0x5D7B00          # hud: the cave's HudScale float = HudScalePercent / 100 (dsfix's own setting)
 SERVICES = {"dsfix.difficulty", "dsfix.jpfixes", "dsfix.handling", "dsfix.tooltips", "dsfix.rumble", "dsfix.bodies",
             "dsfix.followers", "dsfix.hud", "dsfix.weather", "dsfix.timeofday", "dsfix.voices", "dsfix.fontsharp",
@@ -290,11 +293,11 @@ def test_weather_interface_and_shared_draw_call(c, split):
     # dsfix.dll reaches the plugin through dsfix.weather (the loadout WEATHER row, Lua game.weather, online sync)
     w = c.run("return dev.weather()")
     assert w and 0 <= w["choice"] < 13 and w["label"], w
-    # the call after each view's transparents is shared: nameplates (dsfix.dll) and weather (this plugin) chain on it
+    # the call after each view's transparents is shared: nameplates (dsfix.online) and weather (this plugin) chain on it
     owners = {h["owner"] for h in c.run("return dev.pse_hooks()") if h["va"] == TRANSPARENTS}
     assert "dsfix.weather" in owners, owners
-    if "[ok]   Nameplates" in log_text(c, 20000) or "dsfix.nameplates" in owners:
-        assert "dsfix.nameplates" in owners, owners
+    if "[ok]   Nameplates" in log_text(c, 20000):
+        assert "dsfix.online" in owners, owners
 
 
 def test_weather_runs_in_a_mission(c, split):

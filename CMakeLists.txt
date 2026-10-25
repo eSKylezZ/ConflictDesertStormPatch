@@ -125,8 +125,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/render/water.cpp
     ${HDR_SHADERS}
     ${WATER_SHADERS}
-    games/ds1/src/core/net.cpp
-    games/ds1/src/features/onlinecompat.cpp
     games/ds1/src/features/controller.cpp
     games/ds1/src/features/timing.cpp
     games/ds1/src/features/framecap.cpp
@@ -158,15 +156,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/memory.cpp
     games/ds1/src/features/console.cpp
     games/ds1/src/features/framerec.cpp
-    games/ds1/src/features/authority.cpp
-    games/ds1/src/features/puppetsync.cpp
-    games/ds1/src/features/lobby.cpp
-    games/ds1/src/features/lobbynet.cpp
-    games/ds1/src/features/lobbymenu.cpp
-    games/ds1/src/features/nameplates.cpp
-    games/ds1/src/features/viewmode.cpp
-    games/ds1/src/features/modsync.cpp
-    games/ds1/src/features/onlinepause.cpp
     games/ds1/src/features/renderdiff.cpp
     games/ds1/src/features/customise.cpp
     games/ds1/src/features/gear.cpp
@@ -182,10 +171,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/pluginsmenu.cpp
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
-    games/ds1/src/features/online.cpp
-    games/ds1/src/features/determinism.cpp
-    games/ds1/src/features/lockstep.cpp
-    games/ds1/src/features/hostsync.cpp
     games/ds1/src/features/devserver.cpp
     games/ds1/src/features/missionrt.cpp games/ds1/src/features/apitrace.cpp games/ds1/src/features/missionsource.cpp games/ds1/src/features/originals.cpp
     games/ds1/src/game_icons.rc
@@ -284,6 +269,10 @@ dsfix_add_plugin(dsfix_photo photo "Photo mode, free camera, cheats menu" games/
 set_source_files_properties(games/ds1/plugins/photo/photo.rc PROPERTIES OBJECT_DEPENDS
                             ${CMAKE_SOURCE_DIR}/games/ds1/src/generated/photo_frames.png)
 target_link_libraries(dsfix_photo PRIVATE shlwapi)
+# online co-op: compiles the online check's pure half (pse/loader/compat.cpp; LocalPlugins() comes from dsfix.dll)
+dsfix_add_plugin(dsfix_online online "Online co-op" pse/loader/compat.cpp)
+target_include_directories(dsfix_online PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
+target_link_libraries(dsfix_online PRIVATE bcrypt ws2_32 iphlpapi)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

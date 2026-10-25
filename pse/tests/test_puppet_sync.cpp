@@ -1,4 +1,4 @@
-// Owner-mode puppet sync (src/features/puppetsync.cpp), out of game: the record wire format, the puppet plan, and a
+// Owner-mode puppet sync (games/ds1/plugins/online/puppetsync.cpp), out of game: the record wire format, the puppet plan, and a
 // replay of the 2-PC session of 2026-10-22 (Mission 3; videos t6pgUAeyDJU / gY4L22a7ye8, online logs 20 / 21) through
 // the real Encode / Packets / Receiver / MakePlan over a lossy, reordering network into a puppet that follows the game's
 // rules as reverse engineered (authority.cpp):
@@ -13,7 +13,7 @@
 #include <deque>
 #include <random>
 
-#include "features/puppetsync.cpp"  // NOLINT: the unit under test (pure code)
+#include "../../games/ds1/plugins/online/puppetsync.cpp"  // NOLINT: the unit under test (pure code)
 #include "pse_test.h"
 
 using namespace puppetsync;

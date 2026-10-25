@@ -24,9 +24,7 @@ void PSE_CALL ReportSink(const char* line, int) { features::ModLog("%s", line); 
 void OnlineInfo(PSEDs1Online* out) {
     const int local = net::LocalPlayer();
     if (!net::Active() || local <= 0) return;
-    const net::Snapshot snap = net::Snap();
-    uint32_t peers = 0;
-    for (const net::Snapshot::Peer& p : snap.peers) peers += p.connected ? 1 : 0;
+    const uint32_t peers = static_cast<uint32_t>(features::OnlineConnectedPeers());   // dsfix.online
     out->active = 1;
     out->role = local == 1 ? PSE_DS1_ONLINE_HOST : PSE_DS1_ONLINE_JOINER;
     out->localPlayer = static_cast<uint32_t>(local);

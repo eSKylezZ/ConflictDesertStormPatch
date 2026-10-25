@@ -14,7 +14,7 @@ SIM, CLIENT, INTERNAL = 0x1, 0x2, 0x80000000
 FEATURES = {
     "dsfix.splitscreen": SIM, "dsfix.timing": SIM,
     "dsfix.barcolour": CLIENT, "dsfix.weaponicons": CLIENT,
-    "dsfix.coop": SIM, "dsfix.lockstep": SIM, "dsfix.authority": SIM, "dsfix.overlay": CLIENT,
+    "dsfix.coop": SIM, "dsfix.vehicles": SIM, "dsfix.overlay": CLIENT,
     "dsfix.diagnostics": CLIENT, "dsfix.mods": SIM, "dsfix.scripthost": SIM,
 }
 GLYPH_BIND = 0x53CC9B   # texture bind of the plain image draw: weaponicons 200 -> barcolour 100 -> fontsharp 0

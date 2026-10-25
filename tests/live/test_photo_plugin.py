@@ -55,7 +55,7 @@ def test_photo_mode_round_trip(c, photo):
     time.sleep(1.0)
     before = set(glob.glob(os.path.join(game_dir, "Screenshots", "*.png")))
     opened = log_text(c).count("Photo mode: opened in")
-    for _ in range(4):   # the first posted F5 after a level start is often not seen
+    for _ in range(8):   # posted F5s in the first seconds after a level start are often not seen (up to ~11 s)
         c.press("f5", HOLD)
         if wait_log(c, "Photo mode: opened in", 3, opened):
             break
