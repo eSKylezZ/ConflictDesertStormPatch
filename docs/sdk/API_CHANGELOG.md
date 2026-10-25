@@ -71,6 +71,12 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   `dsfix.gear`, `dsfix.vehicles`, `dsfix.overview` and `dsfix.skins` are gone; `GEAR` / `VEHS` co-save chunks are
   written under `dsfix.loadout` now (old names adopted). `dsfix.host` gained text-row versions of mods.cpp's struct lists
   (`ModGearRows`, `ModPouchSetRows`, `ModVehicleRows`, `SkinVariantRows`), `BorrowVehicleDataList`, `SetLoadoutSpin`.
+- 2026-10-25 – **`dsfix.coop`**: split screen, co-op, the CONTROLS menu / pad layouts, controllers, hot-plug, pad I/O,
+  several keyboards / mice and VERSUS are one plugin DLL (`plugins/coop/coop.spec`; the controller pictures moved to its
+  `coop.rc`). The main menu's CO-OP / VERSUS / MODS items and the front-end screen router stay in dsfix.dll as the new
+  internal plugin `dsfix.frontend` (`features/frontend.cpp`). The internal plugins `dsfix.splitscreen`,
+  `dsfix.controls`, `dsfix.controller`, `dsfix.hotplug`, `dsfix.multikbm` and `dsfix.versus` are gone (`dsfix.coop` is
+  the DLL's name now).
 - 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
   levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
   `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).

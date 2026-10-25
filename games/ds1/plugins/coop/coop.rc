@@ -1,0 +1,4 @@
+// The CONTROLLER screen's pad pictures (scripts/gen_controller_art.py) - loaded by controls.cpp through
+// overlay::LoadTexture, which reads this plugin's own resources.
+301 RCDATA "../../src/generated/controller_ps5.png"
+302 RCDATA "../../src/generated/controller_xbox.png"

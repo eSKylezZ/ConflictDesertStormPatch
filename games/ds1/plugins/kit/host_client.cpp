@@ -13,7 +13,9 @@
 #include "core/net.h"
 #include "core/settings.h"
 #include "features/features.h"
+#include "features/overlay.h"
 #include "features/padio.h"
+#include "render/d3d8to9.h"
 #include "generated/dsfix_host.h"
 #include "kit/kit.h"
 

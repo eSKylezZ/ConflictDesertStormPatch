@@ -959,3 +959,139 @@ std::vector<std::string> features::KitWeaponIds() {
     return out;
 }
 #endif
+#ifndef DSFIX_OWN_Save
+bool settings::Save(const settings::Values& v) {
+    const auto* t = Table();
+    return t ? (t->Save(&(v))) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ReadDword
+bool settings::ReadDword(bool game, const char* name, uint32_t& value) {
+    const auto* t = Table();
+    return t ? (t->ReadDword((game) ? 1 : 0, name, &(value))) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_WriteDword
+bool settings::WriteDword(bool game, const char* name, uint32_t value) {
+    const auto* t = Table();
+    return t ? (t->WriteDword((game) ? 1 : 0, name, value)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ReadBinary
+bool settings::ReadBinary(const char* name, void* data, uint32_t size) {
+    const auto* t = Table();
+    return t ? (t->ReadBinary(name, data, size)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_WriteBinary
+bool settings::WriteBinary(const char* name, const void* data, uint32_t size) {
+    const auto* t = Table();
+    return t ? (t->WriteBinary(name, data, size)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_DeleteValue
+bool settings::DeleteValue(const char* name) {
+    const auto* t = Table();
+    return t ? (t->DeleteValue(name)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_CampaignLevelPicked
+bool features::CampaignLevelPicked() {
+    const auto* t = Table();
+    return t ? (t->CampaignLevelPicked()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_CampaignsMenuItem
+void features::CampaignsMenuItem(void* singlePlayerScreen, bool coop) {
+    const auto* t = Table();
+    if (t) {
+        t->CampaignsMenuItem(singlePlayerScreen, (coop) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_CheatsActive
+bool features::CheatsActive() {
+    const auto* t = Table();
+    return t ? (t->CheatsActive()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ConsoleOpen
+bool features::ConsoleOpen() {
+    const auto* t = Table();
+    return t ? (t->ConsoleOpen()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_UiKeyboardCaptured
+bool features::UiKeyboardCaptured() {
+    const auto* t = Table();
+    return t ? (t->UiKeyboardCaptured()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_CoopMenuState
+uint32_t features::CoopMenuState() {
+    const auto* t = Table();
+    return t ? t->CoopMenuState() : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_PlayerTriggerFeel
+features::TriggerFeel features::PlayerTriggerFeel(int player) {
+    const auto* t = Table();
+    return t ? static_cast<features::TriggerFeel>(t->PlayerTriggerFeel(player)) : features::TriggerFeel{};
+}
+#endif
+#ifndef DSFIX_OWN_LockstepAxis
+bool features::LockstepAxis(uint8_t* block, int action, int opposite, float& value) {
+    const auto* t = Table();
+    return t ? (t->LockstepAxis(block, action, opposite, &(value))) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LockstepMouse
+bool features::LockstepMouse(uint8_t* block, float* dx, float* dy) {
+    const auto* t = Table();
+    return t ? (t->LockstepMouse(block, dx, dy)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LockstepAxisTrace
+void features::LockstepAxisTrace(const uint8_t* block, int action, float value, bool synced) {
+    const auto* t = Table();
+    if (t) {
+        t->LockstepAxisTrace(block, action, value, (synced) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_LockstepFixBlocks
+void features::LockstepFixBlocks() {
+    const auto* t = Table();
+    if (t) {
+        t->LockstepFixBlocks();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ViewHidden
+bool features::ViewHidden(int player) {
+    const auto* t = Table();
+    return t ? (t->ViewHidden(player)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_PhotoFov
+float features::PhotoFov() {
+    const auto* t = Table();
+    return t ? t->PhotoFov() : float{};
+}
+#endif
+#ifndef DSFIX_OWN_SetImageProbe
+void overlay::SetImageProbe(void* probe) {
+    const auto* t = Table();
+    if (t) {
+        t->SetImageProbe(probe);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_NoteHudStart
+void render::NoteHudStart() {
+    const auto* t = Table();
+    if (t) {
+        t->NoteHudStart();
+    }
+}
+#endif

@@ -208,10 +208,16 @@ class StoreGame:
                               "LoadoutTest": LOADOUT}, enh={"FeatLoadout": 1 if self.loadout else 0})
         self.t0 = time.time()
         self.g.__enter__()
-        pid = pse_client.wait_for_pipe(self.g.p.pid, timeout=180)
-        self.pid = pid
-        self.c = pse_client.Client(pid)
-        self.c.wait_until("dev.fe_state() == 1 and dev.dispatch() == 0", timeout=180)
+        try:
+            pid = pse_client.wait_for_pipe(self.g.p.pid, timeout=180)
+            self.pid = pid
+            self.c = pse_client.Client(pid)
+            self.c.wait_until("dev.fe_state() == 1 and dev.dispatch() == 0", timeout=180)
+        except BaseException:
+            # `with` doesn't call __exit__ when __enter__ fails: close the game and restore the values here, or the game
+            # stays running and every later test waits for it
+            self.__exit__(None, None, None)
+            raise
         self.menu_s = time.time() - self.t0
         return self
 

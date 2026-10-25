@@ -91,7 +91,7 @@ constexpr Prompt kPrompts[] = {
 int PromptButton(int button) {
     const int action = button == 11 ? 6 : button == 8 ? 7 : -1;  // PAUSE, OBJECTIVES
     if (action < 0) return button;
-    const int b = padlayout::ButtonOf(padlayout::Get(0), action);
+    const int b = features::PlayerPadButton(0, action);
     return b >= 0 ? b : button;
 }
 

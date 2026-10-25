@@ -104,11 +104,13 @@ void Arg(char* buf, size_t len, uint32_t v, uint32_t stackLo, uint32_t stackHi) 
         snprintf(buf, len, "S");
         return;
     }
-    // a pointer into heap / private memory: its value depends on the allocation order of the run, not on the mission
+    // a pointer into heap / private memory: its value depends on the allocation order of the run, not on the mission.
+    // The value is kept after the P: a plain number (a text hash) can land on committed memory in one run only, and the
+    // comparer matches "P<v>" with a plain "<v>" (2026-10-25: Mission 1's briefing hash 0x0E86A524 traced as a pointer)
     MEMORY_BASIC_INFORMATION mi;
     if (v >= 0x10000 && VirtualQuery(reinterpret_cast<const void*>(v), &mi, sizeof mi) && mi.State == MEM_COMMIT &&
         mi.Type == MEM_PRIVATE && !(mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
-        snprintf(buf, len, "P");
+        snprintf(buf, len, "P%X", v);
         return;
     }
     snprintf(buf, len, "%X", v);

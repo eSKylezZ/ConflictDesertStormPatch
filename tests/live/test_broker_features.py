@@ -23,8 +23,8 @@ ALWAYS = [
     (0x4BA5B0, "function", "dsfix.timing"),        # frame timer (was a hand trampoline)
     (0x4F6730, "function", "dsfix.ingame_input"),  # string lookup replacement (was a jmp)
     (0x40F3A5, "bytes", "dsfix.ingame_input"),     # call@ cursor flag (was a hand-written call)
-    (0x480930, "function", "dsfix.coop"),          # front-end state -> screen
-    (0x5D86C4, "pointer", "dsfix.coop"),           # main menu set-up vtable slot
+    (0x480930, "function", "dsfix.frontend"),      # front-end state -> screen (frontend.cpp)
+    (0x5D86C4, "pointer", "dsfix.frontend"),       # main menu set-up vtable slot
     (0x5D93DC, "pointer", "dsfix.coop"),           # SP menu set-up vtable slot
     (0x449A90, "pointer", "dsfix.coop"),           # save list callback push imm32
     (0x5D91B4, "pointer", "dsfix.fixmenu"),        # Options create vtable slot
@@ -32,10 +32,10 @@ ALWAYS = [
     (0x4C0420, "function", "dsfix.memory"),        # heap alloc (was a hand trampoline)
     (0x4BFB90, "function", "dsfix.memory"),        # whole-file read
     (0x4B98D0, "function", "dsfix.diagnostics"),   # error box replacement
-    (0x450920, "function", "dsfix.splitscreen"),   # analog input (AxisValue)
-    (0x4515F0, "function", "dsfix.splitscreen"),   # inventory open (was a 7-byte hand trampoline)
-    (0x48D79B, "pointer", "dsfix.splitscreen"),    # soldier panel callback push imm32
-    (0x48D6D5, "bytes", "dsfix.splitscreen"),      # call@ panel walk end
+    (0x450920, "function", "dsfix.coop"),          # analog input (AxisValue, splitscreen.cpp in dsfix.coop)
+    (0x4515F0, "function", "dsfix.coop"),          # inventory open (was a 7-byte hand trampoline)
+    (0x48D79B, "pointer", "dsfix.coop"),           # soldier panel callback push imm32
+    (0x48D6D5, "bytes", "dsfix.coop"),             # call@ panel walk end
     (0x44793D, "pointer", "dsfix.launcher"),       # launcher dialog proc push imm32
     (0x4112B0, "function", "dsfix.display"),       # ClipCursor replacement
     (0x456040, "function", "dsfix.textfit"),       # choice row draw (was a hand trampoline)
@@ -64,7 +64,7 @@ def test_converted_hooks_are_broker_records(c):
     # Settings-dependent ones: on when the setting is.
     if c.run("return dev.setting('Controller')"):
         group = [h for h in _at(hooks, 0x538F2A, "bytes") if h["name"] == "call@0x00538F2A"]
-        assert group and group[0]["owner"] == "dsfix.controller", _at(hooks, 0x538F2A)
+        assert group and group[0]["owner"] == "dsfix.coop", _at(hooks, 0x538F2A)
         assert c.read(0x538F2A, "u8") == 0xE8 and c.read(0x538F2F, "u8") == 0x90
     if c.run("return dev.setting('HudScaling')"):
         assert [h for h in _at(hooks, 0x4570D0, "function") if h["owner"] == "dsfix.hud"]   # its own DLL since 2026-10-24

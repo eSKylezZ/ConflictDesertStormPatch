@@ -546,4 +546,6 @@ void features::KbmInject(int fake, bool mouse, int code, bool up, int dx, int dy
     if (!g_started) return;
     Queue(e);
 }
+#else
+void features::KbmInject(int, bool, int, bool, int, int, int, int) {}   // (in dsfix.coop's table in every build)
 #endif

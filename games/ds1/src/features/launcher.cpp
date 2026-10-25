@@ -717,7 +717,6 @@ void features::OnFrame() {
 
 void features::OnSettingsChanged() {
     // Each inside its feature's PSE plugin scope (dllmain.cpp kFeatures): patches it makes belong to that plugin.
-    pse_host::RunAs("dsfix.controller", &ApplyController);
     pse_host::RunAs("dsfix.ingame_input", &ApplyInGameInput);
     pse_host::RunAs("dsfix.framecap", &ApplyFrameCap);
     pse_host::RunAs("dsfix.graphics", &ApplyAnisotropy);

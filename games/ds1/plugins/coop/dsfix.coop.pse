@@ -1,0 +1,4 @@
+# Split screen, co-op, the CONTROLS menu, controllers (hot-plug, pad I/O), several keyboards / mice and VERSUS for
+# Conflict: Desert Storm (DesertStormFix).
+name     = dsfix.coop
+requires = dsfix >= 3.3

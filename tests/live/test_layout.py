@@ -39,9 +39,9 @@ def test_loader_game_layer_and_host_plugin(c):
     # plugins; everything else named dsfix.* is a sub-plugin inside dsfix.dll.
     own_dlls = {n for n, p in plugins.items() if n.startswith("dsfix.") and p["external"]}
     subs = {n: p for n, p in plugins.items() if n.startswith("dsfix.") and n not in own_dlls}
-    # every split moves features from subs to own_dlls; a group DLL takes several at once (2026-10-25: 27 inside + 29
-    # DLLs incl. dsfix.online / dsfix.missions with 5 each): the feature set as a whole counts
-    assert len(subs) >= 20 and len(subs) + len(own_dlls) >= 50, (len(subs), len(own_dlls))
+    # every split moves features from subs to own_dlls; a group DLL takes several at once (2026-10-25: 20 inside + 29
+    # DLLs, dsfix.coop alone took 7): what's left inside is the host layer - at least the menus, settings and overlay
+    assert len(subs) >= 12 and len(own_dlls) >= 25, (len(subs), len(own_dlls))
     for n, p in subs.items():
         assert p["flags"] & INTERNAL and not p["external"] and not p["host"] and not p["disabled"], (n, p)
     for n in own_dlls:

@@ -125,24 +125,17 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/render/water.cpp
     ${HDR_SHADERS}
     ${WATER_SHADERS}
-    games/ds1/src/features/controller.cpp
     games/ds1/src/features/timing.cpp
     games/ds1/src/features/framecap.cpp
     games/ds1/src/features/launcher.cpp
     games/ds1/src/features/launcher_pad.cpp
     games/ds1/src/features/ingame_input.cpp
-    games/ds1/src/features/splitscreen.cpp
     games/ds1/src/features/dev.cpp
     games/ds1/src/features/campaigns.cpp
     games/ds1/src/features/graphics.cpp
-    games/ds1/src/features/coop.cpp
+    games/ds1/src/features/frontend.cpp
     games/ds1/src/features/overlay.cpp
     games/ds1/src/features/barcolour.cpp
-    games/ds1/src/features/padlayout.cpp
-    games/ds1/src/features/controls.cpp
-    games/ds1/src/features/padio.cpp
-    games/ds1/src/features/hotplug.cpp
-    games/ds1/src/features/multikbm.cpp
     games/ds1/src/features/services.cpp
     games/ds1/src/features/overlay_iface.cpp
     games/ds1/src/features/host_iface.cpp
@@ -155,7 +148,6 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/mods.cpp
     games/ds1/src/features/assetstore.cpp
     games/ds1/src/features/weaponicons.cpp
-    games/ds1/src/features/versus.cpp
     games/ds1/src/features/modsmenu.cpp
     games/ds1/src/features/fixmenu.cpp
     games/ds1/src/features/videomenu.cpp
@@ -271,6 +263,10 @@ target_link_libraries(dsfix_missions PRIVATE lua_static pse_build_lib winmm)
 # + the co-save chunk formats (KITS / GEAR / VEHS; dsfix.dll keeps a copy for the old .sav.dsfix sidecars)
 dsfix_add_plugin(dsfix_loadout loadout "Briefing + loadout screen" games/ds1/src/core/pse_saves_format.cpp)
 target_include_directories(dsfix_loadout PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader ${CMAKE_SOURCE_DIR}/pse/games/ds1)
+# split screen, co-op, controls, pads, versus (their art: the controller pictures, RCDATA 301 / 302)
+dsfix_add_plugin(dsfix_coop coop "Split screen + co-op + controllers" games/ds1/plugins/coop/coop.rc)
+target_include_directories(dsfix_coop PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
+target_link_libraries(dsfix_coop PRIVATE dxguid dinput8.lib hid setupapi cfgmgr32 winmm)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

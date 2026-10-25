@@ -12,9 +12,9 @@ SIM, CLIENT, INTERNAL = 0x1, 0x2, 0x80000000
 # A sample of the feature table (dllmain.cpp kFeatures) with the flag each must carry. Features split into their own
 # DLLs (dsfix.widescreen, dsfix.limits, ...) are external now - test_split_plugins.py covers them.
 FEATURES = {
-    "dsfix.splitscreen": SIM, "dsfix.timing": SIM,
+    "dsfix.frontend": CLIENT, "dsfix.timing": SIM,
     "dsfix.barcolour": CLIENT, "dsfix.weaponicons": CLIENT,
-    "dsfix.coop": SIM, "dsfix.overlay": CLIENT,
+    "dsfix.ingame_input": CLIENT, "dsfix.overlay": CLIENT,
     "dsfix.diagnostics": CLIENT, "dsfix.mods": SIM, "dsfix.graphics": CLIENT,
 }
 GLYPH_BIND = 0x53CC9B   # texture bind of the plain image draw: weaponicons 200 -> barcolour 100 -> fontsharp 0
@@ -35,7 +35,7 @@ def test_core_plugins_registered(c):
         assert flags & INTERNAL, (name, hex(flags))
     dsfix = sorted(n for n in plugins if n.startswith("dsfix."))
     print("\n[live] %d internal feature plugins" % len(dsfix))
-    assert len(dsfix) >= 50
+    assert len(dsfix) >= 40
 
 
 def test_every_hook_owned_by_a_dsfix_plugin(c):

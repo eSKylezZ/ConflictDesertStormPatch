@@ -535,6 +535,85 @@ const char* PSE_CALL t_KitWeaponIds(void) {
     }
     return s.c_str();
 }
+int PSE_CALL t_Save(const settings::Values* a0) {
+    auto r = settings::Save(*a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ReadDword(int a0, const char* a1, uint32_t* a2) {
+    auto r = settings::ReadDword(a0 != 0, a1, *a2);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_WriteDword(int a0, const char* a1, uint32_t a2) {
+    auto r = settings::WriteDword(a0 != 0, a1, a2);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ReadBinary(const char* a0, void* a1, uint32_t a2) {
+    auto r = settings::ReadBinary(a0, a1, a2);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_WriteBinary(const char* a0, const void* a1, uint32_t a2) {
+    auto r = settings::WriteBinary(a0, a1, a2);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_DeleteValue(const char* a0) {
+    auto r = settings::DeleteValue(a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_CampaignLevelPicked(void) {
+    auto r = features::CampaignLevelPicked();
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_CampaignsMenuItem(void* a0, int a1) {
+    features::CampaignsMenuItem(a0, a1 != 0);
+}
+int PSE_CALL t_CheatsActive(void) {
+    auto r = features::CheatsActive();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ConsoleOpen(void) {
+    auto r = features::ConsoleOpen();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_UiKeyboardCaptured(void) {
+    auto r = features::UiKeyboardCaptured();
+    return (r) ? 1 : 0;
+}
+uint32_t PSE_CALL t_CoopMenuState(void) {
+    auto r = features::CoopMenuState();
+    return r;
+}
+int32_t PSE_CALL t_PlayerTriggerFeel(int a0) {
+    auto r = features::PlayerTriggerFeel(a0);
+    return static_cast<int32_t>(r);
+}
+int PSE_CALL t_LockstepAxis(uint8_t* a0, int a1, int a2, float* a3) {
+    auto r = features::LockstepAxis(a0, a1, a2, *a3);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_LockstepMouse(uint8_t* a0, float* a1, float* a2) {
+    auto r = features::LockstepMouse(a0, a1, a2);
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_LockstepAxisTrace(const uint8_t* a0, int a1, float a2, int a3) {
+    features::LockstepAxisTrace(a0, a1, a2, a3 != 0);
+}
+void PSE_CALL t_LockstepFixBlocks(void) {
+    features::LockstepFixBlocks();
+}
+int PSE_CALL t_ViewHidden(int a0) {
+    auto r = features::ViewHidden(a0);
+    return (r) ? 1 : 0;
+}
+float PSE_CALL t_PhotoFov(void) {
+    auto r = features::PhotoFov();
+    return r;
+}
+void PSE_CALL t_SetImageProbe(void* a0) {
+    overlay::SetImageProbe(a0);
+}
+void PSE_CALL t_NoteHudStart(void) {
+    render::NoteHudStart();
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -658,5 +737,26 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_ScriptLevelActive,
     &t_ScriptLoadingSave,
     &t_PhotoAnimate,
-    &t_KitWeaponIds};
+    &t_KitWeaponIds,
+    &t_Save,
+    &t_ReadDword,
+    &t_WriteDword,
+    &t_ReadBinary,
+    &t_WriteBinary,
+    &t_DeleteValue,
+    &t_CampaignLevelPicked,
+    &t_CampaignsMenuItem,
+    &t_CheatsActive,
+    &t_ConsoleOpen,
+    &t_UiKeyboardCaptured,
+    &t_CoopMenuState,
+    &t_PlayerTriggerFeel,
+    &t_LockstepAxis,
+    &t_LockstepMouse,
+    &t_LockstepAxisTrace,
+    &t_LockstepFixBlocks,
+    &t_ViewHidden,
+    &t_PhotoFov,
+    &t_SetImageProbe,
+    &t_NoteHudStart};
 }  // namespace

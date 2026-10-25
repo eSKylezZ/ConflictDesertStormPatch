@@ -22,3 +22,6 @@
 #include "generated/missions_wrappers.inc"
 #include "loadout/generated/loadout_iface.h"
 #include "generated/loadout_wrappers.inc"
+#include "features/padio.h"
+#include "coop/generated/coop_iface.h"
+#include "generated/coop_wrappers.inc"

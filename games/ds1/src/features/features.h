@@ -490,6 +490,9 @@ void ApplyAnisotropy();                 // graphics.cpp: TEXTURE FILTERING chang
 bool ChangeDisplayMode(uint32_t modeIndex, uint32_t displayMode);  // graphics.cpp: new mode now (device reset)
 void PlaceGameWindow(uint32_t w, uint32_t h, uint32_t mode);       // display.cpp: the game window for a mode
 uint32_t EffectiveDisplayMode(uint32_t mode);  // services.cpp (the plugin dsfix.display has the same rule): Renderer 3 (own DXGI presenter) shows fullscreen as borderless
+int PlayerPadButton(int player, int action);   // padlayout.cpp: first pad button of the action, -1 = none
+void* CoopJoinScreen();                 // coop.cpp: state 0x3E's screen object (null until built)
+void ApplyFrontEnd();                   // frontend.cpp: main menu items + the screen router (dsfix.frontend)
 void* OnlineScreen(uint32_t state);     // online.cpp: CO-OP (0x48) and the online screens (0x49..0x4B), nullptr if not ours
 const char* OnlineText(uint32_t hash);
 uint32_t CoopMenuState();               // the CO-OP screen (SPLIT SCREEN / ONLINE): where the join screen's Back goes

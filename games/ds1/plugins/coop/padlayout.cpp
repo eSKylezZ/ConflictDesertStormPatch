@@ -18,6 +18,7 @@
 
 #include "core/settings.h"
 #include "core/log.h"
+#include "features/features.h"
 
 namespace {
 constexpr uint32_t kBindingTable = 0x60687C, kActionNames = 0x5EC2B8;
@@ -284,3 +285,6 @@ void padlayout::SetGyroMode(int player, int mode) {
     g_gyro[player] = std::clamp(mode, 0, 2);
     WriteValue("PadGyro", player, static_cast<DWORD>(g_gyro[player]));
 }
+
+// For dsfix.dll (ingame_input.cpp, prompts): the first pad button of an action in that player's layout, -1 = none.
+int features::PlayerPadButton(int player, int action) { return padlayout::ButtonOf(padlayout::Get(player), action); }

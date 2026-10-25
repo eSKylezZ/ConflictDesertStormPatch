@@ -52,6 +52,9 @@ SPLIT = {
     # briefing / loadout group (2026-10-25): MovieEnd's message 0x12 (the overview); the skin apply entry is
     # test_skin_apply_chain's (off with the Mods folder and BRIEFING & LOADOUT both off)
     "dsfix.loadout": (SIM, None, [(0x486FDE, "bytes")]),
+    # split screen / co-op / controls / pads / versus (2026-10-25): the analog input (the pad poll's fix-up only with
+    # the Controller setting: test_broker_features)
+    "dsfix.coop": (SIM, None, [(0x450920, "function")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)

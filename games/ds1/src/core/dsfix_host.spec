@@ -7,6 +7,7 @@ pod padio::JoyState
 pod settings::Values
 pod ::DsfixWeatherV1
 enum features::PadType
+enum features::TriggerFeel
 pod features::HostSettings
 
 # input / window (dev.cpp, ingame_input.cpp, controller.cpp, padio.cpp)
@@ -149,3 +150,25 @@ bool features::ScriptLoadingSave()
 bool features::PhotoAnimate(const void* instance, float& dt)
 # kit weapons (kitweapons.cpp: in dsfix.dll, mods.cpp needs them before the plugins load)
 std::vector<std::string> features::KitWeaponIds()
+# the split-screen / co-op group (splitscreen, coop, controls, padlayout, multikbm, controller, hotplug, padio, versus)
+bool settings::Save(const settings::Values& v)
+bool settings::ReadDword(bool game, const char* name, uint32_t& value)
+bool settings::WriteDword(bool game, const char* name, uint32_t value)
+bool settings::ReadBinary(const char* name, void* data, uint32_t size)
+bool settings::WriteBinary(const char* name, const void* data, uint32_t size)
+bool settings::DeleteValue(const char* name)
+bool features::CampaignLevelPicked()
+void features::CampaignsMenuItem(void* singlePlayerScreen, bool coop)
+bool features::CheatsActive()
+bool features::ConsoleOpen()
+bool features::UiKeyboardCaptured()
+uint32_t features::CoopMenuState()
+features::TriggerFeel features::PlayerTriggerFeel(int player)
+bool features::LockstepAxis(uint8_t* block, int action, int opposite, float& value)
+bool features::LockstepMouse(uint8_t* block, float* dx, float* dy)
+void features::LockstepAxisTrace(const uint8_t* block, int action, float value, bool synced)
+void features::LockstepFixBlocks()
+bool features::ViewHidden(int player)
+float features::PhotoFov()
+void overlay::SetImageProbe(void* probe)
+void render::NoteHudStart()

@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0x07C918C6u
+#define DSFIX_HOST_LAYOUT 0xFDA3371Au
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -136,4 +136,25 @@ typedef struct DsfixHostV1 {
     int (PSE_CALL* ScriptLoadingSave)(void);
     int (PSE_CALL* PhotoAnimate)(const void*, float*);
     const char* (PSE_CALL* KitWeaponIds)(void);
+    int (PSE_CALL* Save)(const settings::Values*);
+    int (PSE_CALL* ReadDword)(int, const char*, uint32_t*);
+    int (PSE_CALL* WriteDword)(int, const char*, uint32_t);
+    int (PSE_CALL* ReadBinary)(const char*, void*, uint32_t);
+    int (PSE_CALL* WriteBinary)(const char*, const void*, uint32_t);
+    int (PSE_CALL* DeleteValue)(const char*);
+    int (PSE_CALL* CampaignLevelPicked)(void);
+    void (PSE_CALL* CampaignsMenuItem)(void*, int);
+    int (PSE_CALL* CheatsActive)(void);
+    int (PSE_CALL* ConsoleOpen)(void);
+    int (PSE_CALL* UiKeyboardCaptured)(void);
+    uint32_t (PSE_CALL* CoopMenuState)(void);
+    int32_t (PSE_CALL* PlayerTriggerFeel)(int);
+    int (PSE_CALL* LockstepAxis)(uint8_t*, int, int, float*);
+    int (PSE_CALL* LockstepMouse)(uint8_t*, float*, float*);
+    void (PSE_CALL* LockstepAxisTrace)(const uint8_t*, int, float, int);
+    void (PSE_CALL* LockstepFixBlocks)(void);
+    int (PSE_CALL* ViewHidden)(int);
+    float (PSE_CALL* PhotoFov)(void);
+    void (PSE_CALL* SetImageProbe)(void*);
+    void (PSE_CALL* NoteHudStart)(void);
 } DsfixHostV1;
