@@ -114,6 +114,10 @@ void Leave() {
     SetState(kStateOnline);
 }
 
+}  // namespace
+void features::LobbyLeave() { Leave(); }
+namespace {
+
 void Request(const char* fmt, int a, int b) {
     char text[48];
     snprintf(text, sizeof text, fmt, a, b);

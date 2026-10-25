@@ -24,6 +24,7 @@ struct Plugin {
     // can be kept from running), retired with the parent.
     bool host = false;
     PSEPluginHandle parent = 0;
+    std::vector<std::string> adopts;     // manifest "adopts": co-save chunks of these (no longer loaded) plugin names
     std::string displayName, author;
     std::vector<std::string> games;
     std::vector<const char*> gamePtrs;   // NULL-terminated, points into games
@@ -210,6 +211,21 @@ std::vector<PSEPluginHandle> PluginChildren(PSEPluginHandle parent) {
 void SetPluginHost(PSEPluginHandle plugin) {
     std::lock_guard lock(g_mutex);
     if (plugin != 0 && plugin <= g_plugins.size()) g_plugins[plugin - 1].host = true;
+}
+
+void SetPluginAdopts(PSEPluginHandle plugin, const std::vector<std::string>& names) {
+    std::lock_guard lock(g_mutex);
+    if (plugin != 0 && plugin <= g_plugins.size()) g_plugins[plugin - 1].adopts = names;
+}
+
+PSEPluginHandle PluginAdopting(const char* name) {
+    std::lock_guard lock(g_mutex);
+    for (size_t i = 0; name && i < g_plugins.size(); ++i) {
+        if (g_plugins[i].disabled) continue;
+        for (const std::string& a : g_plugins[i].adopts)
+            if (a == name) return static_cast<PSEPluginHandle>(i + 1);
+    }
+    return 0;
 }
 
 bool PluginHost(PSEPluginHandle plugin) {

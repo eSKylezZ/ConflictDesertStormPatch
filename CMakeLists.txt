@@ -147,20 +147,14 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/overlay_iface.cpp
     games/ds1/src/features/host_iface.cpp
     games/ds1/src/features/plugin_links.cpp
-    games/ds1/src/features/skinapply.cpp
-    games/ds1/src/features/loadout.cpp
     games/ds1/src/features/diagnostics.cpp
     games/ds1/src/features/memory.cpp
     games/ds1/src/features/console.cpp
     games/ds1/src/features/framerec.cpp
     games/ds1/src/features/renderdiff.cpp
-    games/ds1/src/features/customise.cpp
-    games/ds1/src/features/gear.cpp
-    games/ds1/src/features/vehicles.cpp
     games/ds1/src/features/mods.cpp
     games/ds1/src/features/assetstore.cpp
     games/ds1/src/features/weaponicons.cpp
-    games/ds1/src/features/overview.cpp
     games/ds1/src/features/versus.cpp
     games/ds1/src/features/modsmenu.cpp
     games/ds1/src/features/fixmenu.cpp
@@ -169,7 +163,7 @@ pse_add_plugin(dsfix MANIFEST games/ds1/src/dsfix.pse SOURCES
     games/ds1/src/features/pseui.cpp
     games/ds1/src/core/pse_ui_model.cpp
     games/ds1/src/features/devserver.cpp
-    games/ds1/src/features/originals.cpp
+    games/ds1/src/features/originals.cpp games/ds1/src/features/kitweapons.cpp
     games/ds1/src/game_icons.rc
 )
 target_include_directories(dsfix PRIVATE games/ds1/src games/ds1/plugins ${CMAKE_BINARY_DIR}/generated ${CMAKE_SOURCE_DIR}/pse/loader
@@ -274,6 +268,9 @@ target_link_libraries(dsfix_online PRIVATE bcrypt ws2_32 iphlpapi)
 dsfix_add_plugin(dsfix_missions missions "Mission scripts")
 target_include_directories(dsfix_missions PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader)
 target_link_libraries(dsfix_missions PRIVATE lua_static pse_build_lib winmm)
+# + the co-save chunk formats (KITS / GEAR / VEHS; dsfix.dll keeps a copy for the old .sav.dsfix sidecars)
+dsfix_add_plugin(dsfix_loadout loadout "Briefing + loadout screen" games/ds1/src/core/pse_saves_format.cpp)
+target_include_directories(dsfix_loadout PRIVATE ${CMAKE_SOURCE_DIR}/pse/loader ${CMAKE_SOURCE_DIR}/pse/games/ds1)
 
 # ---- the install tree (docs/sdk/layout.md) ---------------------------------------------------------------------------
 #   <game>\dinput8.dll                       shim (pse_shim)

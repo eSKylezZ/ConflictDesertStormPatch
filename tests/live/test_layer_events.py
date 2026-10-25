@@ -75,11 +75,17 @@ def test_device_slots_chain_layer_and_graphics(c):
         assert chain[0][0] == first, (index, chain)
 
 
-def _logger_lines():
+def _logger_lines(c=None):
+    """example.events_logger's log - only when that plugin is loaded in the running game (a log left over from another
+    run, without the plugin deployed now, would be read as if it were this game's)."""
     import bg
     path = os.path.join(bg.GAME, "PSE", "Plugins", "example.events_logger.log")
+    if c is not None:
+        loaded = {p["name"]: p for p in c.run("return dev.pse_plugins()")}
+        if "example.events_logger" not in loaded or loaded["example.events_logger"]["disabled"]:
+            pytest.skip("example.events_logger is not loaded in this game (tools/split/deploy_run.py deploys it)")
     if not os.path.exists(path):
-        pytest.skip("example.events_logger is not deployed (live runner with PSE_EXAMPLE_PLUGINS=1)")
+        pytest.skip("example.events_logger is not deployed (tools/split/deploy_run.py deploys it)")
     return [l.rstrip("\n") for l in open(path, encoding="utf-8", errors="replace")]
 
 
@@ -91,7 +97,7 @@ def _index(lines, text, start=0):
 
 
 def test_events_reach_a_plugin_in_the_front_end(c):
-    lines = _logger_lines()
+    lines = _logger_lines(c)
     for text in ("loaded (game ds1", "message POST_LOAD", "message DEVICE_CREATED", "event FRAME first",
                  "event PRE_RENDER first", "event POST_RENDER first", "event END_SCENE first", "event PRESENT first",
                  "event LEVEL_LOAD_BEGIN FrontEnd", "event LEVEL_LOAD_END FrontEnd", "message FRONT_END_READY FrontEnd"):
@@ -100,6 +106,7 @@ def test_events_reach_a_plugin_in_the_front_end(c):
 
 
 def test_level_change_events_and_new_game_order(c):
+    _logger_lines(c)   # (skips without the plugin)
     if c.state()["fe_state"] != 1:   # NEW_GAME needs a game started FROM the front end: back to the main menu first
         c.start_level("FrontEnd.dll", wait=False)
         c.wait_until("dev.fe_state() == 1 and dev.dispatch() == 0", timeout=90)

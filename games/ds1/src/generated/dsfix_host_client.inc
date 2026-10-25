@@ -218,10 +218,10 @@ const settings::Values* features::DsfixSettingsValues() {
 #ifndef DSFIX_OWN_ReadString
 bool settings::ReadString(const char* name, std::string& value) {
     const auto* t = Table();
-    char s1[1024] = {};
+    const char* s1 = nullptr;
     if (!t) return false;
-    auto r = t->ReadString(name, s1);
-    value = s1;
+    auto r = t->ReadString(name, &s1);
+    value = s1 ? s1 : "";
     return (r) != 0;
 }
 #endif
@@ -289,11 +289,11 @@ void features::BeginOnlineSession(int players, bool host) {
 uint32_t features::CoopDeviceActions(int device, features::PadType& type, std::string& name) {
     const auto* t = Table();
     int32_t e1 = static_cast<int32_t>(type);
-    char s2[1024] = {};
+    const char* s2 = nullptr;
     if (!t) return uint32_t{};
-    auto r = t->CoopDeviceActions(device, &e1, s2);
+    auto r = t->CoopDeviceActions(device, &e1, &s2);
     type = static_cast<features::PadType>(e1);
-    name = s2;
+    name = s2 ? s2 : "";
     return r;
 }
 #endif
@@ -620,5 +620,342 @@ uint32_t features::LockstepSeed() {
 const features::HostSettings* features::HostSync() {
     const auto* t = Table();
     return t ? t->HostSync() : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_AssetStoreHasFile
+bool features::AssetStoreHasFile(const char* name) {
+    const auto* t = Table();
+    return t ? (t->AssetStoreHasFile(name)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_BorrowVehicleDataList
+void features::BorrowVehicleDataList(const char* level, const std::string& units) {
+    const auto* t = Table();
+    if (t) {
+        t->BorrowVehicleDataList(level, (units).c_str());
+    }
+}
+#endif
+#ifndef DSFIX_OWN_CampaignPortLevel
+bool features::CampaignPortLevel(const char* level) {
+    const auto* t = Table();
+    return t ? (t->CampaignPortLevel(level)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_CoopJoystick
+int features::CoopJoystick(int player) {
+    const auto* t = Table();
+    return t ? t->CoopJoystick(player) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_CoopPromptStyle
+int features::CoopPromptStyle(int player) {
+    const auto* t = Table();
+    return t ? t->CoopPromptStyle(player) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_GameFile
+std::string features::GameFile(const std::string& name) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->GameFile((name).c_str());
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_ModHasFile
+bool features::ModHasFile(const char* name) {
+    const auto* t = Table();
+    return t ? (t->ModHasFile(name)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ModWeaponMagazines
+int features::ModWeaponMagazines(const std::string& id) {
+    const auto* t = Table();
+    return t ? t->ModWeaponMagazines((id).c_str()) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_ModWeapons
+const std::vector<std::string>& features::ModWeapons() {
+    const auto* t = Table();
+    static thread_local std::vector<std::string> out;
+    out.clear();
+    const char* j = nullptr;
+    if (t) {
+        j = t->ModWeapons();
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
+}
+#endif
+#ifndef DSFIX_OWN_ModsGeneration
+int features::ModsGeneration() {
+    const auto* t = Table();
+    return t ? t->ModsGeneration() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_PadLevelPools
+void features::PadLevelPools(const char* level, int extra) {
+    const auto* t = Table();
+    if (t) {
+        t->PadLevelPools(level, extra);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ReadGameTable
+bool features::ReadGameTable(const char* name, std::string& out) {
+    const auto* t = Table();
+    const char* s1 = nullptr;
+    if (!t) return false;
+    auto r = t->ReadGameTable(name, &s1);
+    out = s1 ? s1 : "";
+    return (r) != 0;
+}
+#endif
+#ifndef DSFIX_OWN_RuleTimeOfDay
+void features::RuleTimeOfDay() {
+    const auto* t = Table();
+    if (t) {
+        t->RuleTimeOfDay();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SceneFogBegin
+void features::SceneFogBegin() {
+    const auto* t = Table();
+    if (t) {
+        t->SceneFogBegin();
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetSceneFog
+void features::SetSceneFog(bool on, uint32_t colour, float start, float end) {
+    const auto* t = Table();
+    if (t) {
+        t->SetSceneFog((on) ? 1 : 0, colour, start, end);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetTimeOfDay
+void features::SetTimeOfDay(int time, int flow) {
+    const auto* t = Table();
+    if (t) {
+        t->SetTimeOfDay(time, flow);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SetVoiceChoice
+void features::SetVoiceChoice(int role, int v) {
+    const auto* t = Table();
+    if (t) {
+        t->SetVoiceChoice(role, v);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_SoldierHasOwnVoice
+bool features::SoldierHasOwnVoice(uint8_t* soldier) {
+    const auto* t = Table();
+    return t ? (t->SoldierHasOwnVoice(soldier)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_SpeechLanguage
+int features::SpeechLanguage() {
+    const auto* t = Table();
+    return t ? t->SpeechLanguage() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_TimeContinues
+bool features::TimeContinues() {
+    const auto* t = Table();
+    return t ? (t->TimeContinues()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_VehicleDataComplete
+bool features::VehicleDataComplete(const std::string& unit) {
+    const auto* t = Table();
+    return t ? (t->VehicleDataComplete((unit).c_str())) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_VehicleGuns
+std::string features::VehicleGuns(const std::string& unit) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->VehicleGuns((unit).c_str());
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_VoiceChoice
+int features::VoiceChoice(int role) {
+    const auto* t = Table();
+    return t ? t->VoiceChoice(role) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_VoiceLabel
+const char* features::VoiceLabel(int v) {
+    const auto* t = Table();
+    return t ? t->VoiceLabel(v) : nullptr;
+}
+#endif
+#ifndef DSFIX_OWN_VoiceText
+std::string features::VoiceText(uint8_t* soldier, int role) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->VoiceText(soldier, role);
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_WeaponFactions
+int features::WeaponFactions(const char* id) {
+    const auto* t = Table();
+    return t ? t->WeaponFactions(id) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_SetLoadoutSpin
+void features::SetLoadoutSpin(bool on) {
+    const auto* t = Table();
+    if (t) {
+        t->SetLoadoutSpin((on) ? 1 : 0);
+    }
+}
+#endif
+#ifndef DSFIX_OWN_ModGearRows
+std::string features::ModGearRows() {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->ModGearRows();
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_ModPouchSetRows
+std::string features::ModPouchSetRows() {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->ModPouchSetRows();
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_ModVehicleRows
+std::string features::ModVehicleRows() {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->ModVehicleRows();
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_SkinVariantRows
+std::string features::SkinVariantRows() {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->SkinVariantRows();
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_LoadoutForMission
+bool features::LoadoutForMission() {
+    const auto* t = Table();
+    return t ? (t->LoadoutForMission()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LobbyLocal
+bool features::LobbyLocal(int player) {
+    const auto* t = Table();
+    return t ? (t->LobbyLocal(player)) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_LobbyDevice
+int features::LobbyDevice(int player) {
+    const auto* t = Table();
+    return t ? t->LobbyDevice(player) : int{};
+}
+#endif
+#ifndef DSFIX_OWN_LobbyPcs
+int features::LobbyPcs() {
+    const auto* t = Table();
+    return t ? t->LobbyPcs() : int{};
+}
+#endif
+#ifndef DSFIX_OWN_LobbyPlayerName
+std::string features::LobbyPlayerName(int player) {
+    const auto* t = Table();
+    const char* r = nullptr;
+    if (t) {
+        r = t->LobbyPlayerName(player);
+    }
+    return r ? std::string(r) : std::string("");
+}
+#endif
+#ifndef DSFIX_OWN_OnlineConnectedPcMask
+uint32_t features::OnlineConnectedPcMask() {
+    const auto* t = Table();
+    return t ? t->OnlineConnectedPcMask() : uint32_t{};
+}
+#endif
+#ifndef DSFIX_OWN_SendCommand
+bool net::SendCommand(const std::string& text) {
+    const auto* t = Table();
+    return t ? (t->SendCommand((text).c_str())) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_SendCommandTo
+bool net::SendCommandTo(int player, const std::string& text) {
+    const auto* t = Table();
+    return t ? (t->SendCommandTo(player, (text).c_str())) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ScriptLevelActive
+bool features::ScriptLevelActive() {
+    const auto* t = Table();
+    return t ? (t->ScriptLevelActive()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_ScriptLoadingSave
+bool features::ScriptLoadingSave() {
+    const auto* t = Table();
+    return t ? (t->ScriptLoadingSave()) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_PhotoAnimate
+bool features::PhotoAnimate(const void* instance, float& dt) {
+    const auto* t = Table();
+    return t ? (t->PhotoAnimate(instance, &(dt))) != 0 : false;
+}
+#endif
+#ifndef DSFIX_OWN_KitWeaponIds
+std::vector<std::string> features::KitWeaponIds() {
+    const auto* t = Table();
+    std::vector<std::string> out;
+    const char* j = nullptr;
+    if (t) {
+        j = t->KitWeaponIds();
+    }
+    if (j && *j)
+        for (const char* p = j;; ++p) {
+            const char* e = p;
+            while (*e && *e != '\x1E') ++e;
+            out.emplace_back(p, e);
+            if (!*e) break;
+            p = e;
+        }
+    return out;
 }
 #endif

@@ -19,8 +19,7 @@ patch made outside a feature's scope.
 - The launcher's re-apply path (`features::OnSettingsChanged`, launcher.cpp) and the DESERTSTORMFIX menu's direct
   re-applies (fixmenu.cpp: performance overlay) run the same functions in the same scopes.
 - Hooks a feature makes later, at run time, use a scope in the feature's own code:
-  `patch::OwnerScope owner(pse_host::Find("dsfix.vehicles"));` – vehicles.cpp `InstallTriLog` (dev), overlay.cpp
-  `overlay::Install`, scripthost.cpp's dormancy hook. In a kit plugin `pse_host::Find` answers the plugin itself
+  `patch::OwnerScope owner(pse_host::Find("dsfix.overlay"));` – overlay.cpp `overlay::Install`. In a kit plugin `pse_host::Find` answers the plugin itself
   (lockstep.cpp `Install`, authority.cpp `AuthorityStart` in `dsfix.online`).
 - Outside any scope a patch keeps the owner its site / group had before (a live toggle re-applying a group, a feature
   re-hooking after a Write); only a brand-new patch outside a scope belongs to `dsfix`. In the 2026-10-19 live run
@@ -56,16 +55,10 @@ cosmetic, UI or local input (may differ between peers). When in doubt a feature 
 | `dsfix.assetstore` | PSE asset store (setting SHARED ASSET STORE, [ds1-settings.md](ds1-settings.md)): `pse.vfs` provider `ds1.store`, hooks `0x4BE360` / `0x4BD8A0` (priority 100) | SIMULATION | `ApplyAssetStore` |
 | `dsfix.memory` | Global Heap + big textures | SIMULATION | `ApplyMemory` |
 | `dsfix.weaponicons` | Weapon pictures from mods | CLIENT_ONLY | `ApplyWeaponIcons` |
-| `dsfix.skins` | Skins applied mid-level (loadout screen, loaded saves): their textures loaded at once, saved skins found on every side (entry hook on the skin apply `0x435BE0`, call `0x417449`); was part of `dsfix.bodies` until 2026-10-24. Off with both FeatMods and FeatLoadout off | SIMULATION | `ApplySkins` |
-| `dsfix.overview` | Mission overview | SIMULATION | `ApplyOverview` |
-| `dsfix.loadout` | Loadout + unlocks | SIMULATION | `ApplyLoadout` |
-| `dsfix.customise` | Briefing / loadout screen | SIMULATION | `ApplyCustomise` |
-| `dsfix.gear` | Soldier gear | SIMULATION | `ApplyGear` |
 | `dsfix.diagnostics` | Diagnostics + performance overlay | CLIENT_ONLY | `ApplyDiagnostics` |
 | `dsfix.originals` | Original game files: moves `*.dat` / `*.sch` / level script DLLs (Mission / Training / MP_MISSION / FrontEnd / Outro) to `PSE\Originals` ([layout.md](layout.md)); the game finds them through the game layer's redirect (since 2026-10-22, [game-ds1.md](reference/game-ds1.md#events-and-messages) "Game files" - these hooks were here before). Two rows: the folders for DesertStormFix's own readers before `dsfix.mods`, the move after the rest of this table (the mission translation in `dsfix.missions` finds moved DLLs in `PSE\Originals` too) | SIMULATION | `ApplyOriginalsRedirect`, `ApplyOriginalsMove` |
 | `dsfix.campaigns` | Custom campaigns | SIMULATION | `ApplyCampaigns` |
 | `dsfix.console` | Developer console | SIMULATION | `ApplyConsole` |
-| `dsfix.vehicles` | Vehicle swaps | SIMULATION | (none: hooks made at run time) |
 | `dsfix.overlay` | Overlay drawing (icons, late draws); serves `pse.ui` ([reference/ui.md](reference/ui.md)) | CLIENT_ONLY | (none: hooks made at run time) |
 
 Also built in, not a feature: **`pse.game.ds1`** (version 1.0.0, CLIENT_ONLY) – the game interface
@@ -111,6 +104,7 @@ in `plugins/<name>/`, targets in the top-level `CMakeLists.txt` (`DSFIX_PLUGINS`
 | `dsfix.photo` 1.0.0 | `plugins/photo/` (photomode, photoframes, freecam, cheats, pausemenu + `photo.spec`, `photo.rc`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Photo mode + its frames, the free camera, the extended CHEATS menu and the pause menu's extra items, one DLL (they call each other throughout; until 2026-10-24 dsfix.dll's `dsfix.cheats` / `dsfix.freecam` / `dsfix.pausemenu`). Calls into dsfix.dll through `dsfix.host`; publishes `dsfix.photo` (cheat flags, texts, free-camera state, photo capture around Present, zoom). The remembered unlock `CheatsUnlocked` moved to its own key (copied once). Without it: no photo mode, the game's own CHEATS screen, no free camera, no extra pause items |
 | `dsfix.online` 1.0.0 | `plugins/online/` (net, online, onlinecompat, modsync, lobby, lobbynet, lobbymenu, onlinepause, lockstep, authority, puppetsync, hostsync, viewmode, nameplates, determinism, glue + `online.spec`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Online co-op as one DLL (until 2026-10-25 dsfix.dll's `dsfix.nameplates` / `dsfix.views` / `dsfix.determinism` / `dsfix.lockstep` / `dsfix.authority` and the connection code): connection + join codes, the online menus and lobby, the plugin-set check and mod sync, owner-mode host authority, the host's settings token, own view + peek, nameplates, the determinism harness (dev). Compiles the loader's pure online-check code (`pse/loader/compat.cpp`); the list of loaded plugins comes from dsfix.dll as text (`dsfix.host` `CompatLocalPluginsText`). Publishes `dsfix.online` (frame calls, lockstep queries, lobby, screens / texts, the console's `net` commands). Settings stay DesertStormFix's. Without it: no online menus or sessions; split screen and single player unchanged |
 | `dsfix.missions` 1.0.0 | `plugins/missions/` (scripthost, movie, missionsource, missionrt, apitrace, coopscripts + `missions.spec`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | Mission scripts as one DLL (until 2026-10-25 dsfix.dll's `dsfix.scripthost` / `dsfix.missionrt` / `dsfix.missionsource` / `dsfix.apitrace` / `dsfix.coopscripts`): the Lua host of `.lua` levels and its films, translated mission DLLs (MISSIONS FROM LUA, mod `--@replaces` Lua) with the `x86rt` runtime, the co-op branches of the shipped scripts, the dev API trace. Has its own Lua and the mission translator. The loader's private `pse.lua.host` (host plugins only) is handed on by dsfix.dll (`dsfix.host` `LuaHostTable`), so plugin Lua functions work as before. Its setting `TranslatedMissions` moved to its own key (copied once from `dsfix.missionsource`'s). Publishes `dsfix.missions`. Without it: no `.lua` levels, every mission runs as its DLL |
+| `dsfix.loadout` 1.0.0 | `plugins/loadout/` (customise, loadout, gear, vehicles, overview, skinapply, glue + `loadout.spec`) | SIMULATION (fingerprint) | `dsfix >= 3.3` | The mission briefing + loadout screen, kits / unlocks / carried kits, soldier gear, vehicle swaps, the mission overview and mid-level skins as one DLL (until 2026-10-25 dsfix.dll's `dsfix.customise` / `dsfix.loadout` / `dsfix.gear` / `dsfix.vehicles` / `dsfix.overview` / `dsfix.skins`). mods.cpp's gear / pouch-set / vehicle / skin-variant lists come over `dsfix.host` as text rows (`glue.cpp` rebuilds them per mods generation). One co-save callback set writes `KITS`, `GEAR` and `VEHS` ([below](#co-save-chunks)); its manifest `adopts = dsfix.gear, dsfix.vehicles` so saves from before keep theirs. Its remembered choices stay raw values in DesertStormFix's key. Publishes `dsfix.loadout`. Without it: no briefing / loadout screen, the game's own kits and vehicles |
 
 The SIMULATION ones declare a simulation fingerprint (below), so a dev build and the release package still connect
 online. They load after `dsfix.dll`'s own features (the loader's second round), still before the game's WinMain.
@@ -225,10 +219,10 @@ little endian, `str` = u16 length + bytes (no NUL), counts u32.
 | Plugin | Tag | Layout | What |
 | --- | --- | --- | --- |
 | `dsfix.loadout` | `KITS` | u32 n, n × {i32 role, str weapon id, i32 reserve, i32 magazine, u8 held} | weapons made at run time (loadout screen, carried kits, mod weapons: object id −1, which the game's save drops), handed back after the save restore |
-| `dsfix.gear` | `GEAR` | u32 roles, roles × {i32 role, u32 n, n × {str connector, str model}} (model "" = nothing on it) | the squad's hats / packs / face pieces / pouches per squad role (connector names "BIP01 HAT CONNECTOR" …), put back on the first play frame after the restore |
-| `dsfix.vehicles` | `VEHS` | u32 n, n × {str original unit, str new unit} | the vehicle swaps the level was built with; the loaded save's level is built with them instead of the remembered choice |
+| `dsfix.loadout` | `GEAR` | u32 roles, roles × {i32 role, u32 n, n × {str connector, str model}} (model "" = nothing on it) | the squad's hats / packs / face pieces / pouches per squad role (connector names "BIP01 HAT CONNECTOR" …), put back on the first play frame after the restore |
+| `dsfix.loadout` | `VEHS` | u32 n, n × {str original unit, str new unit} | the vehicle swaps the level was built with; the loaded save's level is built with them instead of the remembered choice |
 
-A plugin writes its chunk only when it has something (no spawned weapons = no `KITS`). Role = squad slot (unit
+A part writes its chunk only when it has something (no spawned weapons = no `KITS`). Until 2026-10-25 `GEAR` was written by `dsfix.gear` and `VEHS` by `dsfix.vehicles`; `dsfix.loadout` adopts both names (manifest `adopts`, [reference/serialization.md](reference/serialization.md)), so those saves load and their next save holds the chunks under `dsfix.loadout` only. Role = squad slot (unit
 +0x1C7: 0 Bradley, 1 Foley, 2 Connors, 3 Jones). Saves from DesertStormFix ≤ 3.3.0-Alpha carry the same data as lines
 of `<name>.sav.dsfix` (`role|id|reserve|magazine|held`, `G|role|connector|model` with `-` = nothing,
 `V|ORIGINAL|NEW`); they are read into these chunks when the save has no `.pse`.

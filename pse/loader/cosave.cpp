@@ -126,6 +126,13 @@ bool WriteAtomic(const char* path, const std::vector<CoChunk>& chunks) {
 }
 
 // Every plugin that set callbacks, in plugin order.
+// The plugin a chunk belongs to: the one of its name, else one that adopts the name (manifest "adopts": merged /
+// renamed plugins keep reading old saves), 0 = not loaded (the chunk is kept for when it is).
+PSEPluginHandle Owner(const std::string& plugin) {
+    if (PSEPluginHandle h = FindPlugin(plugin.c_str())) return h;
+    return PluginAdopting(plugin.c_str());
+}
+
 std::vector<std::pair<PSEPluginHandle, Callbacks>> Participants() {
     std::vector<std::pair<PSEPluginHandle, Callbacks>> out;
     for (PSEPluginHandle h : detail::PluginsInOrder()) {
@@ -202,7 +209,7 @@ bool Save(const char* coSavePath) {
     std::vector<CoChunk> keep;
     std::set<std::string> fromSession;
     for (const CoChunk& c : g_unknown) {
-        if (FindPlugin(c.plugin.c_str())) continue;   // loaded since: it writes its own now
+        if (Owner(c.plugin)) continue;   // loaded since / adopted: its owner writes its own now
         fromSession.insert(c.plugin);
         keep.push_back(c);
     }
@@ -212,7 +219,7 @@ bool Save(const char* coSavePath) {
         std::vector<CoChunk> old;
         if (Parse(bytes, &old)) {
             for (CoChunk& c : old)
-                if (!FindPlugin(c.plugin.c_str()) && !fromSession.count(c.plugin)) keep.push_back(std::move(c));
+                if (!Owner(c.plugin) && !fromSession.count(c.plugin)) keep.push_back(std::move(c));
         } else {
             Warn(std::string("co-save ") + coSavePath + " is damaged - overwriting it");
         }
@@ -240,13 +247,12 @@ namespace {
 void Distribute(const std::vector<CoChunk>& chunks) {
     g_unknown.clear();
     for (const CoChunk& c : chunks)
-        if (!FindPlugin(c.plugin.c_str())) g_unknown.push_back(c);
+        if (!Owner(c.plugin)) g_unknown.push_back(c);
 
     for (auto& [h, cb] : Participants()) {
         PSESaveReader r;
-        std::string name = PluginName(h);
         for (const CoChunk& c : chunks)
-            if (c.plugin == name) r.chunks.push_back(&c);
+            if (Owner(c.plugin) == h) r.chunks.push_back(&c);
         if (r.chunks.empty() || !cb.load) {
             if (cb.revert) detail::CallRevert(h, cb.revert, cb.ctx);
         } else {

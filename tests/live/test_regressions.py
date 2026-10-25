@@ -23,8 +23,9 @@ def test_level_change_while_loadout_screen_is_open(c):
 
 def _level_change_while_loadout_screen_is_open(c):
     before = _log_text(c, 20000).count("Customise: opened in")
-    c.console("level Mission1.dll")
-    c.wait_for_play(timeout=180)
+    # start_level waits for the load to begin: already in Mission 1 (after another test), console + wait_for_play
+    # returned before the reload and the next request ran into its PLEASE PRESS ANY KEY
+    c.start_level("Mission1.dll")
     t0 = time.time()
     opened = False
     while time.time() - t0 < 20:          # the screen opens after 0.5 s of plain play

@@ -69,7 +69,6 @@ def split_params(s):
     return out
 
 
-STRING_OUT = 1024   # buffer size for a std::string& out parameter
 
 
 class Type:
@@ -87,7 +86,7 @@ class Type:
         elif t == "const std::string &" and not is_return:
             self.kind, self.c = "string_in", "const char*"
         elif t == "std::string &" and not is_return:
-            self.kind, self.c = "string_out", "char*"
+            self.kind, self.c = "string_out", "const char**"   # -> the callee's thread-local copy (any length)
         elif t == "std::vector<std::string>" and is_return:
             self.kind, self.c = "strings_ret", "const char*"
         elif t in ("const std::vector<std::string> &", "const std::vector<std::string>&") and is_return:
@@ -130,7 +129,7 @@ class Type:
             return (["int32_t e%d = static_cast<int32_t>(%s);" % (i, name)], "&e%d" % i,
                     ["%s = static_cast<%s>(e%d);" % (name, self.base, i)])
         if k == "string_out":
-            return ["char s%d[%d] = {};" % (i, STRING_OUT)], "s%d" % i, ["%s = s%d;" % (name, i)]
+            return ["const char* s%d = nullptr;" % i], "&s%d" % i, ["%s = s%d ? s%d : \"\";" % (name, i, i)]
         return [], name, []
 
     # thunk side (C argument `a<i>` -> C++ value): (statements before, argument, statements after)
@@ -150,8 +149,8 @@ class Type:
             return (["%s e%d = static_cast<%s>(%s ? *%s : 0);" % (self.base, i, self.base, a, a)], "e%d" % i,
                     ["if (%s) *%s = static_cast<int32_t>(e%d);" % (a, a, i)])
         if k == "string_out":
-            return (["std::string s%d;" % i], "s%d" % i,
-                    ["if (%s) strncpy_s(%s, %d, s%d.c_str(), _TRUNCATE);" % (a, a, STRING_OUT, i)])
+            return (["static thread_local std::string s%d;" % i, "s%d.clear();" % i], "s%d" % i,
+                    ["if (%s) *%s = s%d.c_str();" % (a, a, i)])
         return [], a, []
 
     def ret_to_c(self, expr):    # thunk: C++ result -> C

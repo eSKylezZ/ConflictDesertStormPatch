@@ -534,7 +534,7 @@ std::map<int, std::vector<features::GearPiece>> g_savedGear;   // by role
 
 const PSESerializationInterface* Ser() { return pse::SerializationInterface(); }
 
-void PSE_CALL GearSave(PSESaveWriter* w, void*) {
+void GearSave(PSESaveWriter* w) {
     features::GearCaptureForSave();
     if (g_savedGear.empty()) return;
     pse_saves::SavedGear out;
@@ -543,20 +543,14 @@ void PSE_CALL GearSave(PSESaveWriter* w, void*) {
     const std::vector<uint8_t> b = pse_saves::EncodeGear(out);
     Ser()->WriteChunk(w, pse_saves::kGearTag, pse_saves::kChunkVersion, b.data(), static_cast<uint32_t>(b.size()));
 }
-void PSE_CALL GearLoad(PSESaveReader* r, void*) {
-    g_savedGear.clear();
-    uint32_t tag, version, len;
-    while (Ser()->NextChunk(r, &tag, &version, &len)) {
-        if (tag != pse_saves::kGearTag || version != 1) continue;
-        std::vector<uint8_t> b(len);
-        Ser()->Read(r, b.data(), len);
-        pse_saves::SavedGear in;
-        if (!pse_saves::DecodeGear(b.data(), b.size(), &in)) dslog::Write("[fail] Gear: the save's gear chunk is damaged");
-        for (const auto& [role, pieces] : in)
-            for (const pse_saves::SavedGearPiece& g : pieces) g_savedGear[role].push_back({g.connector, g.model});
-    }
+void GearLoadChunk(uint32_t tag, uint32_t version, const std::vector<uint8_t>& b) {
+    if (tag != pse_saves::kGearTag || version != 1) return;
+    pse_saves::SavedGear in;
+    if (!pse_saves::DecodeGear(b.data(), b.size(), &in)) dslog::Write("[fail] Gear: the save's gear chunk is damaged");
+    for (const auto& [role, pieces] : in)
+        for (const pse_saves::SavedGearPiece& g : pieces) g_savedGear[role].push_back({g.connector, g.model});
 }
-void PSE_CALL GearRevert(void*) { g_savedGear.clear(); }
+void GearClear() { g_savedGear.clear(); }
 }  // namespace
 
 void features::GearCaptureForSave() {
@@ -579,9 +573,9 @@ void features::GearRestoreSaved() {
     for (const auto& [role, pieces] : g_savedGear) SetSavedGear(role, pieces);
 }
 
-void features::GearCosaveInit() {
-    Ser()->SetCallbacks(pse_host::Find("dsfix.gear"), &GearSave, &GearLoad, &GearRevert, nullptr);
-}
+// Its GEAR chunk goes through loadout.cpp's co-save callbacks (one set per plugin: dsfix.loadout writes KITS, GEAR and
+// VEHS; saves from before 2026-10-25 have GEAR under dsfix.gear - the manifest adopts that name).
+const features::CosavePart features::kGearCosave = {&GearSave, &GearClear, &GearLoadChunk, &GearClear};
 
 std::string features::GearLabel(const std::string& model) {
     if (model.empty()) return "NONE";

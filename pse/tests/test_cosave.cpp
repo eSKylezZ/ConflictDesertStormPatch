@@ -175,6 +175,65 @@ PSE_TEST("cosave: chunks of plugins not loaded survive a rewrite") {
     PSE_CHECK_EQ(x3.loaded[1].first, 6u);
 }
 
+PSE_TEST("cosave: a plugin that adopts old names gets their chunks, and the next save drops the old copies") {
+    FileGuard file("adopt.pse");
+    Fresh();
+    State k, g;
+    Plugin(k, "co.kits").toWrite = {{1, "kits-old"}};
+    Plugin(g, "co.gear").toWrite = {{2, "gear-old"}};
+    PSE_REQUIRE(pse::cosave::Save(file.path.c_str()));
+
+    // Next start: one merged plugin, named like neither, adopting both.
+    Fresh();
+    State m;
+    Plugin(m, "co.merged");
+    pse::SetPluginAdopts(m.plugin, {"co.kits", "co.gear"});
+    PSE_CHECK_EQ(pse::PluginAdopting("co.gear"), m.plugin);
+    PSE_CHECK_EQ(pse::PluginAdopting("co.other"), 0u);
+    pse::cosave::Load(file.path.c_str());
+    PSE_REQUIRE(m.loaded.size() == 2);
+    PSE_CHECK_EQ(m.loaded[0].first + m.loaded[1].first, 3u);
+    PSE_CHECK_EQ(m.loads, 1);
+
+    // It writes both tags under its own name; the old names' chunks are not carried over beside them.
+    m.toWrite = {{1, "kits-new"}, {2, "gear-new"}};
+    PSE_REQUIRE(pse::cosave::Save(file.path.c_str()));
+    Fresh();
+    State m2;
+    Plugin(m2, "co.merged");
+    pse::SetPluginAdopts(m2.plugin, {"co.kits", "co.gear"});
+    pse::cosave::Load(file.path.c_str());
+    PSE_REQUIRE(m2.loaded.size() == 2);
+    PSE_CHECK_STR(m2.loaded[0].second.c_str(), "kits-new");
+    PSE_CHECK_STR(m2.loaded[1].second.c_str(), "gear-new");
+
+    // A loaded plugin of an adopted name keeps its own chunks.
+    Fresh();
+    State k3, m3;
+    Plugin(k3, "co.kits");
+    Plugin(m3, "co.merged");
+    pse::SetPluginAdopts(m3.plugin, {"co.kits"});
+    m3.toWrite = {};
+    k3.toWrite = {{1, "kits-own"}};
+    PSE_REQUIRE(pse::cosave::Save(file.path.c_str()));
+    Fresh();
+    State k4;
+    Plugin(k4, "co.kits");
+    pse::cosave::Load(file.path.c_str());
+    PSE_REQUIRE(k4.loaded.size() == 1);
+    PSE_CHECK_STR(k4.loaded[0].second.c_str(), "kits-own");
+}
+
+PSE_TEST("plugins: manifest key adopts") {
+    pse::PluginManifest m;
+    std::string err;
+    PSE_REQUIRE(pse::ParseManifest("name = a.b\nadopts = old.one, old.two\n", &m, &err));
+    PSE_REQUIRE(m.adopts.size() == 2);
+    PSE_CHECK_STR(m.adopts[1].c_str(), "old.two");
+    PSE_CHECK(m.warnings.empty());
+    PSE_CHECK(!pse::ParseManifest("name = a.b\nadopts = Bad Name\n", &m, &err));
+}
+
 PSE_TEST("cosave: loaded unknown chunks are kept even if the file was deleted") {
     FileGuard file("deleted.pse");
     FileGuard other("deleted-other.pse");

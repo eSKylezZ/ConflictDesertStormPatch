@@ -20,3 +20,5 @@
 #include "generated/online_wrappers.inc"
 #include "missions/generated/missions_iface.h"
 #include "generated/missions_wrappers.inc"
+#include "loadout/generated/loadout_iface.h"
+#include "generated/loadout_wrappers.inc"

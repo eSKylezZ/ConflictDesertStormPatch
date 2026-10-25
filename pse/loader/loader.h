@@ -120,6 +120,8 @@ struct PluginManifest {
     std::vector<PluginRequirement> required;         // "requires = a >= 1.2, b"
     std::vector<std::string> optional, conflicts, after;
     bool host = false;                               // "host = true": wants pse.host (game layer's allow list decides)
+    std::vector<std::string> adopts;                 // "adopts = a, b": takes over co-save chunks written under those
+                                                     // names while no plugin of that name is loaded (merged / renamed)
     std::vector<std::string> warnings;               // unknown keys etc. (logged, not fatal)
 };
 // false + *error (with the line number) on a syntax error.
@@ -170,6 +172,10 @@ PSEPluginHandle PluginParent(PSEPluginHandle plugin);              // 0 = none
 std::vector<PSEPluginHandle> PluginChildren(PSEPluginHandle parent);
 // Host plugins and the game layer: their PSELoadInterface.Query answers PSE_HOST_INTERFACE.
 void SetPluginHost(PSEPluginHandle plugin);
+// Manifest "adopts" (docs/sdk/reference/plugins.md): co-save chunks of `names` go to this plugin while no plugin of
+// that name is loaded. PluginAdopting(name) = the adopting plugin, 0 = none.
+void SetPluginAdopts(PSEPluginHandle plugin, const std::vector<std::string>& names);
+PSEPluginHandle PluginAdopting(const char* name);
 bool PluginHost(PSEPluginHandle plugin);
 // The pse.host table (host.cpp).
 const PSEHostInterface* HostInterface();

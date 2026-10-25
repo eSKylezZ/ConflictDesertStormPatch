@@ -123,10 +123,11 @@ const settings::Values* PSE_CALL t_DsfixSettingsValues(void) {
     auto r = features::DsfixSettingsValues();
     return r;
 }
-int PSE_CALL t_ReadString(const char* a0, char* a1) {
-    std::string s1;
+int PSE_CALL t_ReadString(const char* a0, const char** a1) {
+    static thread_local std::string s1;
+    s1.clear();
     auto r = settings::ReadString(a0, s1);
-    if (a1) strncpy_s(a1, 1024, s1.c_str(), _TRUNCATE);
+    if (a1) *a1 = s1.c_str();
     return (r) ? 1 : 0;
 }
 int PSE_CALL t_WriteString(const char* a0, const char* a1) {
@@ -161,12 +162,13 @@ int PSE_CALL t_SplitScreenPlayers(void) {
 void PSE_CALL t_BeginOnlineSession(int a0, int a1) {
     features::BeginOnlineSession(a0, a1 != 0);
 }
-uint32_t PSE_CALL t_CoopDeviceActions(int a0, int32_t* a1, char* a2) {
+uint32_t PSE_CALL t_CoopDeviceActions(int a0, int32_t* a1, const char** a2) {
     features::PadType e1 = static_cast<features::PadType>(a1 ? *a1 : 0);
-    std::string s2;
+    static thread_local std::string s2;
+    s2.clear();
     auto r = features::CoopDeviceActions(a0, e1, s2);
     if (a1) *a1 = static_cast<int32_t>(e1);
-    if (a2) strncpy_s(a2, 1024, s2.c_str(), _TRUNCATE);
+    if (a2) *a2 = s2.c_str();
     return r;
 }
 int PSE_CALL t_CoopPlayers(void) {
@@ -346,6 +348,193 @@ const features::HostSettings* PSE_CALL t_HostSync(void) {
     auto r = features::HostSync();
     return r;
 }
+int PSE_CALL t_AssetStoreHasFile(const char* a0) {
+    auto r = features::AssetStoreHasFile(a0);
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_BorrowVehicleDataList(const char* a0, const char* a1) {
+    features::BorrowVehicleDataList(a0, std::string(a1 ? a1 : ""));
+}
+int PSE_CALL t_CampaignPortLevel(const char* a0) {
+    auto r = features::CampaignPortLevel(a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_CoopJoystick(int a0) {
+    auto r = features::CoopJoystick(a0);
+    return r;
+}
+int PSE_CALL t_CoopPromptStyle(int a0) {
+    auto r = features::CoopPromptStyle(a0);
+    return r;
+}
+const char* PSE_CALL t_GameFile(const char* a0) {
+    static thread_local std::string s;
+    s = features::GameFile(std::string(a0 ? a0 : ""));
+    return s.c_str();
+}
+int PSE_CALL t_ModHasFile(const char* a0) {
+    auto r = features::ModHasFile(a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ModWeaponMagazines(const char* a0) {
+    auto r = features::ModWeaponMagazines(std::string(a0 ? a0 : ""));
+    return r;
+}
+const char* PSE_CALL t_ModWeapons(void) {
+    const std::vector<std::string>& r = features::ModWeapons();
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
+int PSE_CALL t_ModsGeneration(void) {
+    auto r = features::ModsGeneration();
+    return r;
+}
+void PSE_CALL t_PadLevelPools(const char* a0, int a1) {
+    features::PadLevelPools(a0, a1);
+}
+int PSE_CALL t_ReadGameTable(const char* a0, const char** a1) {
+    static thread_local std::string s1;
+    s1.clear();
+    auto r = features::ReadGameTable(a0, s1);
+    if (a1) *a1 = s1.c_str();
+    return (r) ? 1 : 0;
+}
+void PSE_CALL t_RuleTimeOfDay(void) {
+    features::RuleTimeOfDay();
+}
+void PSE_CALL t_SceneFogBegin(void) {
+    features::SceneFogBegin();
+}
+void PSE_CALL t_SetSceneFog(int a0, uint32_t a1, float a2, float a3) {
+    features::SetSceneFog(a0 != 0, a1, a2, a3);
+}
+void PSE_CALL t_SetTimeOfDay(int a0, int a1) {
+    features::SetTimeOfDay(a0, a1);
+}
+void PSE_CALL t_SetVoiceChoice(int a0, int a1) {
+    features::SetVoiceChoice(a0, a1);
+}
+int PSE_CALL t_SoldierHasOwnVoice(uint8_t* a0) {
+    auto r = features::SoldierHasOwnVoice(a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_SpeechLanguage(void) {
+    auto r = features::SpeechLanguage();
+    return r;
+}
+int PSE_CALL t_TimeContinues(void) {
+    auto r = features::TimeContinues();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_VehicleDataComplete(const char* a0) {
+    auto r = features::VehicleDataComplete(std::string(a0 ? a0 : ""));
+    return (r) ? 1 : 0;
+}
+const char* PSE_CALL t_VehicleGuns(const char* a0) {
+    static thread_local std::string s;
+    s = features::VehicleGuns(std::string(a0 ? a0 : ""));
+    return s.c_str();
+}
+int PSE_CALL t_VoiceChoice(int a0) {
+    auto r = features::VoiceChoice(a0);
+    return r;
+}
+const char* PSE_CALL t_VoiceLabel(int a0) {
+    auto r = features::VoiceLabel(a0);
+    return r;
+}
+const char* PSE_CALL t_VoiceText(uint8_t* a0, int a1) {
+    static thread_local std::string s;
+    s = features::VoiceText(a0, a1);
+    return s.c_str();
+}
+int PSE_CALL t_WeaponFactions(const char* a0) {
+    auto r = features::WeaponFactions(a0);
+    return r;
+}
+void PSE_CALL t_SetLoadoutSpin(int a0) {
+    features::SetLoadoutSpin(a0 != 0);
+}
+const char* PSE_CALL t_ModGearRows(void) {
+    static thread_local std::string s;
+    s = features::ModGearRows();
+    return s.c_str();
+}
+const char* PSE_CALL t_ModPouchSetRows(void) {
+    static thread_local std::string s;
+    s = features::ModPouchSetRows();
+    return s.c_str();
+}
+const char* PSE_CALL t_ModVehicleRows(void) {
+    static thread_local std::string s;
+    s = features::ModVehicleRows();
+    return s.c_str();
+}
+const char* PSE_CALL t_SkinVariantRows(void) {
+    static thread_local std::string s;
+    s = features::SkinVariantRows();
+    return s.c_str();
+}
+int PSE_CALL t_LoadoutForMission(void) {
+    auto r = features::LoadoutForMission();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_LobbyLocal(int a0) {
+    auto r = features::LobbyLocal(a0);
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_LobbyDevice(int a0) {
+    auto r = features::LobbyDevice(a0);
+    return r;
+}
+int PSE_CALL t_LobbyPcs(void) {
+    auto r = features::LobbyPcs();
+    return r;
+}
+const char* PSE_CALL t_LobbyPlayerName(int a0) {
+    static thread_local std::string s;
+    s = features::LobbyPlayerName(a0);
+    return s.c_str();
+}
+uint32_t PSE_CALL t_OnlineConnectedPcMask(void) {
+    auto r = features::OnlineConnectedPcMask();
+    return r;
+}
+int PSE_CALL t_SendCommand(const char* a0) {
+    auto r = net::SendCommand(std::string(a0 ? a0 : ""));
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_SendCommandTo(int a0, const char* a1) {
+    auto r = net::SendCommandTo(a0, std::string(a1 ? a1 : ""));
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ScriptLevelActive(void) {
+    auto r = features::ScriptLevelActive();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_ScriptLoadingSave(void) {
+    auto r = features::ScriptLoadingSave();
+    return (r) ? 1 : 0;
+}
+int PSE_CALL t_PhotoAnimate(const void* a0, float* a1) {
+    auto r = features::PhotoAnimate(a0, *a1);
+    return (r) ? 1 : 0;
+}
+const char* PSE_CALL t_KitWeaponIds(void) {
+    const std::vector<std::string>& r = features::KitWeaponIds();
+    static thread_local std::string s;
+    s.clear();
+    for (const std::string& v : r) {
+        if (!s.empty()) s += '\x1E';
+        s += v;
+    }
+    return s.c_str();
+}
 const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_GameFocused,
     &t_KeyHeld,
@@ -426,5 +615,48 @@ const DsfixHostV1 kTable = {sizeof(DsfixHostV1), 1, DSFIX_HOST_LAYOUT,
     &t_ApplyScriptKitNow,
     &t_LockstepActive,
     &t_LockstepSeed,
-    &t_HostSync};
+    &t_HostSync,
+    &t_AssetStoreHasFile,
+    &t_BorrowVehicleDataList,
+    &t_CampaignPortLevel,
+    &t_CoopJoystick,
+    &t_CoopPromptStyle,
+    &t_GameFile,
+    &t_ModHasFile,
+    &t_ModWeaponMagazines,
+    &t_ModWeapons,
+    &t_ModsGeneration,
+    &t_PadLevelPools,
+    &t_ReadGameTable,
+    &t_RuleTimeOfDay,
+    &t_SceneFogBegin,
+    &t_SetSceneFog,
+    &t_SetTimeOfDay,
+    &t_SetVoiceChoice,
+    &t_SoldierHasOwnVoice,
+    &t_SpeechLanguage,
+    &t_TimeContinues,
+    &t_VehicleDataComplete,
+    &t_VehicleGuns,
+    &t_VoiceChoice,
+    &t_VoiceLabel,
+    &t_VoiceText,
+    &t_WeaponFactions,
+    &t_SetLoadoutSpin,
+    &t_ModGearRows,
+    &t_ModPouchSetRows,
+    &t_ModVehicleRows,
+    &t_SkinVariantRows,
+    &t_LoadoutForMission,
+    &t_LobbyLocal,
+    &t_LobbyDevice,
+    &t_LobbyPcs,
+    &t_LobbyPlayerName,
+    &t_OnlineConnectedPcMask,
+    &t_SendCommand,
+    &t_SendCommandTo,
+    &t_ScriptLevelActive,
+    &t_ScriptLoadingSave,
+    &t_PhotoAnimate,
+    &t_KitWeaponIds};
 }  // namespace

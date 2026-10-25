@@ -33,6 +33,7 @@
 #include "core/settings.h"
 #include "loader.h"
 #include "features/features.h"
+#include "features/kit_weapons.h"
 
 namespace {
 constexpr uint32_t kSceneRead = 0x40B606;  // call FUN_004bfb90 in the level loader
@@ -46,35 +47,10 @@ using FreeFn = void(__cdecl*)(void*);
 
 const char* const kSquad[] = {"Bradley", "Foley", "Jones", "Ramirez"};
 
-enum class Kind { Main, Pistol, Launcher, Grenade, Other };
-
-// The squad's weapons with their models (catalog.dat Weaps.txt column 2). A weapon's model has to be in the level's
-// own archive (<level>.dat) - one that isn't (the SPAS-12 in Mission 1) crashes the level load (0x4D081A).
-struct Weapon {
-    const char* item;
-    const char* model;
-    Kind kind;
-};
-const Weapon kWeapons[] = {
-    {"US_WPN_M16A2", "Rifle02_M16wM203", Kind::Main},
-    {"US_WPN_M16", "Rifle03_ColtCommando", Kind::Main},
-    {"US_WPN_HKPSG1", "Sniper02_PSG1", Kind::Main},
-    {"US_WPN_BarrettSniper", "SNIPER01_BARRETL50", Kind::Main},
-    {"US_WPN_AccuracyInter", "SNIPER03_L96A1", Kind::Main},
-    {"US_WPN_M60E3", "LMG04_M60E3", Kind::Main},
-    {"US_WPN_SAW_lightmg", "LMG01_M249SAW", Kind::Main},
-    {"US_WPN_MP5SilencedSubMG", "SMG01_MP5SD3", Kind::Main},
-    {"US_WPN_Remmington870", "Shotgun01_REM870", Kind::Main},
-    {"US_WPN_FranchiSPAS", "Shotgun02_FranchiSPAS12", Kind::Main},
-    {"US_WPN_SIGP228", "Pistol03_SIGP228", Kind::Pistol},
-    {"US_WPN_Beretta92F", "Pistol02_Beretta92F", Kind::Pistol},
-    {"US_WPN_DesertEagle", "Pistol01_DesertEagle", Kind::Pistol},
-    {"US_WPN_LAW66", "LAW66_AntiTankLauncher", Kind::Launcher},
-    {"US_WPN_LAW80", "LAW80_AntiTankLauncher", Kind::Launcher},
-    {"US_WPN_FIM92", "AA01_FIM92Stinger", Kind::Launcher},
-    {"US_WPN_GrenadeFrag", "Grenade_Frag", Kind::Grenade},
-    {"US_WPN_GrenadeSmoke", "Grenade_Smoke", Kind::Grenade},
-};
+// The squad's kit weapons: features/kit_weapons.h (shared with dsfix.dll's KitWeaponIds).
+using Kind = KitKind;
+using Weapon = KitWeapon;
+constexpr const auto& kWeapons = kKitWeapons;
 
 // Weapons the list above doesn't know (added by mods): from Weaps.txt as the game loads it (mods.cpp merges mod rows
 // in) - column 1 name, 2 model, 6 category.
@@ -734,13 +710,6 @@ void ApplyUnlocks() {
     dslog::Write("Loadout: unlock tracking %s", hooked ? "installed" : "FAILED");
 }
 
-std::vector<std::string> features::KitWeaponIds() {
-    std::vector<std::string> out;
-    for (const Weapon& w : kWeapons) out.push_back(w.item);
-    for (const std::string& w : ModWeapons()) out.push_back(w);
-    return out;
-}
-
 std::vector<std::string> features::KitChoices(int slot) {
     std::vector<std::string> out;
     auto add = [&](const std::string& w) {
@@ -1028,25 +997,39 @@ void CaptureSquadKits(std::vector<SavedWeapon>& out) {
 // a path, success): the squad's spawned weapons are captured here, right after the write - as the old save hook did.
 const PSESerializationInterface* Ser() { return pse::SerializationInterface(); }
 
-void PSE_CALL KitsSave(PSESaveWriter* w, void*) {
+void KitsSave(PSESaveWriter* w) {
     CaptureSquadKits(g_saveKits);
     dslog::Write("Loadout: %zu spawned weapon(s) kept with the save", g_saveKits.size());
     if (g_saveKits.empty()) return;
     const std::vector<uint8_t> b = pse_saves::EncodeKits(g_saveKits);
     Ser()->WriteChunk(w, pse_saves::kKitsTag, pse_saves::kChunkVersion, b.data(), static_cast<uint32_t>(b.size()));
 }
-void PSE_CALL KitsLoad(PSESaveReader* r, void*) {
-    g_saveKits.clear();
+void KitsLoadChunk(uint32_t tag, uint32_t version, const std::vector<uint8_t>& b) {
+    if (tag != pse_saves::kKitsTag || version != 1) return;
+    if (!pse_saves::DecodeKits(b.data(), b.size(), &g_saveKits))
+        dslog::Write("[fail] Loadout: the save's spawned-weapon chunk is damaged (%zu read)", g_saveKits.size());
+}
+void KitsClear() { g_saveKits.clear(); }
+const features::CosavePart kKitsCosave = {&KitsSave, &KitsClear, &KitsLoadChunk, &KitsClear};
+
+// One callback set per plugin (pse.serialization): the kits', the gear's and the vehicle swaps' chunks, read once and
+// handed out by tag (each part ignores the others' tags).
+const features::CosavePart* const kCosaveParts[] = {&kKitsCosave, &features::kGearCosave, &features::kVehiclesCosave};
+void PSE_CALL CosaveSave(PSESaveWriter* w, void*) {
+    for (const features::CosavePart* p : kCosaveParts) p->save(w);
+}
+void PSE_CALL CosaveLoad(PSESaveReader* r, void*) {
+    for (const features::CosavePart* p : kCosaveParts) p->loadBegin();
     uint32_t tag, version, len;
     while (Ser()->NextChunk(r, &tag, &version, &len)) {
-        if (tag != pse_saves::kKitsTag || version != 1) continue;
         std::vector<uint8_t> b(len);
-        Ser()->Read(r, b.data(), len);
-        if (!pse_saves::DecodeKits(b.data(), b.size(), &g_saveKits))
-            dslog::Write("[fail] Loadout: the save's spawned-weapon chunk is damaged (%zu read)", g_saveKits.size());
+        if (len) b.resize(Ser()->Read(r, b.data(), len));
+        for (const features::CosavePart* p : kCosaveParts) p->loadChunk(tag, version, b);
     }
 }
-void PSE_CALL KitsRevert(void*) { g_saveKits.clear(); }
+void PSE_CALL CosaveRevert(void*) {
+    for (const features::CosavePart* p : kCosaveParts) p->revert();
+}
 
 void GiveSaved(uint8_t* soldier, const SavedWeapon& w) {
     auto* item = static_cast<uint8_t*>(SpawnWeapon(w.id.c_str()));
@@ -1132,8 +1115,7 @@ void ApplySaveKits() {
                     patch::HookCall(kRestoreSkinSite, reinterpret_cast<const void*>(&RestoreSkin), kApplySkin);
     dslog::Write("Loadout: save kit hooks %s", ok ? "installed" : "FAILED");
     // Co-save chunks (pse.serialization): this plugin's kits, the gear's and the vehicle swaps'.
-    Ser()->SetCallbacks(pse_host::Find("dsfix.loadout"), &KitsSave, &KitsLoad, &KitsRevert, nullptr);
-    features::GearCosaveInit();
+    Ser()->SetCallbacks(pse_host::Find("dsfix.loadout"), &CosaveSave, &CosaveLoad, &CosaveRevert, nullptr);
     features::VehicleCosaveInit();
 }
 
@@ -1198,4 +1180,6 @@ void features::OnFrameLoadoutDev() {
     }
     down7 = now7;
 }
+#else
+void features::OnFrameLoadoutDev() {}   // (in dsfix.loadout's table in every build)
 #endif

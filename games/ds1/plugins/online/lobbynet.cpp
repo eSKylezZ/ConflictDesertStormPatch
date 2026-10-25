@@ -249,9 +249,13 @@ std::vector<std::string> features::LobbyConsole(const std::string& arg) {
         features::ModSyncAccept();
         return {"getting the host's mods"};
     }
+    if (arg == "leave") {   // what the lobby's Esc does: session ended, back to ONLINE CO-OP (tests: a background copy)
+        features::LobbyLeave();
+        return {"left the lobby"};
+    }
     if (arg.compare(0, 6, "ready ") == 0) {   // a player of this PC ready (tests: a pad nobody can press)
         const int player = std::atoi(arg.substr(6).c_str()) - 1;
         return {lobbynet::Request("LB R " + std::to_string(player) + " 1") ? "ready" : "not changed"};
     }
-    return {"lobby [list] | add <pad 0..7 | kb> | remove <player 1..4> | ready <player 1..4>"};
+    return {"lobby [list] | add <pad 0..7 | kb> | remove <player 1..4> | ready <player 1..4> | leave"};
 }

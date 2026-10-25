@@ -7,7 +7,7 @@
 #include "pse/pse_api.h"
 
 #define DSFIX_HOST_INTERFACE "dsfix.host"
-#define DSFIX_HOST_LAYOUT 0xD9DDE9A8u
+#define DSFIX_HOST_LAYOUT 0x07C918C6u
 
 typedef struct DsfixHostV1 {
     uint32_t size;
@@ -40,7 +40,7 @@ typedef struct DsfixHostV1 {
     int (PSE_CALL* RestartLevel)(void);
     int (PSE_CALL* LocalPlayer)(void);
     const settings::Values* (PSE_CALL* DsfixSettingsValues)(void);
-    int (PSE_CALL* ReadString)(const char*, char*);
+    int (PSE_CALL* ReadString)(const char*, const char**);
     int (PSE_CALL* WriteString)(const char*, const char*);
     int (PSE_CALL* PluginBool)(const char*, const char*, int);
     void (PSE_CALL* AxisParts)(uint8_t*, int, float*, int*, int*, float*);
@@ -49,7 +49,7 @@ typedef struct DsfixHostV1 {
     void (PSE_CALL* SplitHudView)(int, float, float, float, float);
     int (PSE_CALL* SplitScreenPlayers)(void);
     void (PSE_CALL* BeginOnlineSession)(int, int);
-    uint32_t (PSE_CALL* CoopDeviceActions)(int, int32_t*, char*);
+    uint32_t (PSE_CALL* CoopDeviceActions)(int, int32_t*, const char**);
     int (PSE_CALL* CoopPlayers)(void);
     void (PSE_CALL* SetPadsBackground)(int);
     int (PSE_CALL* UiCaptureKeys)(int);
@@ -93,4 +93,47 @@ typedef struct DsfixHostV1 {
     int (PSE_CALL* LockstepActive)(void);
     uint32_t (PSE_CALL* LockstepSeed)(void);
     const features::HostSettings* (PSE_CALL* HostSync)(void);
+    int (PSE_CALL* AssetStoreHasFile)(const char*);
+    void (PSE_CALL* BorrowVehicleDataList)(const char*, const char*);
+    int (PSE_CALL* CampaignPortLevel)(const char*);
+    int (PSE_CALL* CoopJoystick)(int);
+    int (PSE_CALL* CoopPromptStyle)(int);
+    const char* (PSE_CALL* GameFile)(const char*);
+    int (PSE_CALL* ModHasFile)(const char*);
+    int (PSE_CALL* ModWeaponMagazines)(const char*);
+    const char* (PSE_CALL* ModWeapons)(void);
+    int (PSE_CALL* ModsGeneration)(void);
+    void (PSE_CALL* PadLevelPools)(const char*, int);
+    int (PSE_CALL* ReadGameTable)(const char*, const char**);
+    void (PSE_CALL* RuleTimeOfDay)(void);
+    void (PSE_CALL* SceneFogBegin)(void);
+    void (PSE_CALL* SetSceneFog)(int, uint32_t, float, float);
+    void (PSE_CALL* SetTimeOfDay)(int, int);
+    void (PSE_CALL* SetVoiceChoice)(int, int);
+    int (PSE_CALL* SoldierHasOwnVoice)(uint8_t*);
+    int (PSE_CALL* SpeechLanguage)(void);
+    int (PSE_CALL* TimeContinues)(void);
+    int (PSE_CALL* VehicleDataComplete)(const char*);
+    const char* (PSE_CALL* VehicleGuns)(const char*);
+    int (PSE_CALL* VoiceChoice)(int);
+    const char* (PSE_CALL* VoiceLabel)(int);
+    const char* (PSE_CALL* VoiceText)(uint8_t*, int);
+    int (PSE_CALL* WeaponFactions)(const char*);
+    void (PSE_CALL* SetLoadoutSpin)(int);
+    const char* (PSE_CALL* ModGearRows)(void);
+    const char* (PSE_CALL* ModPouchSetRows)(void);
+    const char* (PSE_CALL* ModVehicleRows)(void);
+    const char* (PSE_CALL* SkinVariantRows)(void);
+    int (PSE_CALL* LoadoutForMission)(void);
+    int (PSE_CALL* LobbyLocal)(int);
+    int (PSE_CALL* LobbyDevice)(int);
+    int (PSE_CALL* LobbyPcs)(void);
+    const char* (PSE_CALL* LobbyPlayerName)(int);
+    uint32_t (PSE_CALL* OnlineConnectedPcMask)(void);
+    int (PSE_CALL* SendCommand)(const char*);
+    int (PSE_CALL* SendCommandTo)(int, const char*);
+    int (PSE_CALL* ScriptLevelActive)(void);
+    int (PSE_CALL* ScriptLoadingSave)(void);
+    int (PSE_CALL* PhotoAnimate)(const void*, float*);
+    const char* (PSE_CALL* KitWeaponIds)(void);
 } DsfixHostV1;

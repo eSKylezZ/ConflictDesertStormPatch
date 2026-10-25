@@ -211,6 +211,10 @@ const PSEHooksInterface* HooksInterface() { return kit::Hooks(); }
 // Moved code asks the loader-side accessors (loader.h) as dsfix.dll did: the plugin's own interfaces answer.
 const PSEMessagingInterface* MessagingInterface() { return kit::Messaging(); }
 const PSESettingsInterface* SettingsInterface() { return kit::Settings(); }
+const PSESerializationInterface* SerializationInterface() {
+    static const auto* t = static_cast<const PSESerializationInterface*>(kit::Query(PSE_SERIALIZATION_INTERFACE, 1));
+    return t;
+}
 const PSELoadInterface* LoadInterfaceFor(PSEPluginHandle) { return kit::LoadInterface(); }
 // lua_bridge.h logs as plugin "pse" through these; a kit plugin writes the line under its own name.
 PSEPluginHandle FindPlugin(const char*) { return kit::Self(); }

@@ -4,6 +4,7 @@
 #include <cstdint>
 
 namespace settings { struct Values; }   // core/settings.h
+struct PSESaveWriter;                     // pse_api.h (co-save writer, opaque)
 
 // Each Apply* brings the game in line with the current settings (patch or un-patch). Called once before
 // WinMain, and again when the launcher saves new settings (before any game code uses the patched sites).
@@ -29,9 +30,17 @@ bool PluginsLoaded();                    // services.cpp: PSE_MSG_POST_LOAD seen
 const settings::Values* DsfixSettingsValues();   // host_iface.cpp: for the kit's settings::Get() in the plugins
 std::string CompatLocalPluginsText();     // host_iface.cpp: pse::compat::LocalPlugins() as text lines (dsfix.online)
 const void* LuaHostTable();             // host_iface.cpp: the loader's private pse.lua.host (dsfix.missions)
+// host_iface.cpp, for dsfix.loadout: what the plain-C calls can't carry as it is
+void BorrowVehicleDataList(const char* level, const std::string& units);   // units joined by '\n'
+void SetLoadoutSpin(bool on);            // settings::SetToggle(featLoadoutSpin)
+std::string ModGearRows();               // ModGear(): model TAB kind TAB name per line
+std::string ModPouchSetRows();           // ModPouchSets(): name TAB 7 models per line
+std::string ModVehicleRows();            // ModVehicles(): id TAB name TAB base TAB faction per line
+std::string SkinVariantRows();           // SkinVariants(): uniform TAB role TAB texture TAB name per line
 // dsfix.online (plugins/online/glue.cpp): the lobby name of a player ("" = no such player), the connected PCs (bit =
 // PC number) / peers, the console's "net ..." command and the connection's news (lines to print), goodbye at exit
 std::string LobbyPlayerName(int player);
+void LobbyLeave();                       // lobbymenu.cpp: the ONLINE LOBBY's Esc (console "lobby leave")
 uint32_t OnlineConnectedPcMask();
 int OnlineConnectedPeers();
 std::vector<std::string> OnlineConsoleNet(const std::string& arg);
@@ -249,7 +258,15 @@ bool VehiclesChanged();                       // the screen's choice differs fro
 bool VehiclesCommit();                        // screen closed: remembered; true = the mission restarts with them
 bool VehicleReloadSkip();                     // the restart after a change is loading / playing its intro
 bool VehicleReloadOpened();                   // loadout screen opened: true once after such a restart
-void VehicleCosaveInit();                     // co-save chunk callbacks of dsfix.vehicles (pse.serialization)
+void VehicleCosaveInit();                     // vehicles.cpp: listens for the game layer's LOAD_BEGIN / LOAD_END
+// A part of dsfix.loadout's co-save (loadout.cpp has the one callback set; each part keeps its own chunk tag).
+struct CosavePart {
+    void (*save)(::PSESaveWriter* w);
+    void (*loadBegin)();
+    void (*loadChunk)(uint32_t tag, uint32_t version, const std::vector<uint8_t>& data);
+    void (*revert)();
+};
+extern const CosavePart kGearCosave, kVehiclesCosave;
 void VehicleShow(int slot);                   // loadout screen, per frame: slot's vehicle shown (-1 = all hidden)
 uint8_t* VehicleObject(int slot);             // what the VEHICLE tab's camera looks at (preview or the level's own)
 void VehicleShowEnd();                        // screen closed: the level's vehicles back, previews out of play
@@ -269,7 +286,6 @@ void ApplyGearSnapshot(void* soldier, const std::vector<GearPiece>& pieces);
 void SetSavedGear(int role, std::vector<GearPiece> pieces);   // a loaded save's gear, put on when the level plays
 void GearCaptureForSave();   // the squad's gear for the save being written (co-save chunk of dsfix.gear)
 void GearRestoreSaved();     // the saved / loaded gear back on after a save restore
-void GearCosaveInit();       // co-save chunk callbacks of dsfix.gear (pse.serialization)
 void OnFrameGear();
 // Uniform variants from .skin files with "uniform name = ..." (mods.cpp): rows of the skin tables (uniform 0 SAS /
 // 1 US Delta, role = squad slot) that the customise screen offers on its UNIFORM row, not as other soldiers.

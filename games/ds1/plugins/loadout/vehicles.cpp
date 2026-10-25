@@ -502,7 +502,11 @@ void features::VehiclesLevelStart(const char* level) {
         g_swaps[from] = to;
         units.push_back(to);
     }
-    if (!units.empty()) features::BorrowVehicleData(g_level.c_str(), units);
+    if (!units.empty()) {
+        std::string joined;
+        for (const std::string& u : units) joined += u + '\n';
+        features::BorrowVehicleDataList(g_level.c_str(), joined);
+    }
     // room in the render pools for a swapped-in vehicle with more parts and for the VEHICLE tab's previews
     features::PadLevelPools(g_level.c_str(), 1500);
     dslog::Write("Vehicles: %s - %zu swap(s)%s", g_level.c_str(), g_swaps.size(), save ? " from the saved game" : "");
@@ -904,7 +908,7 @@ bool features::VehicleReloadOpened() {
 namespace {
 const PSESerializationInterface* Ser() { return pse::SerializationInterface(); }
 
-void PSE_CALL VehiclesSave(PSESaveWriter* w, void*) {
+void VehiclesSave(PSESaveWriter* w) {
     if (!g_enabled) return;
     pse_saves::SavedVehicles out;
     for (const Slot& s : g_slots)
@@ -922,31 +926,29 @@ void PSE_CALL OnLoaderMessage(const PSEMessage* m, void*) {
     else if (m->type == PSE_MSG_LOAD_END) g_loadBegun = false;
 }
 
-void PSE_CALL VehiclesLoad(PSESaveReader* r, void*) {
+void VehiclesLoadBegin() {
     if (g_loadBegun) g_loadingSave = true;
     g_saveSwaps.clear();
-    uint32_t tag, version, len;
-    while (Ser()->NextChunk(r, &tag, &version, &len)) {
-        if (tag != pse_saves::kVehiclesTag || version != 1) continue;
-        std::vector<uint8_t> b(len);
-        Ser()->Read(r, b.data(), len);
-        pse_saves::SavedVehicles in;
-        if (!pse_saves::DecodeVehicles(b.data(), b.size(), &in))
-            dslog::Write("[fail] Vehicles: the save's vehicle chunk is damaged");
-        for (const auto& [from, to] : in) g_saveSwaps[Upper(from)] = to;
-    }
 }
-void PSE_CALL VehiclesRevert(void*) {
+void VehiclesLoadChunk(uint32_t tag, uint32_t version, const std::vector<uint8_t>& b) {
+    if (tag != pse_saves::kVehiclesTag || version != 1) return;
+    pse_saves::SavedVehicles in;
+    if (!pse_saves::DecodeVehicles(b.data(), b.size(), &in)) dslog::Write("[fail] Vehicles: the save's vehicle chunk is damaged");
+    for (const auto& [from, to] : in) g_saveSwaps[Upper(from)] = to;
+}
+void VehiclesRevert() {
     if (g_loadBegun) g_loadingSave = true;   // a save without vehicle swaps (or no co-save at all)
     g_saveSwaps.clear();
 }
 }  // namespace
 
 // A save was loaded: the next level load uses its swaps (g_saveSwaps, from its co-save - none if it had no chunk).
+// Its VEHS chunk goes through loadout.cpp's co-save callbacks (saves from before 2026-10-25: under dsfix.vehicles,
+// adopted by the manifest).
+const features::CosavePart features::kVehiclesCosave = {&VehiclesSave, &VehiclesLoadBegin, &VehiclesLoadChunk,
+                                                        &VehiclesRevert};
 void features::VehicleCosaveInit() {
-    const PSEPluginHandle me = pse_host::Find("dsfix.vehicles");
-    Ser()->SetCallbacks(me, &VehiclesSave, &VehiclesLoad, &VehiclesRevert, nullptr);
-    pse::MessagingInterface()->RegisterListener(me, "pse", &OnLoaderMessage, nullptr);
+    pse::MessagingInterface()->RegisterListener(pse_host::Find("dsfix.vehicles"), "pse", &OnLoaderMessage, nullptr);
 }
 
 // ---- the VEHICLE tab's preview (loadout screen) ----
@@ -1281,7 +1283,7 @@ uint8_t* NewObject(uint8_t* record, int& stage, DWORD& code) {   // (own functio
 uint8_t* MakePreview(Slot& s, const std::string& unit) {
     const Row* row = RowOf(unit);
     if (!row || s.record.empty()) return nullptr;
-    features::BorrowVehicleData(g_level.c_str(), {unit});
+    features::BorrowVehicleDataList(g_level.c_str(), unit);
     void* model = VehicleModel(row->model, true);
     if (!model) return nullptr;
     std::vector<uint8_t> rec = s.record;

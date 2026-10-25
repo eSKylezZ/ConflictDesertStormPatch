@@ -1,0 +1,6 @@
+# The mission briefing + loadout screen, kits, soldier gear, vehicle swaps and the mission overview for
+# Conflict: Desert Storm (DesertStormFix).
+name     = dsfix.loadout
+requires = dsfix >= 3.3
+# co-save chunks written before 2026-10-25, when gear and vehicle swaps were plugins of their own
+adopts   = dsfix.gear, dsfix.vehicles

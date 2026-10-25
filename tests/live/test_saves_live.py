@@ -1,8 +1,9 @@
 """PSE co-save wired into the game's save / load (core/pse_saves.cpp, docs/sdk/reference/serialization.md "DS1").
 
-A game save "<name>.sav" gets "<name>.pse" next to it with the plugins' chunks (dsfix.gear 'GEAR', dsfix.loadout
-'KITS', dsfix.vehicles 'VEHS'); loading the save hands them back; chunks of plugins that aren't installed survive a
-rewrite; a save from before the co-save (".sav.dsfix" sidecar only) is still read.
+A game save "<name>.sav" gets "<name>.pse" next to it with the plugins' chunks (dsfix.loadout 'KITS', 'GEAR', 'VEHS' -
+until 2026-10-25 GEAR was dsfix.gear's and VEHS dsfix.vehicles'; dsfix.loadout adopts those names); loading the save
+hands them back; chunks of plugins that aren't installed survive a rewrite; chunks under the old names come back and
+are rewritten once under dsfix.loadout; a save from before the co-save (".sav.dsfix" sidecar only) is still read.
 
 The saves are made / loaded by calling what the game's own call sites call (the save menu 0x475404 and the load menu
 0x449B73 are hooked: the call target there is the hook chain) - no menu driving. Only files named "PSE Live Test*"
@@ -209,7 +210,7 @@ def test_save_writes_cosave_with_chunks(c, saves):
     assert not os.path.exists(path + ".dsfix"), "an old sidecar was written"
     chunks = parse_pse(co)
     print("\n[live] co-save chunks:", [(n, struct.pack(">I", t).decode(), v, len(d)) for n, t, v, d in chunks])
-    gear = [d for n, t, v, d in chunks if n == "dsfix.gear" and t == tag("GEAR") and v == 1]
+    gear = [d for n, t, v, d in chunks if n == "dsfix.loadout" and t == tag("GEAR") and v == 1]
     assert len(gear) == 1
     pieces = dict(decode_gear(gear[0])[role])
     assert pieces.get(removed) == "", (removed, pieces)   # saved as "nothing on it"
@@ -230,8 +231,8 @@ def test_unknown_plugin_chunks_survive_load_and_resave(c, saves):
     lines = log_since(c, "load test start")
     assert any("PSE saves: co-save" in l and "loaded" in l for l in lines), lines[-30:]
     assert not any("PSE saves: new game" in l for l in lines), "a loaded save must not send NEW_GAME"
-    # Bradley's taken-off piece stays off: the gear chunk came back through dsfix.gear's load callback.
-    removed = [conn for conn, m in decode_gear([d for n, t, v, d in chunks if n == "dsfix.gear"][0])[c.run("return sv_role()")]
+    # Bradley's taken-off piece stays off: the gear chunk came back through dsfix.loadout's load callback.
+    removed = [conn for conn, m in decode_gear([d for n, t, v, d in chunks if t == tag("GEAR")][0])[c.run("return sv_role()")]
                if m == ""]
     assert removed
     deadline = time.time() + 10
@@ -243,7 +244,42 @@ def test_unknown_plugin_chunks_survive_load_and_resave(c, saves):
     assert game_save(c, path) == 1
     again = parse_pse(co)
     assert ghost in again, again
-    assert sum(1 for x in again if x[0] == "dsfix.gear") == 1
+    assert sum(1 for x in again if x[1] == tag("GEAR")) == 1
+
+
+def text(s):
+    return struct.pack("<H", len(s)) + s.encode()
+
+
+def test_chunks_under_the_old_plugin_names_are_adopted(c, saves):
+    """A save from before the loadout group was one DLL: GEAR under dsfix.gear, VEHS under dsfix.vehicles. Both reach
+    dsfix.loadout's parts (manifest "adopts"); the next save writes them under dsfix.loadout only."""
+    path = os.path.join(saves, PREFIX + ".sav")
+    co = os.path.join(saves, PREFIX + ".pse")
+    chunks = []
+    for n, t, v, d in parse_pse(co):
+        if t == tag("GEAR"): n = "dsfix.gear"
+        if t != tag("VEHS"): chunks.append((n, t, v, d))
+    fake = "PSE_ADOPT_TEST_UNIT"
+    chunks.append(("dsfix.vehicles", tag("VEHS"), 1, struct.pack("<I", 1) + text(fake) + text("US_VEH_M2A1_Bradley")))
+    write_pse(co, chunks)
+    c.run("dev.log_write('adopt test start')")
+    assert game_load(c, path), "the game refused to load the test save"
+    wait_reload(c)
+    deadline = time.time() + 15
+    while time.time() < deadline and not any("saved gear back on" in l for l in log_since(c, "adopt test start")):
+        time.sleep(0.3)
+    lines = log_since(c, "adopt test start")
+    assert any("saved gear back on" in l for l in lines), "GEAR under dsfix.gear didn't come back"
+    # the vehicle swap reached the level build: applied, or refused by name (the unit isn't in Mission 1)
+    assert any(fake in l or ("swap(s) from the saved game" in l and " 0 swap(s)" not in l) for l in lines), \
+        [l for l in lines if "Vehicles:" in l]
+    assert game_save(c, path) == 1
+    again = parse_pse(co)
+    print("\n[live] after the re-save:", [(n, struct.pack(">I", t).decode()) for n, t, v, d in again])
+    assert not [x for x in again if x[0] in ("dsfix.gear", "dsfix.vehicles")], again
+    ours = [t for n, t, v, d in again if n == "dsfix.loadout"]
+    assert tag("GEAR") in ours and len(ours) == len(set(ours)), again
 
 
 def test_old_sidecar_still_read(c, saves):

@@ -396,6 +396,8 @@ bool ParseManifest(const std::string& text, PluginManifest* out, std::string* er
             if (!names(&m.conflicts)) return false;
         } else if (key == "after") {
             if (!names(&m.after)) return false;
+        } else if (key == "adopts") {
+            if (!names(&m.adopts)) return false;
         } else if (key == "host") {
             const std::string v = Lower(value);
             if (v == "true" || v == "yes" || v == "1") m.host = true;
@@ -761,6 +763,7 @@ uint32_t LoadPlugins(const std::wstring& dir, const std::vector<std::string>& ho
                 continue;
             }
             if (isHost[i]) SetPluginHost(handle);   // before its Load: its Query answers pse.host from the start
+            if (!cands[i].manifest.adopts.empty()) SetPluginAdopts(handle, cands[i].manifest.adopts);
             r.handle = handle;
             int ok = 0;
             if (!detail::GuardedLoadFn(load, LoadInterfaceFor(handle), &ok, &fault)) {

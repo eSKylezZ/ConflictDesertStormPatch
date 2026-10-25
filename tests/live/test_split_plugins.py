@@ -49,6 +49,9 @@ SPLIT = {
     "dsfix.online": (SIM, None, [(0x40F0CB, "call_site"), (0x40F16F, "call_site"), (0x40EF60, "call_site")]),
     # mission scripts (2026-10-25): the text-manifest level load (.lua levels) + the level archive open (--@archive)
     "dsfix.missions": (SIM, None, [(0x40C405, "call_site"), (0x40C19C, "call_site")]),
+    # briefing / loadout group (2026-10-25): MovieEnd's message 0x12 (the overview); the skin apply entry is
+    # test_skin_apply_chain's (off with the Mods folder and BRIEFING & LOADOUT both off)
+    "dsfix.loadout": (SIM, None, [(0x486FDE, "bytes")]),
 }
 ENVIRONMENT, ATMOSPHERE, HOUR = 0x63C948, 0x1A58, 0x3C   # [[0x63C948]+0x1A58]+0x3C = the atmosphere's hour
 TRANSPARENTS = 0x40E356       # chained: nameplates (dsfix.online, priority 50) + dsfix.weather (100)
@@ -56,7 +59,7 @@ HUD_SCALE = 0x5D7B00          # hud: the cave's HudScale float = HudScalePercent
 SERVICES = {"dsfix.difficulty", "dsfix.jpfixes", "dsfix.handling", "dsfix.tooltips", "dsfix.rumble", "dsfix.bodies",
             "dsfix.followers", "dsfix.hud", "dsfix.weather", "dsfix.timeofday", "dsfix.voices", "dsfix.fontsharp",
             "dsfix.cinematics", "dsfix.display"}
-SKIN_APPLY = 0x435BE0         # the game's skin apply: dsfix.skins (dsfix.dll) + dsfix.bodies chain on its entry
+SKIN_APPLY = 0x435BE0         # the game's skin apply: dsfix.loadout's mid-level skins + dsfix.bodies chain on its entry
 TEXT_VERY_HARD, TEXT_VERY_EASY = 0xC0110001, 0xC0110002
 DROP_JUMP = 0x431EC0          # jpfixes: item drop jp rel8 (0x56 the game's, 0x1A safe drop)
 RUMBLE_TABLE = 0x5EB540       # rumble: effect row 0 (strong i16): the game's 0, ours 20000
@@ -245,15 +248,15 @@ def test_rumble_follows_its_setting(c, split):
 
 
 def test_skin_apply_chain(c, split):
-    # dsfix.dll keeps the mid-level skin work (textures, saved skins on every side) the loadout screen needs; the mod
+    # dsfix.loadout has the mid-level skin work (textures, saved skins on every side) the loadout screen needs; the mod
     # bodies chain on the same entry. Both only with the Mods folder (bodies) / it or BRIEFING & LOADOUT (skins) on.
     owners = [h["owner"] for h in c.run("return dev.pse_hooks()") if h["va"] == SKIN_APPLY]
     text = log_text(c, 20000)
     if "[off]  Skins:" not in text:
-        assert "dsfix.skins" in owners, owners
+        assert "dsfix.loadout" in owners, owners
     if "[off]  Bodies: body swap off" not in text:
         assert "dsfix.bodies" in owners, owners
-    assert set(owners) <= {"dsfix.skins", "dsfix.bodies"}, owners
+    assert set(owners) <= {"dsfix.loadout", "dsfix.bodies"}, owners
 
 
 def test_followers_follow_their_setting(c, split):

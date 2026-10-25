@@ -1837,7 +1837,7 @@ void Update() {
     if (in & kLeft) Change(-1);
     if (in & kRight) Change(1);
     if (in & kSpin) {
-        settings::SetToggle(&settings::Values::featLoadoutSpin, !settings::Get().featLoadoutSpin);
+        features::SetLoadoutSpin(!settings::Get().featLoadoutSpin);
         dslog::Write("Customise: camera spin %s", settings::Get().featLoadoutSpin ? "on" : "off");
     }
     if (in & kResetView) {

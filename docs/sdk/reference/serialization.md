@@ -21,6 +21,10 @@ All functions: game thread. The callbacks run while the game saves / loads.
   was deleted since); otherwise those already in the file being overwritten are kept. A new game forgets the
   session's ones.
 - A plugin that is installed but writes nothing on save drops its old chunks from that save.
+- **Merged / renamed plugins**: a plugin whose manifest says `adopts = old.name, ...` ([plugins.md](plugins.md))
+  receives the chunks saved under those names while no plugin of that name is loaded - in the same load callback as
+  its own, told apart by tag. They count as its chunks: the next save writes what it writes now, under its own name,
+  and the old names' copies are not kept beside them.
 
 Revert means "reset to a fresh state": clear what the plugin keeps per game.
 
@@ -128,14 +132,14 @@ game layer `PSE\Games\pse_ds1.dll` does this (`pse/games/ds1/ds1_saves.cpp`; ent
   before a new save of that name is written, so its chunks can't end up in an unrelated save.
 - Steam Cloud syncs the save folder (`steam_autocloud.vdf`); the `.pse` files go with the saves.
 - **Older saves**: until DesertStormFix 3.3.0-Alpha the same data was a text sidecar `<name>.sav.dsfix`. A save with a
-  `.dsfix` and no `.pse` is read through it: the lines become the chunks the plugins write today (`dsfix.loadout`
-  `KITS`, `dsfix.gear` `GEAR`, `dsfix.vehicles` `VEHS`, [ds1-plugins.md](../ds1-plugins.md#co-save-chunks)) and go
+  `.dsfix` and no `.pse` is read through it: the lines become the chunks `dsfix.gear` / `dsfix.vehicles` / `dsfix.loadout` wrote before
+  2026-10-25 (`KITS`, `GEAR`, `VEHS` - `dsfix.loadout` adopts the old names), [ds1-plugins.md](../ds1-plugins.md#co-save-chunks)) and go
   through the normal load callbacks; other plugins revert. The `.dsfix` is never written or deleted any more; the next
   save of that slot writes a `.pse`, which wins from then on. Only DesertStormFix knows that format: it hands the
   layer its reader (`src/core/pse_saves.cpp` `LegacyCosave`, through the private `pse.game.ds1.host`
   `SetLegacyCosave`); without DesertStormFix such a save simply reverts every plugin.
-- DesertStormFix's own chunks are captured in their save callbacks (`dsfix.loadout` the squad's spawned weapons,
-  `dsfix.gear` the squad's gear) - right after the game's write, as its old call-site hooks did; `dsfix.vehicles` marks
+- DesertStormFix's own chunks are captured in `dsfix.loadout`'s save callback (the squad's spawned weapons and
+  its gear) - right after the game's write, as its old call-site hooks did; its vehicle-swap part marks
   "the next level is a loaded save" in its load / revert callback between `LOAD_BEGIN` and `LOAD_END`.
 
 ## For the game layer (not part of the SDK)

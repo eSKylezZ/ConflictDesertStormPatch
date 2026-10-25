@@ -42,7 +42,7 @@ ALWAYS = [
     (0x5230D0, "function", "dsfix.shadows"),       # object shadow volume builder
     (0x5D97D0, "pointer", "dsfix.menus"),          # YES / NO screen enter vtable slot
     (0x5D9214, "pointer", "dsfix.photo"),          # pause menu set-up vtable slot (dsfix.photo since 2026-10-24)
-    (0x486FDE, "bytes", "dsfix.overview"),         # call@ MovieEnd message 0x12
+    (0x486FDE, "bytes", "dsfix.loadout"),           # call@ MovieEnd message 0x12
 ]
 
 

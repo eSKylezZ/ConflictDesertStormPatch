@@ -68,17 +68,13 @@ const pse_host::Feature kFeatures[] = {
     // after ApplyMods: the .weapon files name the icons
     {"dsfix.weaponicons", "Weapon pictures from mods", kClient, &features::ApplyWeaponIcons},
     // skins applied mid-level (loadout screen, loaded saves); the mod bodies are plugin dsfix.bodies
-    {"dsfix.skins", "Mid-level skins", kSim, &features::ApplySkins},
-    {"dsfix.overview", "Mission overview", kSim, &features::ApplyOverview},
-    {"dsfix.loadout", "Loadout + unlocks", kSim, &features::ApplyLoadout},
-    {"dsfix.customise", "Briefing / loadout screen", kSim, &features::ApplyCustomise},
-    {"dsfix.gear", "Soldier gear", kSim, &features::ApplyGear},
     {"dsfix.diagnostics", "Diagnostics + performance overlay", kClient, &features::ApplyDiagnostics},
     // Own DLLs in PSE\Plugins (games/ds1/plugins, on the dsfix kit): dsfix.widescreen, dsfix.textfit, dsfix.mouse,
     // dsfix.menus, dsfix.units, dsfix.limits, dsfix.audio, dsfix.shadows, dsfix.difficulty, dsfix.jpfixes,
     // dsfix.handling, dsfix.tooltips, dsfix.rumble, dsfix.bodies, dsfix.followers, dsfix.hud, dsfix.weather (+ footprints), dsfix.timeofday, dsfix.voices, dsfix.fontsharp, dsfix.developer, dsfix.cinematics, dsfix.display,
     // dsfix.photo, dsfix.online (+ nameplates, own view, lockstep / authority, determinism), dsfix.missions (Lua
-    // levels, translated missions, co-op scripts, API trace) - loaded after this DLL's
+    // levels, translated missions, co-op scripts, API trace), dsfix.loadout (briefing / loadout screen, kits, gear,
+    // vehicle swaps, overview, mid-level skins) - loaded after this DLL's
     // features.
     // setting MISSIONS FROM LUA (dev: Dev\MissionSource) - Mission*.dll / Training*.dll levels run as their translated Lua
     // after the asset store + the mission translations have read them: the originals move to PSE\Originals
@@ -87,7 +83,6 @@ const pse_host::Feature kFeatures[] = {
     {"dsfix.console", "Developer console", kSim, &features::ApplyConsole},
     {"dsfix.dev", "Developer test hooks", kSim, &features::ApplyDevHooks},
     // Plugins whose hooks are made later, at run time (their own OwnerScope):
-    {"dsfix.vehicles", "Vehicle swaps", kSim, nullptr},
     {"dsfix.overlay", "Overlay drawing (icons, late draws)", kClient, nullptr},
 };
 

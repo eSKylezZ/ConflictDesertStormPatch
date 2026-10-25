@@ -62,6 +62,15 @@ First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still 
   setting `TranslatedMissions` moved to `dsfix.missions`' key (copied once). `pse.lua.host` stays host-plugins-only:
   dsfix.dll passes its table on (`dsfix.host` `LuaHostTable`; `lua_bridge.h` gained `AttachTable`). Plugin Lua
   namespaces (pse.lua) are unchanged for plugin authors. `features::SetScriptKit` takes the four slots as strings.
+- 2026-10-25 – **Manifest key `adopts`** ([reference/plugins.md](reference/plugins.md),
+  [reference/serialization.md](reference/serialization.md)): `adopts = old.name, ...` hands a plugin the co-save chunks
+  saved under those names while no plugin of that name is loaded; the next save writes them under its own name only (no
+  old copies kept). For plugins that merge or rename older ones. Loader: `SetPluginAdopts` / `PluginAdopting`.
+- 2026-10-25 – **`dsfix.loadout`**: the briefing / loadout screen, kits, gear, vehicle swaps, the mission overview and
+  mid-level skins are one plugin DLL (`plugins/loadout/loadout.spec`). The internal plugins `dsfix.customise`,
+  `dsfix.gear`, `dsfix.vehicles`, `dsfix.overview` and `dsfix.skins` are gone; `GEAR` / `VEHS` co-save chunks are
+  written under `dsfix.loadout` now (old names adopted). `dsfix.host` gained text-row versions of mods.cpp's struct lists
+  (`ModGearRows`, `ModPouchSetRows`, `ModVehicleRows`, `SkinVariantRows`), `BorrowVehicleDataList`, `SetLoadoutSpin`.
 - 2026-10-23 – **pse.lua on Desert Storm II**: `ds2fix` (sub-plugin `ds2fix.scripthost`) owns a Lua state for `.lua`
   levels and binds it with `lua_bridge.h` like DS1 - plugin namespaces, `CallGlobal`, `pse.lua.level_start` /
   `level_end` now also on DS2 ([lua.md](reference/lua.md#ds2)). No API change (the bridge was game-neutral already).

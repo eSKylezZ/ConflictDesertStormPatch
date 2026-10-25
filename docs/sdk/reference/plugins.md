@@ -35,9 +35,10 @@ after      = dsfix.splitscreen
 | `optional` | names | Loaded first **if** present; nothing happens when missing. |
 | `conflicts` | names | If any of them is present (built in or external), **this** plugin is not loaded. |
 | `after` | names | Load order only: after them if present. |
+| `adopts` | names | Co-save only: chunks saved under these plugin names come to **this** plugin while no plugin of that name is loaded (a plugin that replaces / merges older ones keeps reading their saves) - [serialization.md](serialization.md). |
 | `host` | `true` / `false` | **Private** - only for PSE's own host plugins ([below](#host-plugins)). Anyone else: leave it out. |
 
-- Keys are case-insensitive; `requires` / `optional` / `conflicts` / `after` may repeat (lists add up); empty list
+- Keys are case-insensitive; `requires` / `optional` / `conflicts` / `after` / `adopts` may repeat (lists add up); empty list
   items are skipped. Unknown keys are logged as a warning and ignored (newer manifests stay readable).
 - Versions: `major[.minor[.patch]]` (major ≤ 255, minor / patch ≤ 4095) = `PSE_MAKE_VERSION`. Only `>=` exists.
 - Syntax errors (no `name`, `name` twice, bad name, a line without `=`, an operator other than `>=`, a bad version)
