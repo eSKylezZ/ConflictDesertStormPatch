@@ -67,6 +67,11 @@ def main():
     if run([sys.executable, os.path.join(ROOT, "games", "ds1", "scripts", "gen_host_calls.py"), "--check"], cwd=ROOT):
         print("gen_host_calls: generated files are stale - run games/ds1/scripts/gen_host_calls.py")
         failures += 1
+    # the readable translator's data (API slot names, messages, bridge text) must match the ModKit's (when it's there)
+    if os.path.isdir(os.path.join(os.path.dirname(ROOT), "ConflictDesertStormModKit", "conflict_ds_tools")):
+        if run([sys.executable, os.path.join(ROOT, "scripts", "sync_m2r_data.py"), "--check"], cwd=ROOT):
+            print("sync_m2r_data: pse/build/mission2lua/m2r_data.inc is stale - run scripts/sync_m2r_data.py")
+            failures += 1
 
     if a.live:
         live = os.path.join(ROOT, "tests", "live")

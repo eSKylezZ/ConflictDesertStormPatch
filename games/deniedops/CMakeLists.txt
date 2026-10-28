@@ -14,9 +14,8 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")   # stat
 #   dinput8.dll                           the PSE shim (game-neutral, pse/shim)
 #   PSE\pse_loader.dll                    the loader (pse/loader + pse/loader_dll)
 #   PSE\Games\pse_deniedops.dll           Conflict: Denied Ops game layer (pse/games/deniedops)
-#   PSE\Plugins\deniedopsfix.dll + .pse   DeniedOpsFix as the host plugin (src/pse/deniedopsfix.cpp): mods folder
-#                                          (widescreen not built - the launcher already lists arbitrary modes, see
-#                                          CLAUDE.md "Verified")
+#   PSE\Plugins\deniedopsfix.dll + .pse   DeniedOpsFix as the host plugin (src/pse/deniedopsfix.cpp): widescreen
+#                                          modes + Mods folder
 # assembled in ${CMAKE_BINARY_DIR}/tree/<config>/ by every build (pse/cmake/assemble.cmake), copied into
 # DENIEDOPS_GAME_DIR when set (changed files only). From games/deniedops: cmake --preset x86 && cmake --build --preset
 # release; from the repo root: cmake --preset deniedops-pse && cmake --build --preset deniedops-pse.
@@ -88,10 +87,14 @@ deniedops_ship_target(deniedops_pse_layer "Pivotal Script Extender - Conflict: D
 # Patching = DesertStormFix's broker-backed games/ds1/src/core/patch.cpp, so every byte group / hook has an owner:
 # the feature's sub-plugin "deniedopsfix.<feature>". pse:: calls through pse/hostlink.
 add_library(deniedopsfix SHARED
-    src/pse/deniedopsfix.cpp src/pse/deniedopsfix.pse)
+    src/pse/deniedopsfix.cpp src/pse/deniedopsfix.pse
+    src/core/log.cpp
+    src/features/unpack.cpp src/features/widescreen.cpp src/features/mods.cpp src/features/modsmenu.cpp src/features/devinput.cpp
+    ${PSE_REPO_ABS}/games/ds1/src/core/patch.cpp)
 set_source_files_properties(src/pse/deniedopsfix.pse PROPERTIES HEADER_FILE_ONLY ON)
 target_include_directories(deniedopsfix PRIVATE src)
-target_compile_definitions(deniedopsfix PRIVATE DS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(deniedopsfix PRIVATE DS_VERSION="${PROJECT_VERSION}"
+    "DENIEDOPS_PSE_PATCH_H=\"${PSE_REPO_ABS}/games/ds1/src/core/patch.h\"")
 target_link_libraries(deniedopsfix PRIVATE deniedops_pse_hostlink advapi32 bcrypt user32 ole32)
 target_link_options(deniedopsfix PRIVATE /SAFESEH:NO)
 set_target_properties(deniedopsfix PROPERTIES OUTPUT_NAME deniedopsfix PREFIX "")

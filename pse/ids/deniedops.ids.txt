@@ -1,0 +1,72 @@
+# PSE ID database: Conflict: Denied Ops (game id deniedops). Source of truth - compiled by scripts/gen_ids.py into
+# pse/ids/generated/pse_ids_deniedops.h, pse/include/pse/pse_ids_deniedops.h and docs/sdk/reference/ids-deniedops.md.
+# Format + rules: docs/sdk/reference/ids.md.
+#
+# Status (2026-10-25): the addresses DeniedOpsFix uses (widescreen + Mods folder), verified live on the packed exe after
+# the SteamStub hand-over. Not published yet (database 0).
+#
+# SteamStub: .text is ENCRYPTED in the file and decrypted by the stub after PSE's start-up, so the code signatures
+# below are the DECRYPTED bytes. gen_ids.py reads them from a copy of ConflictDeniedOps.exe whose .text is the
+# Steamless-unpacked one (same time stamp and image size as the packed file):
+#   python scripts/gen_ids.py --verify-exe deniedops --exe <decrypted copy>
+# and a layer may register this database (pse.ids checks every signature once) only after the hand-over - the
+# import slot MSVCR80!__set_app_type (id 14) is the first thing the game's own CRT start-up calls. The layer
+# doesn't register it yet; the .rdata / .data ids (globals, data, import slots) are plain in the file too.
+#
+#   game <id> <title>
+#   database <n>                                  (+1 by gen_ids.py --publish)
+#   build <name> <pe timestamp> <image size> <sha256 | -> <notes>
+#   [ids]                <id> <name> <kind> <description>      kind = function | site | global | vtable | data
+#   [addresses <build>]  <id> <va> <signature>
+
+game deniedops Conflict: Denied Ops
+database 0
+
+# ConflictDeniedOps.exe, Steam no-CD, 7,061,504 bytes, confirmed live 2026-10-24 (dumpbin + SHA-256 against the real
+# install: steamapps\common\Conflict Denied Ops\ConflictDeniedOps.exe). Imports: d3dx9_35, DSOUND,
+# WSOCK32, d3d9, DINPUT8 (statically imported - the shim proxy applies), XINPUT1_3. SteamStub wraps the exe (entry
+# RVA 0xB4D3DB sits in an added .bind section) - this does not block the shim (see deniedops_layer.cpp comment).
+build nodisc-1.0 478652D0 00B4F000 104AA5D5A4245F02ED96AA2C370E053A7736EDC49F5F6FA67846D73BECB64838 ConflictDeniedOps.exe (Steam no-CD, Jan 2008)
+
+[ids]
+# id  name                          kind     description
+# ---- files (gamelib3 Files.cpp) ----
+1     File_Open                     function thiscall(stream, name) ret 4 -> 1 = opened: archive mode = upper-cased bare name looked up in the current archive (+0x20 offset, +0x2C size), else fopen (+0x34 FILE*)
+2     File_Exists                   function cdecl(name) -> 1 = in the current archive's index
+3     File_Close                    function thiscall(stream): archive mode reads the rest and frees the stream (+0x2C = 0), disk mode fcloses +0x34
+4     File_Read                     function thiscall(stream, buffer, size, count) ret 0xC: reads through the stream's buffers (File_Fill)
+5     File_Fill                     function thiscall(stream, position) ret 4: seeks the stream's FILE (+0x30 archive / +0x34 disk) and reads the next buffer
+6     File_Resolve                  function cdecl(name, out, flags, ...): archive mode = File_Exists + the name copied to out
+7     File_OpenStream               function cdecl(name, mode) -> stream: takes a free stream of File_Streams and calls File_Open
+8     File_SwitchArchive            function cdecl(slot): makes archive slot n (0 catalog, 1 level, 2 chardata, 3 eolevel) current and resets both streams
+# ---- launcher / display modes ----
+9     Mode_IsKnown                  function cdecl(w, h) -> 1 when w x h is in Mode_Table (callers: launcher, start-up checks)
+10    Site_SettingsModeFilter       site     xor eax,eax: start of the Settings dialog's resolution-list whitelist loop over Mode_Table
+11    Site_DeviceModeFilter         site     xor eax,eax: start of the "device has a usable mode" whitelist loop over Mode_Table
+12    Site_PresentWindowed          site     sete cl: present parameters Windowed = (adapter +0x692C == 0)
+# ---- globals / data ----
+13    File_Flags                    global   u32: bit 0 archive mode (always set in the shipped game), 0x20 cleared by every open / close
+14    Iat_SetAppType                data     IAT slot MSVCR80!__set_app_type: the CRT start-up's first call after the SteamStub hand-over
+15    File_Streams                  global   stream*[2]: the two file streams
+16    File_CurrentArchive           global   current archive object* (+0x11C FILE*, +0x104 entry count)
+17    Mode_Table                    data     15 x {u32 w, u32 h}: the shipped display-mode whitelist (640x480 ... 2500x1600 - the wide sizes are typos)
+
+[addresses nodisc-1.0]
+# id  va          signature
+1     0x005E24B0  8B44240481EC08010000538D
+2     0x005E2900  8B4424048D9424FCFEFFFF81
+3     0x005E3960  8B157406BE00565733FFF6C2
+4     0x005E33C0  5156578B7C24140FAF7C2418
+5     0x005E2FA0  5355568BF18B4E30BB010000
+6     0x005E3CA0  81EC0C020000568BB4241402
+7     0x005E2F40  8B0D7406BE005633F683E101
+8     0x005E32F0  568B742408575668E8FC9200
+9     0x0043EBA0  8B4C24088B54240433C08D9B
+10    0x0043F482  33C0398808679100750B8B90
+11    0x00440A04  33C0399008679100750B8B98
+12    0x005F8DC6  0F94C18B55F0898A301D0400
+13    0x00BE0674  @0x004427C7:F6057406BE000874
+14    0x0090E2F4  @0x008AF6D5:FF15F4E290006AFF
+15    0x00BD4AE8  @0x005E29F9:00A1E84ABD0083C4
+16    0x00BE067C  @0x005E1F52:39057C06BE000F95
+17    0x00916708  80020000E0010000

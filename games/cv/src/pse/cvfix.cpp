@@ -54,6 +54,7 @@ void PSE_CALL ReportSink(const char* line, int error) { dslog::Write("%s%s", err
 const pse_host::Feature kFeatures[] = {
     {"cvfix.widescreen", "Widescreen display modes", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWidescreen},
     {"cvfix.mods", "Mods folder", PSE_PLUGIN_SIMULATION, &features::ApplyMods},
+    {"cvfix.modsmenu", "MODS menu (main menu item + mod list screen)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyModsMenu},
     {"cvfix.graphics", "Direct3D 9 hooks (background test mode, windowed device)", PSE_PLUGIN_CLIENT_ONLY,
      &graphics::Install},
     {"cvfix.devbg", "Background test mode (dev builds)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDevBackground},

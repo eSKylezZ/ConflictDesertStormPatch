@@ -318,7 +318,7 @@ void AddSteam(std::vector<std::wstring>& out) {
     buf[MAX_PATH - 1] = 0;
     std::vector<std::wstring> libs = {buf};
 
-    // libraryfolders.vdf: "path"   "H:\\SteamLibrary"
+    // libraryfolders.vdf: "path"   "D:\\SteamLibrary"
     std::wstring vdf = std::wstring(buf) + L"\\steamapps\\libraryfolders.vdf";
     HANDLE h = CreateFileW(vdf.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h != INVALID_HANDLE_VALUE) {

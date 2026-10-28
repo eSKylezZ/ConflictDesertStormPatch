@@ -29,7 +29,7 @@ from conflict_ds_tools import archive, forms, games, placed, pse_data  # noqa: E
 game = args.game or games.find_game_dir(games.GAMES["ds1"])
 exe = args.pse_build
 if not exe:
-    cands = [os.path.join(REPO, d, "pse", c, "pse_build.exe") for d in ("build-rec", "build-pse", "build")
+    cands = [os.path.join(REPO, d, "pse", c, "pse_build.exe") for d in ("build-pse", "build")
              for c in ("RelWithDebInfo", "Release", "Debug")]
     cands = [c for c in cands if os.path.exists(c)]
     exe = max(cands, key=os.path.getmtime) if cands else sys.exit("pse_build.exe not found")

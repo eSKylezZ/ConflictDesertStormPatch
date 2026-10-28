@@ -85,7 +85,7 @@ const Weapon* FindTableWeapon(const std::string& item) {
                 size_t nl = text.find('\n', pos);
                 if (nl == std::string::npos) nl = text.size();
                 std::vector<std::string> col;
-                for (size_t c = pos; c <= nl && col.size() < 6;) {
+                for (size_t c = pos; c <= nl && col.size() < 7;) {
                     size_t e = text.find(',', c);
                     if (e == std::string::npos || e > nl) e = nl;
                     col.push_back(text.substr(c, e - c));
@@ -98,7 +98,19 @@ const Weapon* FindTableWeapon(const std::string& item) {
                     // weapons - the airstrike / mortar strike designators (Missions 5A, 5B, 7), US_WPN_LAW80_HELI
                     // (Mission 3) - all filed as ANTI TANK. Never a kit choice: the swap would hand out or take away
                     // a story item.
-                    e->w = {nullptr, nullptr, col[4] == "-1" ? Kind::Other : KindOfCategory(col[5])};
+                    // Hand weapons hang on the right-hand bone (column 7 "Bip01 GunR Connector"); anything else is a
+                    // vehicle / emplacement gun (Connector_Weapon01, _NSVT, _HMG, ...). The game's own have pictures
+                    // too, and converted ones (PSE\Ports, PSE\Library) inherit a hand weapon's category - picked, they
+                    // were a cannon-sized model with no hand animations that couldn't be aimed. Converted script props
+                    // ("FAKE" / "TEST" items, projectiles: DS2's US_WPN_Fake_Mortar = an M16 model filed as a pistol)
+                    // aren't weapons a soldier carries either.
+                    std::string id = col[0];
+                    for (char& ch : id) ch = static_cast<char>(toupper(static_cast<unsigned char>(ch)));
+                    const bool hand = col.size() < 7 || _stricmp(col[6].c_str(), "Bip01 GunR Connector") == 0;
+                    const bool prop = id.find("FAKE") != std::string::npos || id.find("_TEST_") != std::string::npos ||
+                                      id.find("PROJECTILE") != std::string::npos;
+                    e->w = {nullptr, nullptr,
+                            col[4] == "-1" || !hand || prop ? Kind::Other : KindOfCategory(col[5])};
                     table.push_back(std::move(e));
                     table.back()->w.item = table.back()->item.c_str();
                     table.back()->w.model = table.back()->model.c_str();

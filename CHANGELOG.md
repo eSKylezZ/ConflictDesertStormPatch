@@ -6,6 +6,16 @@ Both PCs in an online session need the same build – older ones are refused whe
 
 ### Added
 
+**Mission patches**
+
+- Mods can change the game's own missions with a **mission patch** (`Mods\<Mod>\Mission1.patch.lua`). DesertStormFix
+  makes readable Lua from your own mission DLL, applies the patch to it and runs the result instead of the DLL. A
+  patch holds only the mod's own code, so it can be shared. Every installed mod's patch for a mission applies, in
+  load order. A patch that doesn't fit your game, or clashes with another, is left out and named in
+  `Mods\DesertStormFix-report.txt`. The first start of a patched mission takes up to 3.5 s longer; after that it is
+  cached. The ModKit's RestoredMissions example (cut content of the training missions and Mission 1) is now four
+  such patches
+
 **Other Conflict games' assets**
 
 - **Asset library**: everything of Desert Storm II, The Great Escape, Vietnam and Global Storm (models, characters,
@@ -13,6 +23,9 @@ Both PCs in an online session need the same build – older ones are refused whe
   into `PSE\Library\<game>`, every name with the game's prefix (`DS2_T72M1.EVO`). It is never loaded at start-up: a
   file is read only when a mod names it, so it changes nothing until something is built on it. Library sound banks
   have their own sample numbers and can't clash with Desert Storm's sounds
+- **OTHER GAMES' GEAR** (OPTIONS > DESERTSTORMFIX, off by default, restart): the asset library's weapons appear on
+  the loadout screen's weapon rows and its characters as uniforms for Bradley; their models, pictures and sounds load
+  only when one is picked
 - Other games' mission maps as empty levels for modders in `PSE\Ports\<game>` (scenery, collision, lights, AI routes,
   the squad start - run one with `+level mission01.lua` or open it in the editor). Playable converted campaigns were
   dropped: their mission scripts kept failing on behaviour differences (vehicles, AI)

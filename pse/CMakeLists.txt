@@ -56,14 +56,15 @@ add_library(zydis STATIC ${CMAKE_SOURCE_DIR}/third_party/zydis/Zydis.c)
 target_compile_definitions(zydis PUBLIC ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(zydis PRIVATE /W0)
 target_include_directories(zydis PUBLIC ${CMAKE_SOURCE_DIR}/third_party/zydis)
-file(GLOB PSE_M2L_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build/mission2lua/m2l_*.cpp)
+file(GLOB PSE_M2L_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build/mission2lua/m2l_*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/mission2lua/m2r_*.cpp)
 list(FILTER PSE_M2L_SOURCES EXCLUDE REGEX "m2l_cli\\.cpp$")
 add_library(pse_m2l STATIC ${PSE_M2L_SOURCES})
 target_include_directories(pse_m2l PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/build/mission2lua)
 target_compile_definitions(pse_m2l PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS ZYDIS_STATIC_BUILD
     ZYCORE_STATIC_BUILD)
 target_compile_options(pse_m2l PRIVATE /W4 /permissive- /utf-8 $<$<NOT:$<BOOL:${DS_DIST}>>:/Zi>)
-target_link_libraries(pse_m2l PUBLIC zydis bcrypt shell32 ole32)
+target_link_libraries(pse_m2l PUBLIC zydis pse_records bcrypt shell32 ole32)
 target_link_libraries(pse_build_lib PUBLIC pse_m2l)
 target_sources(pse_build PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/build/mission2lua/m2l_cli.cpp)
 target_link_libraries(pse_build PRIVATE lua_static)   # `missions --check`: compile the generated Lua
@@ -113,14 +114,37 @@ target_link_libraries(pse_cv PRIVATE pse_hostlink)
 set_target_properties(pse_cv PROPERTIES OUTPUT_NAME pse_cv)
 target_link_options(pse_cv PRIVATE /SAFESEH:NO)
 
+# PSE\Games\pse_cgs.dll: the Conflict: Global Storm / Global Terror game layer (docs/sdk/reference/game-cgs.md).
+# Deployed only by games/cgs's own CMakeLists.txt (CGS_PSE_PLUGIN) - built here only so pse_tests can load it
+# (test_game_cgs.cpp).
+file(GLOB PSE_CGS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/games/cgs/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/games/cgs/*.h)
+add_library(pse_cgs SHARED ${PSE_CGS_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)
+target_include_directories(pse_cgs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/cgs ${CMAKE_CURRENT_SOURCE_DIR}/ids)   # generated/pse_ids_cgs.h
+target_link_libraries(pse_cgs PRIVATE pse_hostlink)
+set_target_properties(pse_cgs PROPERTIES OUTPUT_NAME pse_cgs)
+target_link_options(pse_cgs PRIVATE /SAFESEH:NO)
+
+# PSE\Games\pse_deniedops.dll: the Conflict: Denied Ops game layer (docs/sdk/reference/game-deniedops.md). Deployed
+# only by games/deniedops's own CMakeLists.txt - built here only so pse_tests can load it (test_game_deniedops.cpp).
+file(GLOB PSE_DENIEDOPS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/games/deniedops/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/games/deniedops/*.h)
+add_library(pse_deniedops SHARED ${PSE_DENIEDOPS_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/loader/ids.cpp)
+target_include_directories(pse_deniedops PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/games/deniedops ${CMAKE_CURRENT_SOURCE_DIR}/ids)
+target_link_libraries(pse_deniedops PRIVATE pse_hostlink)
+set_target_properties(pse_deniedops PROPERTIES OUTPUT_NAME pse_deniedops)
+target_link_options(pse_deniedops PRIVATE /SAFESEH:NO)
+target_compile_definitions(pse_deniedops PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_compile_options(pse_deniedops PRIVATE /W4 /permissive- /utf-8)
+
 if(COMMAND ds_ship_target)
     ds_ship_target(pse_loader "Pivotal Script Extender loader" pse_loader.dll)
     ds_ship_target(pse_shim "Pivotal Script Extender shim (dinput8 proxy)" dinput8.dll)
     ds_ship_target(pse_ds1 "Pivotal Script Extender - Conflict: Desert Storm game layer" pse_ds1.dll)
     ds_ship_target(pse_ds2 "Pivotal Script Extender - Conflict: Desert Storm II game layer" pse_ds2.dll)
     ds_ship_target(pse_cv "Pivotal Script Extender - Conflict: Vietnam game layer" pse_cv.dll)
+    ds_ship_target(pse_cgs "Pivotal Script Extender - Conflict: Global Storm game layer" pse_cgs.dll)
 else()
-    foreach(t pse_loader pse_shim pse_ds1 pse_ds2 pse_cv)
+    foreach(t pse_loader pse_shim pse_ds1 pse_ds2 pse_cv pse_cgs)
         target_compile_definitions(${t} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
         target_compile_options(${t} PRIVATE /W4 /permissive- /utf-8)
     endforeach()
@@ -264,5 +288,14 @@ if(NOT DS_DIST)
     # test_game_ds2.cpp: the DS2 game layer DLL (detection) and the games/ds2 sources.
     add_dependencies(pse_tests pse_ds2)
     target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_DS2_DLL=\"$<TARGET_FILE:pse_ds2>\"")
+    # test_game_cv.cpp: the CV game layer DLL (detection) and the games/cv sources.
+    add_dependencies(pse_tests pse_cv)
+    target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_CV_DLL=\"$<TARGET_FILE:pse_cv>\"")
+    # test_game_cgs.cpp: the Global Storm game layer DLL (detection) and the games/cgs sources.
+    add_dependencies(pse_tests pse_cgs)
+    target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_CGS_DLL=\"$<TARGET_FILE:pse_cgs>\"")
+    # test_game_deniedops.cpp: the Denied Ops game layer DLL (detection) + the ids table.
+    add_dependencies(pse_tests pse_deniedops)
+    target_compile_definitions(pse_tests PRIVATE "PSE_GAME_LAYER_DENIEDOPS_DLL=\"$<TARGET_FILE:pse_deniedops>\"")
     add_test(NAME pse_tests COMMAND pse_tests)
 endif()

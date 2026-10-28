@@ -539,3 +539,97 @@ Verified 2026-10-23 by background runs (scratchpad runner `ds2lua/run.py`): see 
 fails with D3DERR_DEVICELOST (0x88760868) while the PC's display is off (the user away) - every background run then
 quits at 0.4 s; the runner waits with a D3D9 probe (`probe64.py`) and retries.
 
+
+## Loadout screen (2026-10-25, plugin `ds2fix.loadout` in `plugins/loadout`, SIMULATION)
+
+First port of DesertStormFix's loadout / customise screen (games/ds1/src/features/customise.cpp + loadout.cpp), small
+on purpose: after a mission's intro the world pauses and one screen (MISSION LOADOUT) lists the squad; per soldier MAIN
+WEAPON / SIDEARM / LAUNCHER, each choosable from the hand-held weapons some soldier of this level carries; START
+MISSION applies the changes. Setting `FeatLoadout` (bool, live, default 1) in the plugin's own key
+`HKCU\Software\PSE\ds2\Plugins\ds2fix.loadout`, row LOADOUT SCREEN: ON / OFF in the OPTIONS screen (state 6: the pause
+menu's OPTIONS; the main menu's OPTIONS is state 5, the profile / volume screen, which has none of ds2fix's rows) through
+ds2fix's new interface `ds2fix.options` v1 (`src/pse/ds2fix_options.h`, menus.cpp `AddToggle`). No leftover kit-select
+screen in the exe's strings (only "Equipment.rfx", HEAD / BODY ARMOUR item names). DS1 addresses in brackets.
+
+| What | DS2 | Notes |
+| --- | --- | --- |
+| make + give a weapon | CreateInventoryHLO `0x4830E0` thiscall(soldier, definition) ret 4 [record capture/replay via NewHLO `0x41B750`] | builds its own scene record on its stack (frame 0x22584 B: id -1, team = soldier +0x15, stat name = def +4, type = def +0, model `0x451890(def + 8)`), creates the object (`0x4CDEA0`), AddItem(item, 1, 0); "Unable to add HLO to Grunt %s" / "FAILED: CreateInventoryHLO". **No record copy, so DS1's record-size trap (0x221D0, base ctor reads to +0x210D8) doesn't arise.** Called under the level FPU precision (`0x4C12C0` / `0x4C12A0` / `0x4C12D0`) |
+| AddItem | `0x4828E0` thiscall(soldier, item, a, b) ret 0xC [`0x4314D0`] | inventory soldier `+0x6D4` -> item*[25] [+0x26B8]; a weapon (def +0 = 5) whose definition is already carried is merged into it (`0x47BFB0`, "Duplicate weapon - %s for Grunt ID - %d"); medikit (def 8) counts at soldier +0x1154; a = 0 and b = 1 -> hold |
+| TakeItem | `0x47F3A0` thiscall(soldier, item, drop, flag) ret 0xC [`0x4318A0`] | script API take_item (slot 0x6DC) passes 0, 0; a held item is put away first (hold 0 = the knife fallback DS1 hit) -> give + hold the new one first; drop != 0 puts it into the world |
+| hold | `0x47EFF0` thiscall(soldier, item, flag) ret 8 [`0x42EC10`] | held item soldier `+0x6CC` [+0x26B0], previous held `+0x6D0` (saved by `0x41A3E1`, re-held by `0x47F203` ...; TakeItem leaves it -> cleared when it is the taken weapon); script API select_item_by_name (0x644) passes flag 0 |
+| item | weapon object type 6 (+4), +8 script id, +0x24 definition, +0x58 rounds left, +0x84 rounds fired since the last reload (magazine = size - that; reset by a reload), +0x88 burst count, +0x5C fire mode, +0x78 owner [+0x54 reserve, +0x80 magazine] | rounds: `0x49D280` set / `0x49D200` add (thiscall(item, n) ret 4; the medikit's count lives on the owner) - the grunt kit loop `0x483BF0..` does set(0) + add(UnitWpns amount x size); kit items start with +0x84 = 0 |
+| definition | Weaps.txt array `[0x635F68]` x 0x3BC, count `[0x635508]`: +0 category (5 weapon, 8 medikit, 16 binoculars ...), +4 id, +8 model name, +0x92 u16 magazine size, +0xC0 class, +0xCE u8 "magazines" (M16A2 10, AK-47 10, M60E3 10, PSG1 10, SVD 20) | class = Weaps col 5 through `0x451450`: 0 ASSAULT RIFLE, 1 SUB-MACHINE GUN, 2 SNIPER RIFLE, 3 PISTOL, 4 MACHINE GUN, 5 ANTI TANK, 6 ANTI TANK WITH DELAY, 7 C4, 8 GRENADE, 9 GRENADE LAUNCHER, 10 COMBAT KNIFE, 11 SHOTGUN, 12 AUTOMATIC_SHOTGUN, 13 SMOKE GRENADE, 14 GRENADE LAUNCH/RIFLE, 15 PHOS GRENADE, 16 FIST, 17 CLAYMORE, 18 FLARE GUN, 19 / 21 FAKE MORTAR / other, 20 VEHICLE GRENADE LAUNCHER. Screen slots: main {0,1,2,4,11,12,14}, sidearm {3}, launcher {5,6,9}; ids with VWPN / TRIPOD left out |
+| catalog text | `[0x62F460]` + `0x4FBE50` thiscall(catalog, archive hash of the lower-cased Weaps id) | weapon names ("COLT M16A2 ASSAULT RIFLE"); misses start with '*' -> the id made readable |
+| intro over | letterbox `[[0x6800CC] + 8]` (view controller, setter `0x4DA740`: 0 off, 1 opening, 2 on, 3 closing; script API letterbox_on / off 0x628 / 0x62C = `0x442260` / `0x442280`); player control = input block 0 `+8` (script API set_player_control 0x614 = `0x440170` writes it, and parks the block soldier while off); mounted vehicle = soldier `+0x690` [+0x267C] | Mission 1: the intro's letterbox ends after ~11 s while the squad still drives (state 0x13, no cutscene bit, control on: the player is the Land Rover's gunner); the drive ends ~33 s in. Open rule: state 0x13, dispatch 1, no cutscene, letterbox 0, control, block soldier, the player's vehicle (if any) moved < 5 cm in the last second (sampled once a second - frame-rate independent) - for 1 s; once per level, not for levels loaded from a save, not after 5 min. Mission 1: opens 35.3 s after the load (every run) |
+| freeze | `[0x6197BC]` float (.data, 1.0) multiplies the timer's seconds dt (`0x4BE7B6` -> timer +0xAC) [`0x5F7E64`]; the same function subtracts `[0x664094]` (set to 4e-5 at level init `0x412888`) while it is > 0 - measured: stays 1.0 in play | 0.0001 re-written every frame while open (0 = DS1's fog-colour screen); measured dt 1e-7 s while open; the ms clock (+0x10) keeps running (scripts' timers too, as in DS1). Timer `[0x680098]`: +0x10 total ms, +0x18 dt ms, +0x2C time scale (setter `0x4BE570`, script API 0x0B0), +0xAC dt s |
+| input off | input block i (`0x62FF7C` + i x 0x58C, count u16 `[0x6315B0]`): joystick +0x3A4 = -1, devices +0xC = 0 [+0x3C8] | time runs again at once on close, input once nothing the screen reads is held (at most 1 s: the Enter / A that started the mission doesn't reach the game) |
+| screen | own drawing: GDI text into a 32-bit DIB -> managed A8R8G8B8 texture -> one XYZRHW quad at the layer's `PSE_EVENT_END_SCENE` (one EndScene per Present in missions, measured), only onto the back buffer, state block D3DSBT_ALL around it | input: keyboard (only while the game window is in front), XInput pads; dev `Dev\LoadoutKeys` |
+
+**Saves.** Save_Game `0x41C600` -> `0x41BE80` (sections) -> `0x419AD0` (header): the per-type object counts (+0xC type 1,
++0xE 0, +0x10 2, +0x12 3, +0x14 5, +0x16 6, +0x18 7, +0x1C 9) are copied from the saver `[0x62F458]`, which
+`0x4198C0` fills ONCE at level init (call `0x41341C`) from `0x4CDAE0`(type, 3, -1, 0x20000); the object writer
+`0x4CD8C0`(cursor, 0x20000) walks every live object (instance +0x10 flag 0x20000 = not saved) - **DS1's flaw is in DS2
+too** [`FUN_00415530`]. The restore `0x41C3B0` -> `0x41C110` reads exactly that many records per type (unknown script
+id = skipped by a fixed size per type, type 6: 0x30 B). Fix: at `PSE_MSG_SAVE_BEGIN` the counts are taken again the
+same way (`RecountSaveObjects`); a taken-away weapon gets flag 0x20000 - and so does every weapon the screen makes (see below). Evidence: Bradley's sidearm left behind (type
+6 count 197 -> 196), save, load from the main menu: with the recount the level loads and plays; with the game's stale
+count (dev `Dev\LoadoutNoRecount` = 1) the load crashed (AV `0x423357`, stack through the restore `0x41C4CF`).
+The grunt restore `0x41AFB0` strips the inventory (`0x482CD0`) and re-adds the items whose script ids its record lists:
+kit items have the scene's ids (Mission 1: Foley's PSG1 #358, Beretta #357), a weapon made at run time has -1 -> the
+game alone loads such a soldier without the swapped-in weapon and without the taken one. By the code, the restore
+also skips a type-6 record with an unknown id by 0x30 bytes while the record is `0x41ABD0`'s common header + 0x30
+(DS1's 0x2C-for-0x8C skip [`0x4162A9`]) - a weapon with id -1 in the save would shift every record after it. So the
+screen's weapons are never in the game's save (flag 0x20000 like the taken ones; recount: Mission 1 type 6 197 -> 195
+for two swaps) and the plugin's co-save chunk `KITS` v1 (64-byte records: soldier script id, slot, rounds, fired, held,
+weapon id) gives them back on the first mission frame after the load (`ApplyPendingKits`).
+**Projectiles**: a bullet / rocket in flight keeps the weapon that fired it (projectile slot `+0x88`; manager
+`[0x6800E4]`: +0 slots of 0xA4, +8 count, +0x9C = 0x64 free) and the save stores it by script id - a loaded save made
+while a swapped-in weapon's bullet flew crashed in the bullet's hit test (callback `0x49F150` from the ray query
+`0x4BFD40` at `0x4E3589`: AV `0x49F189` reading the null weapon's definition, 0.14 s after the load). While the game
+saves (`PSE_MSG_SAVE_BEGIN` .. `_END`) such projectiles name a kit weapon of the same soldier (one with a script id);
+none -> the projectile isn't saved (should not happen: the Fist / knife always have ids). Verified: Foley (M16A2 swapped
+in) firing while the game saved -> 3 (and, in a second run, 1) projectiles renamed; that save loads from the main menu
+and plays 61 s without an exception (before the fix: AV `0x49F189` right after the load).
+Verified: Foley M16A2 + SIG P228 swapped in, saved, loaded from the main menu -> both back (rounds as saved, M16
+held), level plays on (70 s, no exception).
+**Land Rover after loads**: Mission 1's Land Rover moves 3-6 m right after loading a save made ~55 s into the mission -
+the same with a save of the unmodified game (screen off: 3.3 m) and with the screen opened but nothing changed, so it is
+the game's own restore, not the swaps; a save made at ~40 s loads with the rover in place (both). In play (no load)
+the swaps leave it where the unmodified game parks it (within 1 cm).
+
+**Ammo** (DS1's SwapMagazines): the old weapon's share of its own allowance (+0xCE x +0x92, capped at full - the squad
+kits hold up to 2x: Bradley's M16A2 600 = 20 magazines) x the new weapon's magazines, at least 1; an empty slot: full.
+
+**Verified 2026-10-25** by background runs (scratchpad runner `lrun.py`: DS2 lock, dinput8 + PSE\ + logs +
+`HKCU\Software\PSE\ds2` backed up and restored, dev values cleared; build-ds2loadout tree; Mission 1, 1280x1024):
+- the screen opens 33.3 s after the load (after the drive), world frozen (timer dt 1e-7 s), panel drawn (screenshots);
+  dev keys change rows / soldiers / weapons; START applies: e.g. Bradley M16A2 -> M60E3 (held, while seated as the
+  gunner), SIG -> Desert Eagle, Foley PSG1 -> M16A2 / AK-47 (an enemy weapon), Beretta -> SIG;
+- firing (AI, script API start / stop_firing 0x694 / 0x698 after dismount 0x780): the swapped-in AK-47 reloads in
+  2.3 s (a full magazine), the untouched MP5-SD in 2.7 s - real reload animations (DS1's missing-binding symptom was an
+  instant refill); weapon model in Bradley's hands after a dismount (screenshot), HUD weapon panel AK-47 30 / 270;
+- the Land Rover parks at (4326.1, -422.9, -14653.0) with swaps, (4326.8, -423.0, -14653.4) without (within 1 cm);
+- save after swaps -> load from the main menu (dev `Dev\LoadoutLoadSave`, LOAD GAME's own steps) -> swaps back, plays;
+- the release `ds2fix.loadout.dll` (dist build) in the dev tree: loads, the screen opens and draws;
+- `FeatLoadout` = 0 -> no screen; the OPTIONS row reads LOADOUT SCREEN: ON in the pause menu's OPTIONS.
+Not verified: a human play-through; keyboard / pad presses on the screen (background runs can't press keys; XInput
+only - a DualSense through DirectInput isn't read by the screen); selecting the OPTIONS row (the menus' `Dev\MenuKeys`
+U / D didn't move the highlight in these runs); other missions' open moment; split screen / co-op (the screen lists
+every squad soldier and takes input from any pad - no per-player turns); launchers (no soldier carries one at Mission
+1's start, so the row shows NONE); the whole release package in game (no background mode in release builds); a save
+with swaps loaded WITHOUT the plugin (the soldier then lacks the swapped slot's weapon: the game's save holds neither);
+`Dev\HudStates` "6@3000" (straight from play into OPTIONS without the pause menu) crashed inside the game's OPTIONS
+set-up (AV `0x4C1337` from `0x45D34E`, before any ds2fix row code) - with the pause menu first ("14@3000,6@6000") it
+works; not checked whether that is ours.
+
+Left for later (DS1 had them): uniform / face / gear rows, vehicles, overview / briefing, camera orbit on the selected
+soldier, unlocks (picked-up weapons), carry-over between linked missions, remembered choices, per-player co-op turns,
+the game's own fonts / art for the screen, the binding of a definition no level object uses (DS1 `0x495EC0`; not needed
+while only weapons the level already carries are offered).
+
+Dev values (`HKCU\Software\DesertStorm2Fix\Dev`, dev builds): `LoadoutKeys` "W,T,R,D,L,S" (U D L R, T / P next /
+previous soldier, S start, W wait; `LoadoutKeyMs` 700, `LoadoutKeyDelayMs` 2500), `LoadoutLog` = 1 (squad kits at the
+level start / after the screen), `LoadoutFire` "6,7" (dismount + fire test, `LoadoutFireMs`), `LoadoutControl` = id
+(take_control 0x63C), `LoadoutVehicleLog` = script id (position every 2 s), `LoadoutLoadSave` = save path without
+.sav (full load from the main menu), `LoadoutNoRecount` = 1 (A/B), `LoadoutNoKitRestore` = 1 (co-save weapons not put back). ds2fix.limits' `LimitsTestSave` / `LimitsTestLoad`
+save / load in place (its load only re-applies the header - no level restart - use `LoadoutLoadSave` for a real load).

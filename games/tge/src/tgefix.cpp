@@ -56,10 +56,21 @@ struct Feature {
 const Feature kFeatures[] = {
     {"tgefix.devbg", "Background test mode (dev builds)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDevBackground},
     {"tgefix.widescreen", "Widescreen display modes", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWidescreen},
+    {"tgefix.weaponicons", "Mods: weapon pictures", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWeaponIcons},
     {"tgefix.mods", "Mods folder", PSE_PLUGIN_SIMULATION, &features::ApplyMods},
+    {"tgefix.modtables", "Mods: tables, texts, weapon / vehicle / unit files", PSE_PLUGIN_SIMULATION, &features::ApplyModTables},
+    {"tgefix.modsound", "Mods: sound packs, level sounds, music, weapon sounds", PSE_PLUGIN_SIMULATION, &features::ApplyModSounds},
+    {"tgefix.modsmenu", "Main menu MODS", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyModsMenu},
+    {"tgefix.fixmenus", "Menus: GREATESCAPEFIX, CONTROLLER, CUSTOM MISSIONS", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFixMenus},
     {"tgefix.display", "Windowed / borderless window", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDisplay},
     {"tgefix.hud", "Menu and HUD scaling", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyGuiScale},
+    {"tgefix.fontsharp", "Sharper text", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFontSharp},
     {"tgefix.framecap", "Frame cap", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFrameCap},
+    {"tgefix.films", "Films from the Mods folder, films in levels", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFilms},
+    {"tgefix.scripthost", "Lua missions and campaigns", PSE_PLUGIN_SIMULATION, &features::ApplyScriptHost},
+    {"tgefix.controller", "PlayStation / Xbox pads", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyController},
+    {"tgefix.prompts", "Action prompts", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyContextPrompts},
+    {"tgefix.ingameinput", "Menus, prompts and key names follow the device in use", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyInGameInput},
 };
 
 void RegisterFeatures() {
@@ -114,6 +125,30 @@ void features::SaveWindowed(bool on) {
     if (const PSESettingsInterface* s = pse::SettingsInterface()) s->SetInt(g_core, "Windowed", on ? 1 : 0);
 }
 
+// A setting changed in the game's menus (fixmenus.cpp): stored, and the value the features read updated at once.
+void features::SetSetting(const char* key, int32_t value) {
+    if (const PSESettingsInterface* s = pse::SettingsInterface()) s->SetInt(g_core, key, value);
+    struct Field {
+        const char* key;
+        bool* flag;
+        uint32_t* number;
+    };
+    const Field fields[] = {
+        {"FeatWidescreen", &g_settings.widescreen, nullptr}, {"FilmsFill", &g_settings.filmsFill, nullptr},
+        {"FeatMods", &g_settings.mods, nullptr},             {"HudScaling", &g_settings.hudScaling, nullptr},
+        {"HudScalePercent", nullptr, &g_settings.hudScalePercent}, {"FrameCap", &g_settings.frameCap, nullptr},
+        {"FpsCap", nullptr, &g_settings.fpsCap},             {"Controller", &g_settings.controller, nullptr},
+        {"PadDeadzone", nullptr, &g_settings.padDeadzone},   {"PadVibration", &g_settings.padVibration, nullptr},
+        {"PadTriggers", &g_settings.padTriggers, nullptr},   {"PadModernLayout", &g_settings.padModernLayout, nullptr},
+        {"ActionPrompts", &g_settings.actionPrompts, nullptr},
+    };
+    for (const Field& f : fields)
+        if (_stricmp(f.key, key) == 0) {
+            if (f.flag) *f.flag = value != 0;
+            if (f.number) *f.number = static_cast<uint32_t>(value);
+        }
+}
+
 PSEPluginHandle pse_host::Core() { return g_core; }
 PSEPluginHandle pse_host::Find(const char* name) { return g_core && name ? pse::FindPlugin(name) : 0; }
 
@@ -154,6 +189,20 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
                                       "Cap the frame rate (the game runs uncapped otherwise - over 1000 fps)");
     g_settings.fpsCap = static_cast<uint32_t>(DeclareInt("FpsCap", 0, 0, 240, 10, "FRAME LIMIT",
                                                          "Frames per second; 0 = the monitor's refresh rate (max 240)"));
+    g_settings.controller = DeclareBool("Controller", true, "CONTROLLER SUPPORT",
+                                        "PlayStation and Xbox pads use the game's pad layout (buttons, D-pad, right "
+                                        "stick, triggers); off = raw DirectInput numbering");
+    g_settings.padDeadzone = static_cast<uint32_t>(
+        DeclareInt("PadDeadzone", 40, 0, 90, 5, "STICK DEADZONE", "Stick deadzone, % of the stick's travel"));
+    g_settings.padVibration = DeclareBool("PadVibration", true, "VIBRATION",
+                                          "Pads rumble with the game (Xbox pads also on their trigger motors)");
+    g_settings.padTriggers = DeclareBool("PadTriggers", true, "ADAPTIVE TRIGGERS",
+                                         "DualSense: the fire trigger has a firm point and fires once pulled through it");
+    g_settings.padModernLayout = DeclareBool("PadModernLayout", true, "FIRE ON THE TRIGGER",
+                                             "Shoulder buttons and triggers swapped: fire on R2 / RT (the game's own "
+                                             "layout fires with R1 / RB)");
+    g_settings.actionPrompts = DeclareBool("ActionPrompts", true, "ACTION PROMPTS",
+                                           "\"Press [button] to pick up ...\" near the bottom of the screen in missions");
     RegisterFeatures();
     for (const Feature& f : kFeatures) {
         patch::OwnerScope scope(pse_host::Find(f.name));

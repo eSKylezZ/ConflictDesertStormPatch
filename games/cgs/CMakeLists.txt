@@ -146,7 +146,8 @@ if(CGS_PSE_PLUGIN)
     add_library(cgsfix SHARED
         src/pse/cgsfix.cpp src/pse/cgsfix.pse
         src/core/log.cpp
-        src/pse/features/widescreen.cpp src/pse/features/mods.cpp
+        src/pse/features/widescreen.cpp src/pse/features/mods.cpp src/pse/features/modsmenu.cpp
+        src/pse/features/frame.cpp src/pse/features/devbg.cpp src/pse/features/graphics.cpp
         ${PSE_REPO_ABS}/games/ds1/src/core/patch.cpp)
     set_source_files_properties(src/pse/cgsfix.pse PROPERTIES HEADER_FILE_ONLY ON)
     # src/pse first: its core/patch.h + features/features.h (own, smaller Settings) shadow the standalone's src/ ones
@@ -154,7 +155,8 @@ if(CGS_PSE_PLUGIN)
     target_include_directories(cgsfix PRIVATE src/pse src)
     target_compile_definitions(cgsfix PRIVATE DS_VERSION="${PROJECT_VERSION}"
         "CGS_PSE_PATCH_H=\"${PSE_REPO_ABS}/games/ds1/src/core/patch.h\"")
-    target_link_libraries(cgsfix PRIVATE cgs_pse_hostlink advapi32 bcrypt user32 ole32)
+    # devbg.cpp (dev builds only): audio session mute (mmdeviceapi/audiopolicy) + DirectInput keyboard injection.
+    target_link_libraries(cgsfix PRIVATE cgs_pse_hostlink advapi32 bcrypt user32 ole32 dxguid dinput8.lib winmm)
     target_link_options(cgsfix PRIVATE /SAFESEH:NO)
     set_target_properties(cgsfix PROPERTIES OUTPUT_NAME cgsfix PREFIX "")
     cgs_ship_target(cgsfix "GlobalStormFix - Conflict: Global Storm enhancement patch (PSE host plugin)" cgsfix.dll)

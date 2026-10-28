@@ -29,6 +29,8 @@
 #include "core/settings.h"
 #include "ds2fix_graphics.h"
 #include "ds2fix_hud.h"
+#include "ds2fix_options.h"
+#include "ds2fix_pads.h"
 #include "features/features.h"
 #include "features/graphics.h"
 #include "features/menus.h"
@@ -159,6 +161,66 @@ void PSE_CALL HostSetHudOption(const Ds2FixHudOptionV1* option) {
 }
 const Ds2FixHudHostV1 kHudHostInterface = {sizeof(Ds2FixHudHostV1), 1, &HostSplitViewSize, &HostSetHudOption};
 
+// ds2fix.options v1 (src/pse/ds2fix_options.h): plugins' ON / OFF rows in the OPTIONS screen (menus.cpp toggles). One
+// trampoline per slot (menus' rows take plain functions).
+struct OptionSlot {
+    const Ds2FixToggleV1* toggle = nullptr;
+    PSEPluginHandle owner = 0;
+    int row = -1;
+};
+OptionSlot g_options[features::menus::kMaxToggles];
+template <int I>
+bool OptGet() { return g_options[I].toggle && g_options[I].toggle->Get() != 0; }
+template <int I>
+void OptSet(bool on) {
+    if (g_options[I].toggle) g_options[I].toggle->Set(on ? 1 : 0);
+}
+bool (*const kOptGet[])() = {&OptGet<0>, &OptGet<1>, &OptGet<2>, &OptGet<3>};
+void (*const kOptSet[])(bool) = {&OptSet<0>, &OptSet<1>, &OptSet<2>, &OptSet<3>};
+static_assert(sizeof kOptGet / sizeof kOptGet[0] == features::menus::kMaxToggles);
+int PSE_CALL OptionsAddToggle(PSEPluginHandle plugin, const Ds2FixToggleV1* toggle) {
+    if (!toggle || !toggle->Get || !toggle->Set) return 0;
+    for (int i = 0; i < features::menus::kMaxToggles; ++i)
+        if (!g_options[i].toggle) {
+            features::menus::Toggle t;
+            t.label = toggle->label;
+            t.description = toggle->description;
+            t.get = kOptGet[i];
+            t.set = kOptSet[i];
+            g_options[i] = {toggle, plugin, -1};
+            g_options[i].row = features::menus::AddToggle(t);
+            if (g_options[i].row < 0) {
+                g_options[i] = OptionSlot{};
+                return 0;
+            }
+            dslog::Write("Menus: OPTIONS row %s added by a plugin", toggle->label ? toggle->label : "?");
+            return 1;
+        }
+    return 0;
+}
+void PSE_CALL OptionsRemoveToggle(PSEPluginHandle plugin, const Ds2FixToggleV1* toggle) {
+    for (auto& o : g_options)
+        if (o.toggle == toggle && o.owner == plugin) {
+            features::menus::RemoveToggle(o.row);
+            o = OptionSlot{};
+        }
+}
+const Ds2FixOptionsV1 kOptionsInterface = {sizeof(Ds2FixOptionsV1), 1, &OptionsAddToggle, &OptionsRemoveToggle};
+
+// ds2fix.pads v1 (src/pse/ds2fix_pads.h): the game's joysticks read for menus (coop.cpp's raw reader).
+int PSE_CALL PadsCount() { return features::PadCount(); }
+uint32_t PSE_CALL PadsButtons(int j) { return features::PadMenuButtons(j); }
+int PSE_CALL PadsKind(int j) { return features::PadKind(j); }
+const Ds2FixPadsV1 kPadsInterface = {sizeof(Ds2FixPadsV1), 1, &PadsCount, &PadsButtons, &PadsKind};
+// ds2fix.coopinfo: the co-op session for DS2 plugins - see ds2fix_pads.h (CoopPlayers / CoopJoystick)
+int PSE_CALL CoopInfoPlayers() { return features::CoopPlayers(); }
+int PSE_CALL CoopInfoJoystick(int player) { return features::CoopJoystick(player); }
+const Ds2FixCoopV1 kCoopInterface = {sizeof(Ds2FixCoopV1), 1, &CoopInfoPlayers, &CoopInfoJoystick};
+int PSE_CALL SkinsDress(void* soldier, const char* body, const char* texture) {
+    return features::DressSoldier(soldier, body, texture) ? 1 : 0;
+}
+const Ds2FixSkinsV1 kSkinsInterface = {sizeof(Ds2FixSkinsV1), 1, &SkinsDress};
+
 // One row per feature = one internal plugin; Apply runs inside its owner scope (dllmain.cpp's Init order).
 // Widescreen modes, HUD scaling, the front end's virtual screen and sharper text are the external plugin
 // ds2fix.widescreen (games/ds2/plugins/widescreen) since 2026-10-22.
@@ -207,6 +269,16 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
     if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.menus"), DS2FIX_HUDHOST_INTERFACE, 1,
                                                    &kHudHostInterface) != PSE_OK)
         dslog::Write("[fail] PSE: interface %s not registered", DS2FIX_HUDHOST_INTERFACE);
+    if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.menus"), DS2FIX_OPTIONS_INTERFACE, 1,
+                                                   &kOptionsInterface) != PSE_OK)
+        dslog::Write("[fail] PSE: interface %s not registered", DS2FIX_OPTIONS_INTERFACE);
+    if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.coop"), DS2FIX_PADS_INTERFACE, 1,
+                                                   &kPadsInterface) != PSE_OK ||
+        messaging->RegisterInterface(pse_host::Find("ds2fix.coop"), DS2FIX_COOP_INTERFACE, 1, &kCoopInterface) != PSE_OK)
+        dslog::Write("[fail] PSE: interfaces %s / %s not registered", DS2FIX_PADS_INTERFACE, DS2FIX_COOP_INTERFACE);
+    if (!messaging || messaging->RegisterInterface(pse_host::Find("ds2fix.skins"), DS2FIX_SKINS_INTERFACE, 1,
+                                                   &kSkinsInterface) != PSE_OK)
+        dslog::Write("[fail] PSE: interface %s not registered", DS2FIX_SKINS_INTERFACE);
 #ifndef DS_DIST
     if (messaging) {
         messaging->RegisterListener(pse->plugin, nullptr, &OnMessage, nullptr);

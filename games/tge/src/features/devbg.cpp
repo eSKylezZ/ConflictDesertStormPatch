@@ -14,7 +14,7 @@
 //
 // Message loop 0x5D58C4: active flag [0x7DC2FC] = 0 -> WaitMessage (je 0x5D5933 -> nops). Window: CreateWindowExA at
 // 0x5D0DA0 (class 0x61BF10); placement = display.cpp (PlaceWindow off-screen while Background()). Launcher = template
-// 0x69, proc 0x5CC2D0 pushed at 0x5CC7B1 (Settings... = button 0x405 -> template 0x6C, display.cpp's
+// 0x6A, proc 0x5BF9C0 pushed at 0x5BFA12 (Settings... = button 0x405 -> template 0x6C, display.cpp's
 // SettingsProc calls DevBgSettingsDialog). ClipCursor 0x5CCA12 / 0x5CFFC6 / 0x5D0095 / 0x5D5999, SetCursorPos
 // 0x4B81DC, SetCapture 0x4BA04C, MessageBoxA import 0x5F51B4, mouse poll's GetCursorPos load 0x4B91FF.
 #include "features/features.h"
@@ -25,6 +25,7 @@
 #include <mmdeviceapi.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "core/log.h"
@@ -157,7 +158,7 @@ void Unseen(HWND dlg) {
     SetWindowPos(dlg, nullptr, kOffX, kOffY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-// Every DialogBoxParamA (import slot 0x5F51F0; the launcher is template 0x69, its Settings... 0x6C) goes through
+// Every DialogBoxParamA (import slot 0x5F51F0; the launcher is template 0x6A, its Settings... 0x6C) goes through
 // BgDialogProc: the game's procedure is kept as a window property from the first message on.
 DLGPROC g_pendingProc = nullptr;
 INT_PTR CALLBACK BgDialogProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -262,6 +263,26 @@ bool SaveBackBuffer(void* dev, const char* path) {
 }
 
 int PSE_CALL OnPresent(PSEEventId, void* dev, void*) {
+    // ShotBurst (REG_SZ "<prefix>|<n>"): the next n presented frames -> <prefix>_000.bmp ... (transitions frame by frame)
+    static int burstLeft = 0, burstIndex = 0;
+    static char burstPrefix[MAX_PATH] = {};
+    char burst[MAX_PATH] = {};
+    if (dev && !burstLeft && DevString("ShotBurst", burst, sizeof burst)) {
+        RegDeleteKeyValueA(HKEY_CURRENT_USER, kDevKey, "ShotBurst");
+        if (char* bar = std::strrchr(burst, '|')) {
+            *bar = 0;
+            burstLeft = std::atoi(bar + 1);
+            burstIndex = 0;
+            strcpy_s(burstPrefix, burst);
+        }
+    }
+    if (dev && burstLeft > 0) {
+        char path[MAX_PATH + 16];
+        sprintf_s(path, "%s_%03d.bmp", burstPrefix, burstIndex++);
+        SaveBackBuffer(dev, path);
+        --burstLeft;
+        return 0;
+    }
     static DWORD last = 0;
     const DWORD now = GetTickCount();
     if (!dev || now - last < 100) return 0;

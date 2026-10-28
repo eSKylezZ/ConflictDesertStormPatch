@@ -30,10 +30,10 @@ struct GameExe {
 };
 constexpr GameExe kGames[] = {
     {"ds1", "D712F5EC82C14DA66B098332B3CC9C99689091F46317112EA35DFD393DC3E164", "PSE_GAME_EXE",
-     {"H:\\SteamLibrary\\steamapps\\common\\conflict_desert_storm\\DesertStorm.exe",
-      "H:\\GOG\\Games\\Conflict - Desert Storm\\DesertStorm.EXE", nullptr}},
+     {"C:\\Program Files (x86)\\Steam\\steamapps\\common\\conflict_desert_storm\\DesertStorm.exe",
+      "C:\\GOG Games\\Conflict - Desert Storm\\DesertStorm.EXE", nullptr}},
     {"ds2", "E9B46420DC00B13C3C48A9E9B7B3FDA29458D5EA83AC0D203F5B68FDD111542A", "PSE_GAME_EXE_DS2",
-     {"H:\\SCI Games\\Conflict Desert Storm II\\CDS II.exe", nullptr, nullptr}},
+     {nullptr, nullptr, nullptr}},
 };
 constexpr size_t kGameCount = sizeof kGames / sizeof kGames[0];
 

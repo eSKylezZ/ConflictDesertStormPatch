@@ -40,6 +40,7 @@ Reference, one page per interface:
 | `pse.lua` – Lua functions for mission scripts (namespaces, accessor marshalling, CallGlobal, crash guard) | [reference/lua.md](reference/lua.md) |
 | `pse.vfs` – game files from providers (name / name hash + context → bytes; the asset store is one) | [reference/vfs.md](reference/vfs.md) |
 | Plugin DLLs – manifest (`.pse`), load order, exports, lifecycle, failure handling | [reference/plugins.md](reference/plugins.md) |
+| Mission patches – a mod's `Mission1.patch.lua` changes the readable Lua made from the player's own DLL (shareable: no game code) | [reference/mission-patches.md](reference/mission-patches.md) |
 | Mission replacements – a mod's Lua (`--@replaces Mission1.dll`) runs instead of a mission DLL | [reference/mission-replacement.md](reference/mission-replacement.md) |
 | Desert Storm II Mods folder – what a DS2 mod can replace today (basic resolver) | [ds2-mods.md](ds2-mods.md) |
 

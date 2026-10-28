@@ -117,6 +117,21 @@
       "inherits": "tge",
       "binaryDir": "${sourceDir}/build-tge-dist",
       "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "deniedops-pse",
+      "displayName": "Denied Ops: DeniedOpsFix on PSE (deniedopsfix.dll + shim / loader / layer, tree)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-deniedops",
+      "cacheVariables": { "PSE_GAME": "deniedops" }
+    },
+    {
+      "name": "deniedops-pse-dist",
+      "displayName": "Denied Ops: DeniedOpsFix release package (PSE tree + readme, zip)",
+      "inherits": "deniedops-pse",
+      "binaryDir": "${sourceDir}/build-deniedops-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
     }
   ],
   "buildPresets": [
@@ -136,7 +151,11 @@
     { "name": "cgs-debug",   "displayName": "Global Storm: Debug",   "configurePreset": "cgs",      "configuration": "Debug" },
     { "name": "cgs-release", "displayName": "Global Storm: Release", "configurePreset": "cgs",      "configuration": "RelWithDebInfo" },
     { "name": "cgs-dist",    "displayName": "Global Storm: Package", "configurePreset": "cgs-dist", "configuration": "Release" },
+    { "name": "cgs-pse", "displayName": "Global Storm: PSE tree (cgsfix + runtime)", "configurePreset": "cgs-pse", "configuration": "RelWithDebInfo" },
+    { "name": "cgs-pse-dist", "displayName": "Global Storm: PSE release package", "configurePreset": "cgs-pse-dist", "configuration": "Release" },
     { "name": "tge", "displayName": "TGE: PSE tree (tgefix + runtime)", "configurePreset": "tge", "configuration": "RelWithDebInfo" },
-    { "name": "tge-dist", "displayName": "TGE: PSE release package", "configurePreset": "tge-dist", "configuration": "Release" }
+    { "name": "tge-dist", "displayName": "TGE: PSE release package", "configurePreset": "tge-dist", "configuration": "Release" },
+    { "name": "deniedops-pse", "displayName": "Denied Ops: PSE tree (deniedopsfix + runtime)", "configurePreset": "deniedops-pse", "configuration": "RelWithDebInfo" },
+    { "name": "deniedops-pse-dist", "displayName": "Denied Ops: PSE release package", "configurePreset": "deniedops-pse-dist", "configuration": "Release" }
   ]
 }

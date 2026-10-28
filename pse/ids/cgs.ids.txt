@@ -3,7 +3,7 @@
 # docs/sdk/reference/ids-cgs.md. Format + rules: docs/sdk/reference/ids.md.
 #
 # Addresses: games/cgs/CLAUDE.md (GlobalStormFix standalone build, mapped 2026-10-10/24), verified 2026-10-24 with
-# `scripts/gen_ids.py --fill-signatures cgs --verify-exe cgs --exe "H:\SCI Games\Conflict Global Storm\
+# `scripts/gen_ids.py --fill-signatures cgs --verify-exe cgs --exe "<game folder>\
 # ConflictGlobal.exe"` (0 mismatches). Most of this exe's logic (window creation, launcher dialogs, the resolution
 # filter body, the keyboard poll, command line parsing) runs inside a SecuROM VM with no static call sites - the ids
 # below are only the plain (non-VM) call sites / globals the standalone widescreen.cpp / frame.cpp / hud.cpp already

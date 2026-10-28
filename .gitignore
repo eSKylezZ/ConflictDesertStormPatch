@@ -6,7 +6,10 @@
 # Local reverse-engineering helpers and working notes (not needed to build or use the patch)
 tools/
 /TODO.md
+/FEATURES.md
 /SERVICE_RECORD_RESEARCH.md
+/_delete_me/
+/releases/
 /research
 
 # AI assistant context and settings
@@ -78,7 +81,8 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# Files extracted from Xbox / PS2 / GameCube disc images
+# Files extracted from Xbox / PS2 / GameCube disc images (all under re-data/ since 2026-10-25)
+/re-data/
 xbox/
 xbox_eu/
 ps2/

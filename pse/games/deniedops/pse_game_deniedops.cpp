@@ -14,7 +14,7 @@
 
 namespace {
 // ConflictDeniedOps.exe, Steam no-CD, 7,061,504 bytes, PE timestamp 0x478652D0 (Thu Jan 10 17:16:00 2008), SteamStub
-// entry at RVA 0xB4D3DB. Confirmed live 2026-10-24 against G:\SteamLibrary\...\ConflictDeniedOps.exe.
+// entry at RVA 0xB4D3DB. Confirmed live 2026-10-24 against the Steam ConflictDeniedOps.exe.
 constexpr char kKnownSha256[] = "104AA5D5A4245F02ED96AA2C370E053A7736EDC49F5F6FA67846D73BECB64838";
 
 const std::string& ExeHash() {

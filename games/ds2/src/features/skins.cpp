@@ -586,7 +586,13 @@ bool HookEntry(uint32_t entry, const void* fn, Fn& next, const uint8_t* prologue
 #endif
 }
 
-bool g_hooked = false;
+bool g_hooked = false, g_drawHooked = false;
+
+bool EnsureDrawHook() {   // the per-part texture draw (also without .skin files: DressSoldier below)
+    if (g_drawHooked) return true;
+    g_drawHooked = patch::HookCall(kDrawPartCall, reinterpret_cast<const void*>(&DrawPartStub), kDrawPart);
+    return g_drawHooked;
+}
 
 void InstallHooks() {
     if (g_hooked || g_skins.empty()) return;
@@ -599,7 +605,7 @@ void InstallHooks() {
                    sizeof kGruntCtorEntry))
         features::ModLog("[fail] Skins: soldier set-up at 0x%08X not recognised - bodies only by model switch (same "
                          "skeleton keys)", kGruntCtor);
-    if (!patch::HookCall(kDrawPartCall, reinterpret_cast<const void*>(&DrawPartStub), kDrawPart))
+    if (!EnsureDrawHook())
         features::ModLog("[fail] Skins: skin draw at 0x%08X not recognised - .skin textures not shown", kDrawPartCall);
     dslog::Write("[ok]   Skins: skin apply + skin draw hooked");
 }
@@ -612,6 +618,30 @@ void features::ApplySkins() {
     if (!settings::Get().featMods) return;
     ReadSkins();
     InstallHooks();
+}
+
+// Another body / texture for one soldier in play (the ds2fix.skins interface, used by the loadout screen's UNIFORM /
+// FACE rows): the same Dress as a .skin file's - SetModel when the body has his skeleton's key count, the texture on
+// every skin part through the draw hook. A per-soldier look kept until the next level (or the next call).
+namespace {
+std::unordered_map<void*, std::unique_ptr<Skin>> g_dressed;
+bool DressGuarded(void* soldier, const Skin& s) {
+    __try {
+        Dress(static_cast<uint8_t*>(soldier), s);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+}  // namespace
+bool features::DressSoldier(void* soldier, const char* body, const char* texture) {
+    if (!soldier || !EnsureDrawHook()) return false;
+    auto& s = g_dressed[soldier];
+    if (!s) s = std::make_unique<Skin>();
+    s->file = "LOADOUT SCREEN";
+    s->body = body ? body : "";
+    s->texture = texture ? texture : "";
+    return DressGuarded(soldier, *s);
 }
 
 void features::ReloadSkins() {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DesertStormFix VERSION 3.3.0 LANGUAGES C CXX RC)
+project(DesertStormFix VERSION 3.4.0 LANGUAGES C CXX RC)
 # Pre-release tag shown with the version (DLL, menus, launcher, zip name); "" for a release. The Windows file version
 # stays numeric (3.2.1.0).
 set(DS_VERSION_SUFFIX "-Alpha")
@@ -10,7 +10,7 @@ set(DS_VERSION_FULL "${PROJECT_VERSION}${DS_VERSION_SUFFIX}")
 # in this binary dir - nothing of DesertStormFix / PSE is configured, so no target names clash. Root presets ds2*, cv*,
 # cgs*. Outputs land where a standalone build of games/<id> puts them (<bin>/<config>/dinput8.dll, <bin>/package).
 # Each games/<id> also still builds on its own: cmake -S games/<id> --preset x86 (its own CMakePresets.json).
-set(PSE_GAME "" CACHE STRING "Build another game's standalone patch from games/<id> instead of DesertStormFix (ds2, cv, cgs, tge)")
+set(PSE_GAME "" CACHE STRING "Build another game's standalone patch from games/<id> instead of DesertStormFix (ds2, cv, cgs, tge, deniedops)")
 if(PSE_GAME)
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/games/${PSE_GAME}/CMakeLists.txt")
         message(FATAL_ERROR "PSE_GAME=${PSE_GAME}: no games/${PSE_GAME}/CMakeLists.txt")

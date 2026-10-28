@@ -7,6 +7,9 @@
 // Editor IDs come from the scene as the readable mission scripts name things (mission2lua_readable.refs_from_env):
 // objects by their HLOI stat name (or unit + script id), waypoints by name, regions by name, made into Lua names.
 // Only the scene layouts of Desert Storm (scene version 70-72) are read: HLOI, NEWENVWAYPT, REGN.
+#include <cstdint>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -23,5 +26,16 @@ std::vector<std::string> PlacedLevels(const std::vector<Edits>& edits);
 // lines ("new ...", "... taken out of play", "[fail] <mod>/<file>: ...").
 std::string ApplyPlaced(const std::string& scene, const std::string& level, const std::vector<Edits>& edits,
                         const Forms& forms, std::vector<std::string>* report);
+
+// The editor IDs alone (mission2lua_readable.refs_from_env): HLOI script id -> object name, NEWENVWAYPT id -> waypoint
+// name, REGN index -> region name. False when the scene can't be read.
+bool SceneRefNames(const std::string& sceneBytes, std::map<int64_t, std::string>* objects,
+                   std::map<int64_t, std::string>* waypoints, std::vector<std::string>* regions);
+
+// The camera records' names in scene order (CAMFREE / CAMTARGPOS / CAMTARGOBJ / CAMCHASEOBJ; "" = unnamed): the n-th is
+// camera n of the script API's set_view_camera.
+bool SceneCameraNames(const std::string& sceneBytes, std::vector<std::string>* names);
+// _ref_ident: text -> a Lua name not in *used (and not a keyword), added to *used.
+std::string RefIdent(const std::string& text, std::set<std::string>* used);
 
 }  // namespace pse::records

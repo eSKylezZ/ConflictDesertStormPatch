@@ -601,6 +601,47 @@ std::vector<int64_t> SceneScriptIds(const std::string& sceneBytes) {
     return ids;
 }
 
+bool SceneRefNames(const std::string& sceneBytes, std::map<int64_t, std::string>* objects,
+                   std::map<int64_t, std::string>* waypoints, std::vector<std::string>* regions) {
+    try {
+        const Scene scene(sceneBytes);
+        Names n = RefNames(scene);
+        *objects = n.objects;
+        *waypoints = n.waypoints;
+        *regions = n.regions;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool SceneCameraNames(const std::string& sceneBytes, std::vector<std::string>* names) {
+    names->clear();
+    size_t at = 0;
+    while (at < sceneBytes.size()) {
+        size_t end = sceneBytes.find('\n', at);
+        if (end == std::string::npos) end = sceneBytes.size();
+        const std::string line = sceneBytes.substr(at, end - at);
+        at = end + 1;
+        size_t a = 0;
+        while (a < line.size() && (line[a] == ' ' || line[a] == '\t')) ++a;
+        size_t b = a;
+        while (b < line.size() && line[b] != ' ' && line[b] != '\t' && line[b] != '\r') ++b;
+        const std::string kw = line.substr(a, b - a);
+        if (kw != "CAMFREE" && kw != "CAMTARGPOS" && kw != "CAMTARGOBJ" && kw != "CAMCHASEOBJ") continue;
+        std::string name;
+        const size_t q = line.find('"', b);
+        if (q != std::string::npos) {
+            const size_t q2 = line.find('"', q + 1);
+            if (q2 != std::string::npos) name = line.substr(q + 1, q2 - q - 1);
+        }
+        names->push_back(name);
+    }
+    return true;
+}
+
+std::string RefIdent(const std::string& text, std::set<std::string>* used) { return Ident(text, used); }
+
 std::vector<std::string> PlacedLevels(const std::vector<Edits>& edits) {
     std::set<std::string> levels;
     for (const Edits& ed : edits)

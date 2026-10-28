@@ -17,6 +17,7 @@
 #include <windows.h>
 #include <dinput.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -262,6 +263,57 @@ __declspec(naked) void FrameStub() {
 
 int features::CoopPlayers() { return g_players; }
 int features::CoopJoystick(int player) { return player >= 0 && player < 4 ? g_joystick[player] : -1; }
+
+// Menu buttons of the game's joystick j (the ds2fix.pads interface, src/pse/ds2fix_pads.h): the same raw read and
+// vendor map as the join screen above, plus directions (POV hat, or the left stick past half its DIPROP_RANGE) and
+// Triangle / Y, L1 / LB, R1 / RB. Bits: 1 up, 2 down, 4 left, 8 right, 0x10 accept, 0x20 back, 0x40 start, 0x80 alt,
+// 0x100 L1, 0x200 R1.
+int features::PadCount() { return std::min<int>(static_cast<int>(At<uint32_t>(kJoystickCount)), 8); }
+int features::PadKind(int j) {
+    IDirectInputDevice8A* dev = Joystick(j);
+    if (!dev) return 0;
+    DIDEVICEINSTANCEA info{};
+    info.dwSize = sizeof info;
+    if (FAILED(dev->GetDeviceInfo(&info))) return 3;
+    const WORD vendor = LOWORD(info.guidProduct.Data1);
+    return vendor == 0x054C ? 1 : vendor == 0x045E ? 2 : 3;
+}
+uint32_t features::PadMenuButtons(int j) {
+    IDirectInputDevice8A* dev = Joystick(j);
+    if (!dev) return 0;
+    dev->Poll();
+    DIJOYSTATE2 s{};
+    if (FAILED(dev->GetDeviceState(sizeof s, &s))) return 0;
+    const bool sony = PadKind(j) == 1;
+    auto down = [&](int b) { return (s.rgbButtons[b] & 0x80) != 0; };
+    uint32_t out = 0;
+    if (down(sony ? 1 : 0)) out |= 0x10;
+    if (down(sony ? 2 : 1)) out |= 0x20;
+    if (down(sony ? 9 : 7)) out |= 0x40;
+    if (down(3)) out |= 0x80;
+    if (down(4)) out |= 0x100;
+    if (down(5)) out |= 0x200;
+    const DWORD pov = s.rgdwPOV[0];
+    if (LOWORD(pov) != 0xFFFF) {
+        if (pov >= 31500 || pov <= 4500) out |= 1;
+        if (pov >= 13500 && pov <= 22500) out |= 2;
+        if (pov >= 22500 && pov <= 31500) out |= 4;
+        if (pov >= 4500 && pov <= 13500) out |= 8;
+    }
+    DIPROPRANGE r{};
+    r.diph.dwSize = sizeof r;
+    r.diph.dwHeaderSize = sizeof r.diph;
+    r.diph.dwObj = DIJOFS_X;
+    r.diph.dwHow = DIPH_BYOFFSET;
+    if (SUCCEEDED(dev->GetProperty(DIPROP_RANGE, &r.diph)) && r.lMax > r.lMin) {
+        const LONG mid = (r.lMax + r.lMin) / 2, half = (r.lMax - r.lMin) / 4;
+        if (s.lY < mid - half) out |= 1;
+        if (s.lY > mid + half) out |= 2;
+        if (s.lX < mid - half) out |= 4;
+        if (s.lX > mid + half) out |= 8;
+    }
+    return out;
+}
 
 void features::ApplyCoop() {
     if (!patch::HookCall(kFrameSite, reinterpret_cast<void*>(&FrameStub), kFrameFn)) {

@@ -24,6 +24,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/log.h"
@@ -51,7 +52,7 @@ struct ModFile {
     int mod;
 };
 std::unordered_map<std::string, ModFile> g_files;  // upper-case file name -> file
-std::vector<std::string> g_mods;
+std::vector<std::string> g_mods;  // enabled mod folder names, as indexed (BuildIndex)
 std::string g_modsRoot;
 char g_result[MAX_PATH * 2];  // what our resolver hands out (the game copies it into its own buffer straight away)
 
@@ -97,7 +98,9 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
 }
 
 void BuildIndex() {
-    g_modsRoot = GameDir() + "\\Mods";
+    if (g_modsRoot.empty()) g_modsRoot = GameDir() + "\\Mods";
+    g_files.clear();
+    g_mods.clear();
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((g_modsRoot + "\\*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
@@ -116,6 +119,23 @@ void BuildIndex() {
         ScanFolder(g_modsRoot + "\\" + name, mod, count);
         dslog::Write("Mods: %s - %d file(s)", name.c_str(), count);
     }
+}
+
+// Every folder under Mods\ regardless of the leading "_" (for a future menu to list) - name without the "_", on/off.
+std::vector<std::pair<std::string, bool>> EnumerateAll() {
+    std::vector<std::pair<std::string, bool>> all;
+    if (g_modsRoot.empty()) g_modsRoot = GameDir() + "\\Mods";
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((g_modsRoot + "\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return all;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.') continue;
+        const bool off = fd.cFileName[0] == '_';
+        all.emplace_back(off ? fd.cFileName + 1 : fd.cFileName, !off);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) { return _stricmp(a.first.c_str(), b.first.c_str()) < 0; });
+    return all;
 }
 
 const ModFile* Find(const char* name) {
@@ -190,10 +210,8 @@ bool Hook(uint32_t site, const uint8_t* entry, size_t len, uint32_t cont, const 
 
 void features::ApplyMods() {
     BuildIndex();
-    if (g_files.empty()) {
-        dslog::Write("Mods: no mods in %s", g_modsRoot.c_str());
-        return;
-    }
+    // Hooked even with no mods: the MODS menu (modsmenu.cpp) can switch one on while the game runs.
+    if (g_files.empty()) dslog::Write("Mods: no mods in %s", g_modsRoot.c_str());
     const bool ok = patch::Matches(kResolve, kResolveEntry, sizeof kResolveEntry) &&
                     patch::Matches(kOpen, kOpenEntry, sizeof kOpenEntry) &&
                     patch::Matches(kExists, kExistsEntry, sizeof kExistsEntry);
@@ -209,3 +227,36 @@ void features::ApplyMods() {
          reinterpret_cast<void**>(&g_exists));
     dslog::Write("Mods: %zu mod(s), %zu file(s) - resolver, opener and exists check hooked", g_mods.size(), g_files.size());
 }
+
+// ---- backend for a future in-game MODS menu (no screen built yet for Vietnam - see games/cv/CLAUDE.md) ----
+// There is no RE'd main-menu list / state-dispatch / text-draw machinery for Vietnam.exe yet (unlike DS1, where
+// overlay.cpp / hud.cpp / coop.cpp already existed before modsmenu.cpp was written); these three functions are the
+// same mechanical operations DS1's modsmenu.cpp calls into mods.cpp for (scan, toggle, rescan), exposed so that
+// whichever session does the menu RE doesn't also have to touch the file layer again.
+
+void features::ModsRescan() { BuildIndex(); }  // re-hooks nothing (the 3 hooks stay installed); re-reads Mods\ only
+
+std::vector<std::pair<std::string, bool>> features::ModsList() { return EnumerateAll(); }
+
+bool features::ModsToggle(const std::string& name) {
+    if (g_modsRoot.empty()) g_modsRoot = GameDir() + "\\Mods";
+    bool on = false, found = false;
+    for (const auto& m : EnumerateAll())
+        if (_stricmp(m.first.c_str(), name.c_str()) == 0) { on = m.second; found = true; break; }
+    if (!found) {
+        dslog::Write("[fail] Mods: toggle %s - no such folder", name.c_str());
+        return false;
+    }
+    const std::string dir = g_modsRoot + "\\";
+    const std::string from = dir + (on ? "" : "_") + name, to = dir + (on ? "_" : "") + name;
+    if (!MoveFileA(from.c_str(), to.c_str())) {
+        dslog::Write("[fail] Mods: toggle %s -> %s (error %lu)", from.c_str(), to.c_str(), GetLastError());
+        return false;
+    }
+    dslog::Write("Mods: %s switched %s", name.c_str(), on ? "off" : "on");
+    BuildIndex();  // the hooks are already installed; only the index (which files/folders they serve) changes
+    return true;
+}
+
+int features::ModsInstalledCount() { return static_cast<int>(EnumerateAll().size()); }
+int features::ModsActiveCount() { return static_cast<int>(g_mods.size()); }

@@ -46,6 +46,7 @@ void Init() {
     features::ApplyWidescreen();
     features::ApplyHud();
     features::ApplyMods();
+    features::ApplyModsMenu();
     features::ApplyFrontEnd();
     features::ApplyFrameHook();
     graphics::Install();   // Direct3D hooks (front-end mapping, dev background mode)

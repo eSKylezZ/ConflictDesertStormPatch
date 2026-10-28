@@ -2,7 +2,7 @@
 
 #include <windows.h>
 
-// Known builds in H:\SCI Games\Conflict Vietnam:
+// Known builds of Conflict Vietnam:
 //   "Vietnam - Original.exe"  timestamp 0x411BBEAF (2004-08-12), EP RVA 0x570782, SecuROM sections .crdb / .ycfant
 //   "Vietnam 1.0 Fixed.exe"   same timestamp, EP RVA 0x4B9A05 (disc check bypassed)
 //   "Vietnam.exe"             timestamp 0x414ECA49 (2004-09-20), EP RVA 0x2723BB, plain .text/.rdata/.data/.rsrc

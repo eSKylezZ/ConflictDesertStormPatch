@@ -130,6 +130,8 @@ const Row kRows[] = {
     {"SHADOW FIX", nullptr, Kind::Plugin, 0, nullptr, 0, nullptr, "dsfix.shadows", "FeatShadowFix"},
     {"SHARPER TEXT", nullptr, Kind::Plugin, 0, nullptr, 0, nullptr, "dsfix.fontsharp", "FeatSharpText"},
     {"MODS", &settings::Values::featMods, Kind::Toggle},
+    // mods.cpp reads PSE\Library's .weapon / .skin files at start-up when it is on (restart)
+    {"OTHER GAMES' GEAR", &settings::Values::featLibraryGear, Kind::Toggle},
     {"CUSTOM CAMPAIGNS", &settings::Values::featCustomMissions, Kind::Toggle},
     {"VERSUS MENU", &settings::Values::featVersus, Kind::Toggle},
     {"EXTENDED CHEATS", &settings::Values::featCheats, Kind::Toggle},

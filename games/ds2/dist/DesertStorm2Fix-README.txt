@@ -14,6 +14,7 @@ Install: copy everything in this zip into the game folder (next to "CDS II.exe")
     PSE\Plugins\ds2fix.memory.dll + .pse   room for big mod textures, memory figures in the log (optional)
     PSE\Plugins\ds2fix.limits.dll + .pse   bigger engine limits for big battles and big mods (physics, particles,
                                     projectiles, AI); saves stay compatible with the game without it (optional)
+    PSE\Plugins\ds2fix.loadout.dll + .pse   the LOADOUT screen before each mission (optional, see below)
     DesertStorm2Fix-Patcher.exe     the 4 GB patch (see below; nothing happens until you run it)
 
 If an older DesertStorm2Fix (a single dinput8.dll) is installed, let this one replace it. Its settings are taken over
@@ -27,6 +28,13 @@ Settings are kept in the registry (HKEY_CURRENT_USER\Software\PSE\ds2), never in
 PSE\Logs\loader.log says what was loaded.
 
 HUD size: OPTIONS (main menu or pause menu) has HUD SCALING (ON / OFF) and HUD SIZE (25-400 %).
+
+Loadout: when a mission's opening is over the game pauses and the MISSION LOADOUT screen lists your squad. For each
+soldier choose the MAIN WEAPON, SIDEARM and LAUNCHER from the weapons soldiers in that mission carry (also the enemy's).
+Up / Down: row, Left / Right: change, Tab / Q / E (pad LB / RB): soldier, Enter / Space (pad A or Start): start the
+mission (if the pause menu comes up instead, the screen closes and the squad keeps its weapons). Saved games keep the chosen weapons;
+loaded without ds2fix.loadout, a soldier misses the weapon chosen for him. Switch the screen off in the pause
+menu's OPTIONS (LOADOUT SCREEN: ON / OFF).
 
 Mods: files in Mods\<mod name>\ replace the game's files of the same name (a folder starting with "_" is switched
 off). Main menu > MODS lists your mods: select one to switch it ON / OFF, then APPLY. Mission files change from the

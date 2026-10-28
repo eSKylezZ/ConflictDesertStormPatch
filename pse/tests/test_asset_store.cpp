@@ -366,9 +366,8 @@ namespace {
 std::wstring RealGame() {
     wchar_t env[MAX_PATH];
     if (GetEnvironmentVariableW(L"PSE_GAME_DIR", env, MAX_PATH)) return env;
-    for (const wchar_t* d : {L"H:\\SteamLibrary\\steamapps\\common\\conflict_desert_storm",
-                             L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\conflict_desert_storm",
-                             L"H:\\GOG\\Games\\Conflict - Desert Storm"})
+    for (const wchar_t* d : {L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\conflict_desert_storm",
+                             L"C:\\GOG Games\\Conflict - Desert Storm"})
         if (GetFileAttributesW((std::wstring(d) + L"\\chardata.dat").c_str()) != INVALID_FILE_ATTRIBUTES) return d;
     return {};
 }

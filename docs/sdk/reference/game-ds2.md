@@ -380,7 +380,9 @@ How a DS2 plugin works with ds2fix - all through the loader, no link to `ds2fix.
   (`games/ds2/src/pse/ds2fix_graphics.h`: the front end's virtual 1280 x 1024 screen - `SetVirtualScreen`,
   `VirtualScreenOn`, `RealToVirtual`, `RealWidth` / `RealHeight`, `VirtualScale` - and the game's
   `IDirect3DDevice9*`); `ds2fix.memory` v1 (`games/ds2/src/pse/ds2fix_memory.h`, served by the plugin
-  [`ds2fix.memory`](#ds2fixmemory-gamesds2pluginsmemory-2026-10-22)). The other direction works the same way: a plugin registers its own table, ds2fix queries it at
+  [`ds2fix.memory`](#ds2fixmemory-gamesds2pluginsmemory-2026-10-22)); `ds2fix.options` v1
+  (`games/ds2/src/pse/ds2fix_options.h`: plugins' ON / OFF rows in the OPTIONS screen, used by
+  [`ds2fix.loadout`](#ds2fixloadout-gamesds2pluginsloadout-2026-10-25)). The other direction works the same way: a plugin registers its own table, ds2fix queries it at
   `PSE_MSG_POST_LOAD`. Tables are append-only per version (a new function = a bigger `size`, callers check it).
 - **Game events**: the layer's messages and events (`PSE_MSG_DEVICE_CREATED` / `_RESET` with the D3D9 device; frame,
   render, level load / unload, saves), not ds2fix.
@@ -518,6 +520,38 @@ table: `games/ds2/PORTING.md` "Engine limits".
 - Dev (`HKCU\Software\DesertStorm2Fix\Dev`): `NoLimits` = 1 leaves every limit as shipped; `LimitsTestSave` /
   `LimitsTestLoad` (save path without `.sav`) + `LimitsTestAfterMs` script a save / load in a mission; the dev log
   lists the pool values every 10 s.
+
+#### `ds2fix.loadout` (`games/ds2/plugins/loadout`, 2026-10-25)
+
+DesertStorm2Fix's pre-mission LOADOUT screen (`SIMULATION`, `requires = pse.game.ds2 >= 1.0, ds2fix >= 0.1`; first
+port of DesertStormFix's customise / loadout screen). Full address table and test notes: `games/ds2/PORTING.md`
+"Loadout screen".
+
+- **When**: once per mission level (flow name `mission…`), when the intro is over: front-end state 0x13, dispatch 1,
+  no cutscene, letterbox off (`[[0x6800CC] + 8]` = 0), the player has control (input block 0 `+8`) and his vehicle (if
+  he sits in one, soldier `+0x690`) moved < 5 cm in the last second - for 1 s. Not for a level loaded from a save (`PSE_MSG_LOAD_END`).
+- **What**: per squad soldier (player team, unit `+0x1CF` squad role ≥ 0) MAIN WEAPON / SIDEARM / LAUNCHER, chosen from
+  the hand-held weapon definitions some soldier of the level carries (so the model, animations and shot sound bank are
+  loaded); sidearm / launcher can be left behind. The world is paused meanwhile (`[0x6197BC]` = 0.0001, input blocks
+  off). START MISSION gives the new weapon (CreateInventoryHLO `0x4830E0`), holds it when the old one was held, then
+  takes the old one (`0x47F3A0`); rounds = the old weapon's share of its allowance.
+- **Saves**: at `PSE_MSG_SAVE_BEGIN` the save header's per-type object counts are taken again (the game takes them
+  once at level init - a save made after objects were added or taken crashed on load, as in DS1); taken weapons and
+  the weapons the screen makes are flagged not-saved (a run-time weapon has no script id, which the game's restore
+  can't place); co-save chunk `KITS` v1 (64-byte records) puts swapped-in weapons back after a load; projectiles in
+  flight from such a weapon name a kit weapon of the same soldier while the game saves (a loaded bullet with a null
+  weapon crashed).
+- **Drawing**: its own (GDI text -> one texture -> a quad at `PSE_EVENT_END_SCENE`, back buffer only); input:
+  keyboard while the game window is in front, XInput pads.
+
+| Setting (`HKCU\Software\PSE\ds2\Plugins\ds2fix.loadout`) | Type | Default | |
+| --- | --- | --- | --- |
+| `FeatLoadout` | bool, live | 1 | the screen after each mission's intro; OPTIONS row LOADOUT SCREEN (through `ds2fix.options`) |
+
+Interface **`ds2fix.options` v1** (`games/ds2/src/pse/ds2fix_options.h`), published by ds2fix (owner `ds2fix.menus`):
+`AddToggle(plugin, const Ds2FixToggleV1*)` / `RemoveToggle(plugin, toggle)` - up to 4 plugin ON / OFF rows
+(`"<label>: ON / OFF"`, `Get()` / `Set(on)`) in the game's OPTIONS screen (state 6, the pause menu's OPTIONS) after the HUD
+rows, while its 8 rows have room. The toggle table must stay valid until `RemoveToggle` (call it in `PSEPlugin_Unload`).
 
 ## Loader neutrality (found while porting)
 

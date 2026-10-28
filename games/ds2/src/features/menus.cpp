@@ -479,9 +479,20 @@ void HudTexts() {
     swprintf_s(g_hudSizeText, L"HUD SIZE: %u%%", g_hud.percent());
 }
 
+// Plugin ON / OFF rows (menus::AddToggle, the ds2fix.options interface): after the HUD rows while rows are free.
+constexpr int kIdToggleFirst = 0x9A2;
+constexpr uint32_t kTxtToggleFirst = 0xC0B20060, kTxtToggleDescFirst = 0xC0B20070;   // (0xC0B2003x / 4x: campaigns.cpp)
+menus::Toggle g_toggles[menus::kMaxToggles];
+wchar_t g_toggleText[menus::kMaxToggles][64], g_toggleDesc[menus::kMaxToggles][160];
+
+void ToggleText(int i) {
+    const menus::Toggle& t = g_toggles[i];
+    swprintf_s(g_toggleText[i], L"%hs: %s", t.label ? t.label : "", t.get && t.get() ? L"ON" : L"OFF");
+}
+
 void __fastcall OptionsPadRows(void* screen, void*, void* pool, int firstId, uint32_t drawCb, int flags, int rows) {
     uint8_t* l = List(screen);
-    const int count = *reinterpret_cast<int16_t*>(l + 0x3E);
+    int count = *reinterpret_cast<int16_t*>(l + 0x3E);
     if (g_hud.scaling && count + 2 <= rows) {
         HudTexts();
         auto items = *reinterpret_cast<uint8_t***>(l + 0x44);
@@ -500,11 +511,30 @@ void __fastcall OptionsPadRows(void* screen, void*, void* pool, int firstId, uin
         *reinterpret_cast<float*>(size + 0xB8) = static_cast<float>(g_sizeStep);
         reinterpret_cast<void(__thiscall*)(void*, void*)>((*reinterpret_cast<uint32_t**>(l))[1])(l, size);
     }
+    for (int i = 0; i < menus::kMaxToggles; ++i) {
+        count = *reinterpret_cast<int16_t*>(l + 0x3E);
+        if (!g_toggles[i].get || count + 1 > rows) continue;
+        ToggleText(i);
+        auto items = *reinterpret_cast<uint8_t***>(l + 0x44);
+        This(0x51D4F0, items[count], kIdToggleFirst + i, kTxtToggleDescFirst + i, kTxtToggleFirst + i, 0, 0x880, 0, 0,
+             kItemDraw, 0, 0, 0x60);
+        reinterpret_cast<void(__thiscall*)(void*, void*)>((*reinterpret_cast<uint32_t**>(l))[1])(l, items[count]);
+    }
     This(kPadRows, screen, pool, firstId, drawCb, flags, rows);
 }
 
 uint16_t __fastcall OptionsListRead(void* list, void*) {
     uint16_t id = ListSelect(list);
+    if (id >= kIdToggleFirst && id < kIdToggleFirst + menus::kMaxToggles) {
+        const int i = id - kIdToggleFirst;
+        if (g_toggles[i].get && g_toggles[i].set) {
+            const bool on = !g_toggles[i].get();
+            dslog::Write("Menus: OPTIONS row %s -> %s", g_toggles[i].label, on ? "ON" : "OFF");
+            g_toggles[i].set(on);
+            ToggleText(i);
+        }
+        return 0;
+    }
     if (!g_hud.scaling) return id;
     bool on = g_hud.scaling();
     uint32_t percent = g_hud.percent();
@@ -602,6 +632,21 @@ void menus::AddItem(void* screen, int index, int id, uint32_t textHash, uint32_t
 }
 void menus::EndList(void* screen, int itemCount, uint32_t titleHash) { End(screen, itemCount, titleHash, true); }
 void menus::SetHudOption(const HudOption& hud) { g_hud = hud; }
+int menus::AddToggle(const Toggle& toggle) {
+    for (int i = 0; i < kMaxToggles; ++i)
+        if (!g_toggles[i].get) {
+            g_toggles[i] = toggle;
+            swprintf_s(g_toggleDesc[i], L"%hs", toggle.description ? toggle.description : "");
+            AddText(kTxtToggleFirst + i, g_toggleText[i]);
+            AddText(kTxtToggleDescFirst + i, g_toggleDesc[i]);
+            ToggleText(i);
+            return i;
+        }
+    return -1;
+}
+void menus::RemoveToggle(int index) {
+    if (index >= 0 && index < kMaxToggles) g_toggles[index] = Toggle{};
+}
 void menus::SetModsScreenHooks(const ModsScreenHooks& hooks) { g_modsHooks = hooks; }
 void menus::SetCampaignScreenHooks(const CampaignScreenHooks& hooks) { g_campaignHooks = hooks; }
 void menus::OpenDifficulty() {

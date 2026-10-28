@@ -41,6 +41,7 @@ settings::Toggle g_toggles[] = {
     // FeatVeryHard / FeatJpFixes / FeatRumble / FeatTooltips / FeatFollowers: their own plugins' keys since
     // 2026-10-24 (dsfix.difficulty, dsfix.jpfixes, dsfix.rumble, dsfix.tooltips, dsfix.followers); FeatSharpText: dsfix.fontsharp
     {"FeatMods", &Values::featMods, true, "MODS"},
+    {"FeatLibraryGear", &Values::featLibraryGear, true, "OTHER GAMES' GEAR"},
     {"FeatCustomMissions", &Values::featCustomMissions, false, "CUSTOM CAMPAIGNS"},
     {"FeatVersus", &Values::featVersus, true, "VERSUS MENU"},
     {"FeatCheats", &Values::featCheats, true, "EXTENDED CHEATS"},

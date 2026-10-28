@@ -3,8 +3,12 @@
 A mod can run its own Lua instead of one of the game's mission DLLs (`Mission*.dll`, `Training*.dll`). The level
 stays what it is – the same name, archive, sound cache, scene, briefing screen, saves and menu entry – only its
 script comes from the mod. This is how an edited **readable mission** (ModKit `cli/ds_mission2lua_readable.py`, Lua
-made from the player's own DLL) is played, and how the ModKit example **RestoredMissions**
-(`examples/restored_missions/build.py`) puts cut content back into the training missions and Mission 1.
+made from the player's own DLL) is played on your own PC.
+
+**To share a change to a game mission, use a [mission patch](mission-patches.md) instead.** A patch holds only your
+own Lua and edit blocks; DesertStormFix makes the readable mission from each player's DLL and applies the patch to it.
+A replacement is a whole mission's Lua, made from game code, so it is for your own PC. The ModKit example
+**RestoredMissions** (`examples/restored_missions/RestoredMissions/`) is four patches.
 
 Needs DesertStormFix 3.3 (the `dsfix.missions` plugin, `plugins/missions/missionsource.cpp`). Works in every build,
 with the MISSIONS FROM LUA setting on or off.
@@ -33,8 +37,9 @@ When the game loads `<Stem>.dll`:
 
 1. a mod has `<Stem>.dll` itself → that DLL (a mod's DLL always wins);
 2. a mod has `<Stem>.lua` with `--@replaces <Stem>.dll` → **the mod's Lua**;
-3. MISSIONS FROM LUA on → the cached translation of the game's DLL (`PSE\Cache\missions`);
-4. else the game's DLL.
+3. any mod has `<Stem>.patch.lua` → the readable mission + the patches ([mission patches](mission-patches.md));
+4. MISSIONS FROM LUA on → the cached translation of the game's DLL (`PSE\Cache\missions`);
+5. else the game's DLL.
 
 If the mod's Lua fails to load or start, the game's DLL runs instead (and the reason is logged). The
 F11 overlay shows "mission script: Lua (mod mission)" while one runs.
@@ -72,8 +77,8 @@ python cli/ds_mission2lua_readable.py --bundle work\Training1               (reb
 ```
 
 then add `--@replaces Training1.dll` as the bundle's second line and copy it to `<game>\Mods\<Mod>\Training1.lua`.
-Generated missions are game code made from the player's files: share a script that builds them (like
-`examples/restored_missions/build.py`: anchored edits + appended Lua), not the built files.
+Generated missions are game code made from the player's files, so never share them. To share your changes, turn them
+into a [mission patch](mission-patches.md): edit blocks of the lines you changed, plus your own Lua.
 
 Since ModKit 2026-10-20 a readable mission's `scripts/runtime.lua` wraps **every** named script API slot (not only the
 ones its DLL calls), so an edit can call any of them by name (`api.play_stream`, `api.set_view_camera`, …).

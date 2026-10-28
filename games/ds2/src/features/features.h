@@ -39,6 +39,11 @@ void ApplyCoop();  // co-op join screen + session (coop.cpp; the join screen nee
 // co-op session from the join screen (coop.cpp): players joined (0 = none), each player's joystick (-1 = keyboard)
 int CoopPlayers();
 int CoopJoystick(int player);
+// the game's DirectInput joysticks read for menus (coop.cpp; the ds2fix.pads interface): count, kind (0 none,
+// 1 PlayStation, 2 Xbox, 3 other), held menu buttons (bits as Ds2FixPadButton in src/pse/ds2fix_pads.h)
+int PadCount();
+int PadKind(int joystick);
+uint32_t PadMenuButtons(int joystick);
 // Mods folder (mods.cpp): <game>\Mods\<mod>\** files replace / add files the game opens by name; report in
 // Mods\DesertStorm2Fix-report.txt (ModLog = log line + report line; "[fail]" lines count as problems)
 void ApplyMods();
@@ -87,6 +92,9 @@ void AddModRoot(const std::string& folder);
 // (ApplySkins at start-up, ReloadSkins after the MODS menu's Apply - applied to soldiers made from then on)
 void ApplySkins();
 void ReloadSkins();
+// one soldier in play gets another body (same skeleton key count) / a texture on every skin part (the ds2fix.skins
+// interface; "" = keep his own); false = not done
+bool DressSoldier(void* soldier, const char* body, const char* texture);
 // Sounds from the Mods folder (mods_sound.cpp, sub-plugin ds2fix.modsound): .sch bank packs added to every level's
 // sound cache, a .sch named like a level cache = that level's sounds replaced, .psf music, .bik films; ReloadModSounds
 // after the MODS menu's Apply. For .weapon files (mods_weapons): MakeWeaponSoundBank = new bank <newName> (key ELF hash

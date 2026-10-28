@@ -348,6 +348,7 @@ std::vector<std::string> ListFolders(const std::string& root) {
 // reaches them). They are never synced: LoadedMods() leaves them out (mod sync / the online mod list); the online
 // check compares them as ports (onlinecompat.cpp: a player without the same conversion is refused, not sent it).
 constexpr const char* kPortPrefix = "..\\PSE\\Ports\\";
+constexpr const char* kLibraryPrefix = "..\\PSE\\Library\\";   // OTHER GAMES' GEAR (never synced: LoadedMods)
 
 void BuildIndex() {
     const std::string root = g_modsRoot = GameDir() + "\\Mods";
@@ -359,6 +360,39 @@ void BuildIndex() {
         ScanFolder(GameDir() + "\\PSE\\Ports\\" + id, mod, count);
         features::ModLog("Ports: %s - %d files (converted campaign)", id.c_str(), count);
     }
+    // OTHER GAMES' GEAR (FeatLibraryGear): the asset library's weapons and uniforms (.weapon / .skin) as if a mod had
+    // them - choosable on the loadout screen. Only those definitions are read here; their models, textures and sound
+    // banks still come from the library when one is picked (LibraryFind), its other files are never indexed.
+    if (settings::Get().featLibraryGear) {
+        const std::string lib = GameDir() + "\\PSE\\Library";
+        for (const std::string& id : ListFolders(lib)) {
+            if (id.find('.') != std::string::npos) continue;              // <id>.building = a build in progress
+            const int mod = static_cast<int>(g_mods.size());
+            g_mods.push_back(kLibraryPrefix + id);
+            int weapons = 0, skins = 0;
+            WIN32_FIND_DATAA fd;
+            HANDLE h = FindFirstFileA((lib + "\\" + id + "\\*").c_str(), &fd);
+            if (h == INVALID_HANDLE_VALUE) continue;
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                const std::string key = Upper(fd.cFileName);
+                const std::string path = lib + "\\" + id + "\\" + fd.cFileName;
+                if (key.size() > 7 && key.compare(key.size() - 7, 7, ".WEAPON") == 0) {
+                    g_weaponFiles.push_back({path, mod});
+                    ++weapons;
+                } else if (key.size() > 5 && key.compare(key.size() - 5, 5, ".SKIN") == 0) {
+                    g_skinFiles.push_back({path, mod});
+                    ++skins;
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+            features::ModLog("Library: %s - %d weapon(s), %d uniform(s) on the loadout screen (OTHER GAMES' GEAR)",
+                             id.c_str(), weapons, skins);
+        }
+    }
+    // Mod priority list (core/modorder.h, settings value ModOrder): the mods load in its order and the one loaded last
+    // wins a file name. Every folder is on it, switched off ("_Name") too, so a mod keeps its place; new folders go to
+    // the end, gone ones drop off; no list yet = alphabetical (the order before the list existed).
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA((root + "\\*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
@@ -1269,6 +1303,7 @@ uint32_t ElfHash(const std::string& s) {  // FUN_004b9bf0, the sound bank key (c
 // With the asset store on, nothing is copied: the bank's key goes into g_storeBanks and SoundCache adds it (with its
 // samples) to every level cache from the store. Returns true when the level caches get something new.
 const ModFile* LibraryFind(const std::string& upper);   // the asset library (below, next to Find)
+const ModFile* Find(const char* name);                  // a mod's file, else the asset library's (below)
 std::vector<std::string> g_borrowed;
 bool BorrowBank(const std::string& name) {
     for (const std::string& b : g_borrowed)
@@ -1774,9 +1809,9 @@ void BuildWeapons() {
                 // a picture file in a mod folder (HUD weapon panel, inventory, pick-up icon), else a game picture name
                 std::string path;
                 for (const char* ext : {"", ".png", ".dds", ".tga"}) {
-                    auto it = g_files.find(Upper(v + ext));
-                    if (it != g_files.end()) {
-                        path = it->second.path;
+                    const ModFile* it = Find((v + ext).c_str());   // (a mod's or the asset library's)
+                    if (it) {
+                        path = it->path;
                         break;
                     }
                 }
@@ -1851,7 +1886,14 @@ void BuildWeapons() {
         }
         rows += line + "\r\n";
         g_weaponRows.push_back(row);
-        g_modWeaponIds.push_back(id);
+        // a vehicle's gun (based on one of Desert Storm's: UK_ / US_ / IR_VWPN_..., IR_VWNP_ - converted vehicles bring
+        // theirs) keeps its row for the vehicle but is never a hand weapon on the loadout screen: it has no hand
+        // connector (nothing in the hands) and makes no sense there
+        auto vehicleGun = [](const std::string& w) {
+            const std::string u = Upper(w);
+            return u.find("_VWPN_") != std::string::npos || u.find("_VWNP_") != std::string::npos;
+        };
+        if (!vehicleGun(base) && !vehicleGun(id)) g_modWeaponIds.push_back(id);
         if (!ownSound && row[kColSound] != "-1" && row[kColSound] != baseSound) BorrowBank(row[kColSound]);
         features::ModLog("Mods: weapon %s (%s) based on %s, sound %s", id.c_str(), file.c_str(), base.c_str(),
                      row[kColSound].c_str());
@@ -1895,8 +1937,8 @@ std::string NextNameRow(const char* table, const std::string& name, std::vector<
 // becomes newName, so the game loads it as a model of its own. Written to the merged folder and indexed like a mod file.
 bool CopyBody(const std::string& source, const std::string& newName, const std::string& file) {
     std::string evo;
-    auto it = g_files.find(Upper(source + ".evo"));
-    if (!(it != g_files.end() ? ReadAll(it->second.path, evo) : ReadGameFile(source + ".evo", evo))) {
+    const ModFile* it = Find((source + ".evo").c_str());
+    if (!(it ? ReadAll(it->path, evo) : ReadGameFile(source + ".evo", evo))) {
         features::ModLog("[fail] Mods: %s - body %s not found", file.c_str(), source.c_str());
         return false;
     }
@@ -1999,7 +2041,7 @@ void BuildSkins() {
         ++n;
         tables[table] += std::string(kKeys[role]) + (uniformName.empty() ? "SkinMod" : "SkinUni") + std::to_string(n) +
                          "," + texture + "," + portrait + "," + first + "," + last + "," + std::to_string(900 + n) + "\r\n";
-        if (!body.empty() && g_files.find(Upper(body + ".evo")) == g_files.end()) {
+        if (!body.empty() && !Find((body + ".evo").c_str())) {
             features::ModLog("[fail] Mods: %s - body %s: no %s.evo in a mod folder", file.c_str(), body.c_str(), body.c_str());
             body.clear();
         }
@@ -2008,7 +2050,7 @@ void BuildSkins() {
             // the model is shared by everyone wearing it - so this skin gets a body of its own: a renamed copy of its
             // body (or the soldier's game body) that bodies.cpp swaps in and binds the normal map to.
             bool found = false;
-            for (const char* ext : {".tga", ".dds"}) found |= g_files.count(Upper(normalMap + ext)) > 0;
+            for (const char* ext : {".tga", ".dds"}) found |= Find((normalMap + ext).c_str()) != nullptr;
             if (!found) {
                 features::ModLog("[fail] Mods: %s - normal map %s: no %s.tga / .dds in a mod folder", file.c_str(),
                                  normalMap.c_str(), normalMap.c_str());
@@ -2692,7 +2734,8 @@ void BuildGear() {
 //   texture = AbramsDesert                a skin: the base model with your texture ("texture <part> = X" for a model
 //                                         with more texture slots); "damaged texture" likewise for the wreck
 //   model = MYTANK                        or a model the mod ships (MYTANK.evo, + MYTANK.DYN for tracks / wheels -
-//                                         the base model's is used when it has none); "damaged model" likewise
+//                                         the base model's is used when it has none - placeable then, but not a
+//                                         VEHICLE tab choice); "damaged model" likewise
 //   faction = US / UK / Iraqi             shown with the name (default: the base vehicle's side)
 //   engine sound = Hovercraft             its own engine bank (a .sch bank pack in the mod, events as Wheels.sbk /
 //                                         Tracks.sbk): a Props.txt row <ID>_ENGINE (the base's propulsion type, this
@@ -2732,8 +2775,17 @@ std::string JoinRow(const std::vector<std::string>& row) {
 }
 
 // <model>.DYN (tracks, wheels) for a renamed model: the mod's own, else a copy of the base model's.
-void CopyDyn(const std::string& base, const std::string& model) {
-    if (Find((model + ".DYN").c_str())) return;
+// Own models (`model =`) that got the base's copy: the vehicle can be built (a level placing it loads), but its drive
+// train - the base's wheels / tracks at the base body's places - doesn't belong to that body, so it is never offered as
+// a swap on the loadout screen (VehicleDataComplete). The ModKit porter's scene props are such: Desert Storm II's
+// Supergun base and searchlight tripod "based on" the Humvee couldn't be driven.
+std::vector<std::string> g_borrowedDyn;   // upper-case model names
+void CopyDyn(const std::string& base, const std::string& model, bool ownBody = false) {
+    if (const ModFile* f = Find((model + ".DYN").c_str())) {
+        if (ownBody && f->mod < 0) g_borrowedDyn.push_back(Upper(model));   // our copy from before a MODS reload
+        return;
+    }
+    if (ownBody) g_borrowedDyn.push_back(Upper(model));
     std::string dyn;
     if (!ReadGameFile(base + ".DYN", dyn)) {
         const ModFile* own = Find((base + ".DYN").c_str());
@@ -2827,7 +2879,7 @@ void BuildVehicles() {
                 features::ModLog("[fail] Mods: %s - model %s.evo isn't in a mod", file.c_str(), model.c_str());
                 continue;
             }
-            CopyDyn(baseModel, model);
+            CopyDyn(baseModel, model, true);
             row[1] = model;
         } else if (!retexture.empty()) {   // a skin: the base model with new textures, under the vehicle's id
             if (!CopyModel(baseModel, Upper(id), retexture, file)) continue;
@@ -2960,8 +3012,8 @@ std::vector<std::string> NodeNames(const std::string& evo) {   // DS1 EOBJ (vers
 }
 
 bool ModelBytes(const std::string& model, std::string& out) {
-    auto it = g_files.find(Upper(model + ".evo"));
-    return it != g_files.end() ? ReadAll(it->second.path, out) : ReadGameFile(model + ".evo", out);
+    const ModFile* it = Find((model + ".evo").c_str());
+    return it ? ReadAll(it->path, out) : ReadGameFile(model + ".evo", out);
 }
 
 void BuildUnits() {
@@ -3181,7 +3233,7 @@ bool ArchiveHas(const std::string& dat, uint32_t hash) {   // does that game arc
 // was copied now. data = its bytes when wanted (models: their textures and .DYN are read from them).
 bool BorrowLevelFile(const std::string& name, const std::string& levelDat, std::string* data, int& copied) {
     const std::string key = Upper(name);
-    if (auto f = g_files.find(key); f != g_files.end()) return data ? ReadAll(f->second.path, *data) : true;
+    if (const ModFile* f = Find(key.c_str())) return data ? ReadAll(f->path, *data) : true;
     const uint32_t hash = ArchiveHash(name);
     const auto& index = GameArchiveIndex();
     auto loc = index.find(hash);
@@ -3263,6 +3315,7 @@ void BuildAll() {
 
 void ResetState() {
     g_files.clear();
+    g_borrowedDyn.clear();
     g_largestFile = 0;
     g_largestName.clear();
     g_mods.clear();
@@ -3615,7 +3668,7 @@ const std::vector<std::string>& features::LoadedMods() {
     static std::vector<std::string> mods;
     mods.clear();
     for (const std::string& m : g_mods)
-        if (m.rfind(kPortPrefix, 0) != 0) mods.push_back(m);
+        if (m.rfind(kPortPrefix, 0) != 0 && m.rfind(kLibraryPrefix, 0) != 0) mods.push_back(m);   // (library gear too)
     return mods;
 }
 
@@ -3683,7 +3736,7 @@ void features::PadLevelPools(const char* level, int extra) {
     }
 }
 
-// A vehicle the game can build: its model and its guns' models (VEHWPNS.TXT -> WEAPS.TXT column 2) are in a mod or in
+// A vehicle the game can build and drive: its model, its .DYN and its guns' models (VEHWPNS.TXT -> WEAPS.TXT column 2) are in a mod or in
 // one of the game's archives. VEHICLE.TXT has rows whose models were never shipped (M1A1abrahms needs
 // VHAbrams_M1A1_MG, UK_VEH_SAS_LandRover_MG needs SAS_LandRover_With_50cal) - picked, they fail to load.
 bool features::VehicleDataComplete(const std::string& unit) {
@@ -3699,6 +3752,23 @@ bool features::VehicleDataComplete(const std::string& unit) {
     const auto vehicles = TableRows("VEHICLE.TXT"), guns = TableRows("VEHWPNS.TXT"), weapons = TableRows("WEAPS.TXT");
     const std::vector<std::string>* row = FindRow(vehicles, unit);
     bool ok = row && row->size() > 1 && exists((*row)[1]);
+    // and its <model>.DYN (wheels / tracks, suspension - the physics body is made from it): converted props that only
+    // borrowed a vehicle's handling row and seat connectors (Desert Storm II's Supergun base, the searchlight tripod,
+    // its ZSU-23-4 without a drive train) have none - picked, the squad sat in something that can't move
+    if (ok && (*row)[1] != "-1") {
+        const std::string dyn = (*row)[1] + ".DYN";
+        if (!Find(dyn.c_str()) && GameArchiveIndex().count(ArchiveHash(dyn)) == 0) {
+            features::ModLog("Vehicles: %s left out - no %s (wheels / tracks) in a mod or the game's data", unit.c_str(),
+                             dyn.c_str());
+            return cache[key] = false;
+        }
+        if (std::find(g_borrowedDyn.begin(), g_borrowedDyn.end(), Upper((*row)[1])) != g_borrowedDyn.end()) {
+            features::ModLog("Vehicles: %s left out - model %s has no .DYN of its own (wheels / tracks borrowed from "
+                             "its base vehicle): it can be placed in a level, not driven as a swap", unit.c_str(),
+                             (*row)[1].c_str());
+            return cache[key] = false;
+        }
+    }
     for (const auto& g : guns)
         if (ok && g.size() > 1 && _stricmp(g[0].c_str(), unit.c_str()) == 0)
             if (const auto* w = FindRow(weapons, g[1]); w && w->size() > 1) ok = exists((*w)[1]);

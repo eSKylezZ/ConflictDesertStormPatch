@@ -460,9 +460,17 @@ std::vector<uint32_t> Function::TableTargetsBase(const Insn& i) {
     last_->values = caseOf;
     last_->tableVa = static_cast<uint32_t>(mp.disp);
     last_->byteTable = haveByteTable && byteTable;
+    last_->indexReg = last_->byteTable ? byteIndex : mp.index;
     std::set<uint32_t> uniq;
     for (auto& kv : caseOf) uniq.insert(kv.second);
     return {uniq.begin(), uniq.end()};
+}
+
+std::vector<uint32_t> Function::BaseTableTargets(Dll& dll, const Insn& i, std::unique_ptr<Table>* table) {
+    Function shell(dll);
+    std::vector<uint32_t> tg = shell.TableTargetsBase(i);
+    *table = std::move(shell.last_);
+    return tg;
 }
 
 // missionflow.Function._back: up to n instructions before va (linear, from the earliest start offset that lands on va)

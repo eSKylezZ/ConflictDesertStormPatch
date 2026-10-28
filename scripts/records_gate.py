@@ -29,7 +29,7 @@ from conflict_ds_tools import pse_data  # noqa: E402
 
 exe = args.pse_build
 if not exe:
-    for d in ("build-pse-t", "build-pse", "build"):
+    for d in ("build-pse", "build"):
         for cfg in ("RelWithDebInfo", "Release", "Debug"):
             p = os.path.join(REPO, d, "pse", cfg, "pse_build.exe")
             if os.path.exists(p) and (not exe or os.path.getmtime(p) > os.path.getmtime(exe)):

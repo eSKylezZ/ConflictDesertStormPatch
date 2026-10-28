@@ -15,7 +15,7 @@
 // Exe lookup: env PSE_GAME_EXE, else the Steam install, else the GOG install. Only the known build is mapped
 // (SHA-256 D712F5EC..., with the 4 GB flag cleared before hashing).
 // Desert Storm II (2026-10-19): MapGame("ds2") maps CDS II.exe 1.0 disc-free (SHA-256 E9B46420..., env
-// PSE_GAME_EXE_DS2, else the install under H:\SCI Games) into the same range - ONE exe at a time: MapGame takes the
+// PSE_GAME_EXE_DS2, else a standard install path) into the same range - ONE exe at a time: MapGame takes the
 // other one out first, Map() / PSE_REQUIRE_EXE() put DS1 back. Tests use PSE_REQUIRE_EXE_FOR("ds2").
 #include <cstdint>
 #include <cstring>

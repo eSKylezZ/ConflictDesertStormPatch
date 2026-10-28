@@ -34,6 +34,7 @@ add_library(dinput8 SHARED
     src/features/frontend.cpp
     src/features/probe.cpp
     src/features/mods.cpp
+    src/features/modsmenu.cpp
     ${CMAKE_BINARY_DIR}/version.rc
 )
 target_include_directories(dinput8 PRIVATE src)
@@ -160,7 +161,7 @@ if(CV_PSE_PLUGIN)
     add_library(cvfix SHARED
         src/pse/cvfix.cpp src/pse/cvfix.pse
         src/core/log.cpp
-        src/features/gameexe.cpp src/features/widescreen.cpp src/features/mods.cpp
+        src/features/gameexe.cpp src/features/widescreen.cpp src/features/mods.cpp src/features/modsmenu.cpp
         src/features/devbg.cpp src/features/graphics.cpp
         ${PSE_REPO_ABS}/games/ds1/src/core/patch.cpp)
     set_source_files_properties(src/pse/cvfix.pse PROPERTIES HEADER_FILE_ONLY ON)

@@ -32,6 +32,32 @@ features::Settings g_settings;
 #ifndef DS_DIST
 void PSE_CALL LogSink(const char* line) { dslog::Write("%s", line); }
 void PSE_CALL ReportSink(const char* line, int error) { dslog::Write("%s%s", error ? "[report] [fail] " : "[report] ", line); }
+
+// Dev: the first access violations (handled or not) with EIP, address and the code addresses on the stack.
+LONG CALLBACK CrashLog(EXCEPTION_POINTERS* e) {
+    static LONG count = 0;
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || InterlockedIncrement(&count) > 4)
+        return EXCEPTION_CONTINUE_SEARCH;
+    const CONTEXT* c = e->ContextRecord;
+    char line[512];
+    int n = sprintf_s(line, "[dev] access violation at %08lX (%s %08lX) eax %08lX ecx %08lX edx %08lX esi %08lX edi %08lX stack:",
+                      c->Eip, e->ExceptionRecord->ExceptionInformation[0] ? "write" : "read",
+                      static_cast<unsigned long>(e->ExceptionRecord->ExceptionInformation[1]), c->Eax, c->Ecx, c->Edx,
+                      c->Esi, c->Edi);
+    const DWORD* sp = reinterpret_cast<const DWORD*>(c->Esp);
+    for (int i = 0, found = 0; i < 256 && found < 12 && n < 480; ++i) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(sp + i, &mbi, sizeof mbi) || !(mbi.Protect & (PAGE_READWRITE | PAGE_READONLY))) break;
+        DWORD v = sp[i];
+        if (VirtualQuery(reinterpret_cast<void*>(v), &mbi, sizeof mbi) &&
+            (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))) {
+            n += sprintf_s(line + n, sizeof line - n, " %08lX", v);
+            ++found;
+        }
+    }
+    dslog::Write("%s", line);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 #endif
 
 struct Feature {
@@ -43,6 +69,9 @@ struct Feature {
 const Feature kFeatures[] = {
     {"cgsfix.widescreen", "Widescreen display modes", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWidescreen},
     {"cgsfix.mods", "Mods folder", PSE_PLUGIN_SIMULATION, &features::ApplyMods},
+    {"cgsfix.frame", "Per-frame hook (D3D9 re-hook, dev background mode)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyFrameHook},
+    {"cgsfix.devbg", "Background test mode (dev builds)", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDevBackground},
+    {"cgsfix.modsmenu", "MODS item in the main menu", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyModsMenu},
 };
 
 void RegisterFeatures() {
@@ -96,6 +125,7 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
     const PSEHostInterface* host = pse::hostlink::Host();
     host->SetLogSink(&LogSink);
     host->SetReportSink(&ReportSink);
+    AddVectoredExceptionHandler(0, CrashLog);
 #endif
     dslog::Write("GlobalStormFix " DS_VERSION " loaded as a PSE host plugin (game %s)", pse->gameId);
     // One-time migration from the standalone build's registry key (games/cgs/CLAUDE.md "Environment": HKLM virtualized
@@ -114,6 +144,8 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
                                         "List every display mode in the launcher, not only the four 4:3 / 5:4 ones");
     g_settings.mods = DeclareBool("FeatMods", true, "MODS FOLDER",
                                   "Files in <game>\\Mods\\<mod>\\ replace or add whole game files by name");
+    g_settings.modsMenu = DeclareBool("FeatModsMenu", true, "MODS MENU",
+                                      "MODS item in the main menu: turn Mods\\ folders on / off");
     RegisterFeatures();
     for (const Feature& f : kFeatures) {
         patch::OwnerScope scope(pse_host::Find(f.name));

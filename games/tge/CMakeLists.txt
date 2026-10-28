@@ -85,19 +85,26 @@ tge_ship_target(tge_pse_loader "Pivotal Script Extender loader" pse_loader.dll)
 tge_ship_target(tge_pse_shim "Pivotal Script Extender shim (dinput8 proxy)" dinput8.dll)
 tge_ship_target(tge_pse_layer "Pivotal Script Extender - The Great Escape game layer" pse_tge.dll)
 
+# Lua 5.4.7 (MIT, the repo root's third_party/lua): .lua mission scripts (scripthost.cpp). Library sources only.
+set(TGE_LUA_DIR "${PSE_REPO_ABS}/third_party/lua")
+file(GLOB TGE_LUA_SOURCES CONFIGURE_DEPENDS ${TGE_LUA_DIR}/*.c)
+add_library(tge_lua STATIC ${TGE_LUA_SOURCES})
+target_include_directories(tge_lua PUBLIC ${TGE_LUA_DIR})
+target_compile_definitions(tge_lua PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 # ---- tgefix.dll + tgefix.pse: GreatEscapeFix as the host plugin (src/tgefix.cpp) ----
 # Patching = DesertStormFix's broker-backed games/ds1/src/core/patch.cpp (src/core/patch.h forwards to its header), so
 # every byte group / hook has an owner: the feature's sub-plugin "tgefix.<feature>". pse:: calls through pse/hostlink.
 add_library(tgefix SHARED
     src/tgefix.cpp src/tgefix.pse
-    src/core/log.cpp
-    src/features/widescreen.cpp src/features/mods.cpp src/features/display.cpp src/features/guiscale.cpp src/features/framecap.cpp src/features/devbg.cpp
+    src/core/log.cpp src/core/gamepad.cpp src/tge_icons.rc
+    src/features/widescreen.cpp src/features/mods.cpp src/features/mods_tables.cpp src/features/mods_levels.cpp src/features/mods_sound.cpp src/features/weaponicons.cpp src/features/modsmenu.cpp src/features/gui_file.cpp src/features/fixmenus.cpp src/features/ingame_input.cpp src/features/contextprompts.cpp src/features/display.cpp src/features/guiscale.cpp src/features/fontsharp.cpp src/features/framecap.cpp src/features/controller.cpp src/features/padio.cpp src/features/hotplug.cpp src/features/films.cpp src/features/scripthost.cpp src/features/overlay.cpp src/features/controllerpic.cpp src/features/launcher_pad.cpp src/features/launcher.cpp src/features/devbg.cpp
     ${PSE_REPO_ABS}/games/ds1/src/core/patch.cpp)
 set_source_files_properties(src/tgefix.pse PROPERTIES HEADER_FILE_ONLY ON)
 target_include_directories(tgefix PRIVATE src)
 target_compile_definitions(tgefix PRIVATE DS_VERSION="${PROJECT_VERSION}"
     "TGE_PSE_PATCH_H=\"${PSE_REPO_ABS}/games/ds1/src/core/patch.h\"")
-target_link_libraries(tgefix PRIVATE tge_pse_hostlink advapi32 bcrypt user32 ole32)
+target_link_libraries(tgefix PRIVATE tge_pse_hostlink tge_lua advapi32 bcrypt user32 ole32 winmm dxguid dinput8.lib windowscodecs msimg32)
 target_link_options(tgefix PRIVATE /SAFESEH:NO)
 set_target_properties(tgefix PROPERTIES OUTPUT_NAME tgefix PREFIX "")
 tge_ship_target(tgefix "GreatEscapeFix - The Great Escape enhancement patch (PSE host plugin)" tgefix.dll)

@@ -12,11 +12,11 @@
 // shim: DINPUT8.dll is a STATIC import of the exe, so Windows calls the shim's DllMain (DLL_PROCESS_ATTACH) before
 // the exe's AddressOfEntryPoint ever runs - stub or not. The shim hooks whatever is at that entry point (the stub's
 // first instruction), runs PSE, restores the original bytes, then lets the stub continue exactly as it would have.
-// PSE is fully started (loader + this layer + plugins) *before* the stub even begins unpacking the real game code,
-// so nothing here needs to wait for or detect "post-stub" - it just needs patch sites to be checked against the
-// decrypted bytes once the game is actually running (same as any other PE-protected target: hooks go on verified
-// bytes / import slots, not blind offsets). Confirmed live 2026-10-24: the shim's entry redirect does not crash or
-// hang the stub (see games/deniedops/CLAUDE.md "Verified").
+// PSE is fully started (loader + this layer + plugins) *before* the stub decrypts the game's code: .text is
+// ENCRYPTED in the file (2026-10-25), so at PSEGame_Init / PSEPlugin_Load every code address still holds encrypted
+// bytes. Code patches must wait for the hand-over - DeniedOpsFix hooks the import slot MSVCR80!__set_app_type
+// (0x90E2F4), the first call of the game's CRT start-up (games/deniedops/src/features/unpack.cpp). Import slots and
+// .rdata / .data are plain at load time. Confirmed live: the shim's entry redirect does not crash or hang the stub.
 #include <windows.h>
 
 #include <cstring>

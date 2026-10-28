@@ -54,6 +54,19 @@ struct HudOption {
 };
 void SetHudOption(const HudOption& hud);
 
+// OPTIONS screen ON / OFF rows for plugins' settings (the ds2fix.options interface, src/pse/ds2fix_options.h): after
+// the HUD rows, in the order added, while the screen's 8 rows have room. The row reads "<label>: ON / OFF"; selecting
+// it calls set(!get()). AddToggle returns the slot (-1 = all taken); the label / description pointers must stay valid.
+constexpr int kMaxToggles = 4;
+struct Toggle {
+    const char* label = nullptr;
+    const char* description = nullptr;
+    bool (*get)() = nullptr;
+    void (*set)(bool on) = nullptr;
+};
+int AddToggle(const Toggle& toggle);
+void RemoveToggle(int index);
+
 // MODS screen (front-end state kModsState, the mods menu feature: modsmenu.cpp). While hooks are set the main menu
 // reads SINGLE PLAYER / CO-OP / MODS / OPTIONS / QUIT. setup: build the rows (BeginList / AddItem / EndList) on every
 // entry. update: every front-end frame on the screen, with the activated item id (0 = none), the navigation input the

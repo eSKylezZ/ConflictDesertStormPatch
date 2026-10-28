@@ -72,6 +72,9 @@ into `DS_GAME_DIR` when that is set); the release zip has it without PDBs, plus 
 | `PSE\Games\pse_ds1.dll` | `pse_ds1` | `pse/games/ds1/` + `pse/loader/ids.cpp` | `pse_hostlink` |
 | `PSE\Games\pse_ds2.dll` (Desert Storm II installs) | `pse_ds2` | `pse/games/ds2/` + `pse/loader/ids.cpp` | `pse_hostlink` |
 | `PSE\Games\pse_tge.dll` (The Great Escape installs) | `tge_pse_layer` (`games/tge`) | `pse/games/tge/` + `pse/loader/ids.cpp` | `tge_pse_hostlink` |
+| `PSE\Games\pse_cv.dll` (Conflict: Vietnam installs) | `cv_pse_layer` (`games/cv`) / `pse_cv` (root `pse_tests`) | `pse/games/cv/` + `pse/loader/ids.cpp` | `cv_pse_hostlink` |
+| `PSE\Games\pse_cgs.dll` (Global Storm installs) | `cgs_pse_layer` (`games/cgs`) / `pse_cgs` (root `pse_tests`) | `pse/games/cgs/` + `pse/loader/ids.cpp` | `cgs_pse_hostlink` |
+| `PSE\Games\pse_deniedops.dll` (Conflict: Denied Ops installs) | `deniedops_pse_layer` (`games/deniedops`) | `pse/games/deniedops/` + `pse/loader/ids.cpp` | `deniedops_pse_hostlink` |
 | `PSE\Plugins\dsfix.dll` | `dsfix` | `src/` (all of DesertStormFix) | `pse_hostlink`, Lua |
 | `PSE\Plugins\dsfix.discord.dll` | `dsfix_discord` | `plugins/discord/` | the SDK header only |
 | `PSE\Plugins\dsfix.<feature>.dll` (shadows, audio, widescreen, textfit, mouse, menus, units, limits, difficulty, jpfixes, handling, tooltips, rumble, bodies, followers, hud, weather, timeofday, voices) | `dsfix_<feature>` (`dsfix_add_plugin`) | `plugins/<feature>/` | `dsfix_kit` (`plugins/kit/` + `src/core/patch.cpp`, on the SDK); the last eleven also dsfix.dll's interface `dsfix.services` (`src/core/dsfix_services.h`) |
@@ -87,6 +90,9 @@ every supported game's folder. Per game there is one game layer `PSE\Games\pse_<
 | `ds1` Conflict: Desert Storm | `pse_ds1.dll` | `DesertStorm.exe` (Steam = GOG) | `dsfix` (DesertStormFix) | [game-ds1.md](reference/game-ds1.md) |
 | `ds2` Conflict: Desert Storm II | `pse_ds2.dll` | `CDS II.exe` 1.0 disc-free | `ds2fix` (DesertStorm2Fix) | [game-ds2.md](reference/game-ds2.md) |
 | `tge` The Great Escape | `pse_tge.dll` | `GreatEscape.exe` 1.0 without the disc check | `tgefix` (GreatEscapeFix) | [game-tge.md](reference/game-tge.md) |
+| `cv` Conflict: Vietnam | `pse_cv.dll` | `Vietnam.exe`, Sep 2004 build (no SecuROM) | `cvfix` (VietnamFix, widescreen + Mods folder only so far) | [game-cv.md](reference/game-cv.md) |
+| `cgs` Conflict: Global Storm / Global Terror | `pse_cgs.dll` | `ConflictGlobal.exe`, RELOADED NoCD (SecuROM 7, VM'd) | `cgsfix` (GlobalStormFix, widescreen + a CreateFileA-redirect Mods folder only so far) | [game-cgs.md](reference/game-cgs.md) |
+| `deniedops` Conflict: Denied Ops | `pse_deniedops.dll` | `ConflictDeniedOps.exe` (Steam, SteamStub-wrapped: the shim works, code patches wait for the stub's hand-over) | `deniedopsfix` (DeniedOpsFix: widescreen, Mods folder) | [game-deniedops.md](reference/game-deniedops.md) |
 
 A folder may hold several layers: the loader asks each `PSE\Games\pse_*.dll` in name order and the first whose
 `PSEGame_Detect` answers 1 wins; the others are freed again (pse_tests: both layers installed, CDS II.exe mapped →
@@ -178,7 +184,7 @@ forks of DesertStormFix's template and moved in without history.
   pse\                    Pivotal Script Extender, game-neutral: loader/ (pse_core services), loader_dll/, shim/,
                           hostlink/, include/pse/ (the SDK headers), cmake/, examples/, tests/ (pse_tests),
                           build/ (pse_build: asset store + mission translator - source, not output)
-    games\<id>\           one game layer per game: ds1/ (pse_ds1.dll), ds2/ (pse_ds2.dll); cv / cgs: none yet
+    games\<id>\           one game layer per game: ds1/ (pse_ds1.dll), ds2/ (pse_ds2.dll), cv/ (pse_cv.dll), cgs/ (pse_cgs.dll)
     ids\<id>.ids.txt      ID databases + <id>.published.txt (frozen lists); compiled by scripts/gen_ids.py
     ids\generated\        pse_ids_<id>.h - the compiled tables the game layers register (generated, committed)
   games\<id>\             one folder per game's patch:
@@ -191,6 +197,8 @@ forks of DesertStormFix's template and moved in without history.
     cv\                   VietnamFix (dinput8.dll)
     cgs\                  GlobalStormFix (dinput8.dll)
     tge\                  GreatEscapeFix (PSE only: tgefix.dll host plugin + the shim / loader / pse_tge tree)
+    deniedops\            DeniedOpsFix (PSE only, started 2026-10-24: deniedopsfix.dll host plugin + the shim /
+                          loader / pse_deniedops tree; widescreen modes + Mods folder 2026-10-25)
   scripts\                PSE scripts: gen_ids.py (every game's ids), the records / translator gates, run_tests.py
   assets\, third_party\   shared by every game (Kenney input prompts; Lua 5.4.7, Zydis)
   docs\sdk\               this documentation (local)

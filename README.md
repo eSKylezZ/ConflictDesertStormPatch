@@ -17,13 +17,16 @@ Patch for the PC version of Conflict: Desert Storm, adding 16x9 support, control
 ## Games
 One repository for the Pivotal Games "Conflict" series patches. They share the Pivotal Script Extender in `pse/`
 (loader + one game layer per game in `pse/games/<id>`), the input-prompt art in `assets/` and Lua in `third_party/`.
+What each game's patch does and what is still to do: **[FEATURES.md](FEATURES.md)** (feature matrix for all six games).
 
 | Game | Patch | Where | State |
 | --- | --- | --- | --- |
-| Conflict: Desert Storm (`ds1`) | DesertStormFix | `src/` (moves to `games/ds1` later), PSE layer `pse/games/ds1` | full feature set (this README) |
-| Conflict: Desert Storm II (`ds2`) | DesertStorm2Fix | [games/ds2](games/ds2/README.md), PSE layer `pse/games/ds2` | widescreen, HUD scaling, 4:3-framed front end, split screen 2-4 players + co-op join; `ds2fix` PSE host plugin (skeleton) |
-| Conflict: Vietnam (`cv`) | VietnamFix | [games/cv](games/cv/README.md) | widescreen, HUD / menu scaling, Mods folder |
-| Conflict: Global Storm (`cgs`) | GlobalStormFix | [games/cgs](games/cgs/README.md) | widescreen, high-res fonts, menus kept 4:3 on wide screens |
+| Conflict: Desert Storm (`ds1`) | DesertStormFix | [games/ds1](games/ds1), PSE layer `pse/games/ds1` | full feature set (this README) |
+| The Great Escape (`tge`) | GreatEscapeFix | [games/tge](games/tge/README.md), PSE layer `pse/games/tge` | widescreen, menu / HUD scaling, windowed, frame cap, pads (unverified), Mods folder + MODS menu, mod tables / sounds / levels, Lua missions |
+| Conflict: Desert Storm II (`ds2`) | DesertStorm2Fix | [games/ds2](games/ds2/README.md), PSE layer `pse/games/ds2` | widescreen, HUD / menu scaling, split screen 2-4 + co-op join, Mods folder + MODS menu, `.skin` / `.weapon`, mod sounds / levels, Lua missions, limits, loadout screen |
+| Conflict: Vietnam (`cv`) | VietnamFix | [games/cv](games/cv/README.md), PSE layer `pse/games/cv` | widescreen, HUD / menu scaling, Mods folder + MODS menu |
+| Conflict: Global Storm (`cgs`) | GlobalStormFix | [games/cgs](games/cgs/README.md), PSE layer `pse/games/cgs` | widescreen, high-res fonts, menus kept 4:3, Mods folder (packed assets) + MODS menu |
+| Conflict: Denied Ops (`do`) | DeniedOpsFix | [games/deniedops](games/deniedops), PSE layer `pse/games/deniedops` | widescreen, Mods folder + MODS menu |
 
 Each `games/<id>` is its own CMake project (`cmake -S games/<id> --preset x86`), or build it from the repo root with
 the presets `ds2`, `cv`, `cgs` (+ `-dist`; `ds2-pse` = `ds2fix.dll`). The ports start from DesertStormFix's own

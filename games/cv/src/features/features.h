@@ -1,5 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 // One Apply*() per feature, called once from Init() (dllmain.cpp) before the game's own start-up code runs.
 // Features come over from DesertStormFix (reference/ds1-features) once their Vietnam addresses are mapped
@@ -16,6 +19,13 @@ void ApplyWidescreen();  // launcher lists every display mode (widescreen, 4K)
 void ApplyHud();
 void OnFrameHud();  // per frame (frame.cpp): HUD layout width  // HUD / menu art scaled to the resolution (hud.cpp)
 void ApplyMods();  // Mods\<mod>\** files served ahead of the .dat archives (mods.cpp)
+// Backend of the MODS menu (modsmenu.cpp):
+void ModsRescan();                         // re-reads Mods\ into the index (hooks stay installed)
+std::vector<std::pair<std::string, bool>> ModsList();  // every Mods\ folder, name without "_", on/off
+bool ModsToggle(const std::string& name);  // renames the folder ("_" prefix) and rescans; false = not found / IO error
+int ModsInstalledCount();                  // folders under Mods\ (on + off)
+int ModsActiveCount();                     // folders currently indexed (on)
+void ApplyModsMenu();  // MODS item in the main menu + its own front-end screen (modsmenu.cpp)
 void ApplyFrontEnd();
 void LoadingFrameBegin();  // around the "press any key" frame (frame.cpp)
 void LoadingFrameEnd();  // front end laid out at 4:3, centred (frontend.cpp)

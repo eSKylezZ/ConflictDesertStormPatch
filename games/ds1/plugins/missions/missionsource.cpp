@@ -27,8 +27,10 @@
 // overview.cpp) - with a translated mission there is none (the automatic overview after the briefing still runs).
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -181,12 +183,19 @@ void CloseState() {
 }
 
 // Runs the translated mission. False = nothing installed (the caller falls back to the DLL).
+using BeforeInit = std::function<bool(lua_State* L, std::string* why)>;
+bool RunLua(const char* name, const std::wstring& luaPath, const std::vector<uint8_t>& src, const BeforeInit& beforeInit);
 bool RunTranslated(const char* name, const std::wstring& luaPath) {
     std::vector<uint8_t> src;
     if (!pse::m2l::ReadFileBytes(luaPath, &src)) {
         dslog::Write("[fail] Mission source: %s: can't read %s", name, Narrow(luaPath).c_str());
         return false;
     }
+    return RunLua(name, luaPath, src, nullptr);
+}
+
+// The chunk, then beforeInit (mission patches: run with the mission's names in reach), then init().
+bool RunLua(const char* name, const std::wstring& luaPath, const std::vector<uint8_t>& src, const BeforeInit& beforeInit) {
     lua_State* L = luaL_newstate();
     static const luaL_Reg libs[] = {{LUA_GNAME, luaopen_base},          {LUA_TABLIBNAME, luaopen_table},
                                     {LUA_STRLIBNAME, luaopen_string},   {LUA_MATHLIBNAME, luaopen_math},
@@ -219,6 +228,17 @@ bool RunTranslated(const char* name, const std::wstring& luaPath) {
     if (luaL_loadbuffer(L, reinterpret_cast<const char*>(src.data()), src.size(), chunk.c_str()) != LUA_OK)
         return fail("load");
     if (lua_pcall(L, 0, 0, 1) != LUA_OK) return fail("run");
+    if (beforeInit) {
+        std::string why;
+        lua_settop(L, 0);
+        if (!beforeInit(L, &why)) {
+            lua_settop(L, 0);
+            lua_pushstring(L, why.c_str());
+            return fail("patch");
+        }
+        lua_settop(L, 0);
+        lua_pushcfunction(L, Traceback);
+    }
     // FUN_00449260 clears [0x60F578] before LevelSetup: messages init()'s set-up sends (the scene load's 0x37 ...) are
     // dropped, not delivered to whatever object the previous level left there
     *reinterpret_cast<uint32_t*>(0x60F578) = 0;
@@ -261,6 +281,195 @@ std::string ModReplacement(const char* name) {
     return {};
 }
 
+// ---- mission patches (docs/sdk/reference/mission-patches.md) --------------------------------------------------------
+// Mods\<mod>\...\<Stem>.patch.lua: Lua that runs as part of the readable version of <Stem>.dll, which DesertStormFix makes
+// from the player's own DLL (pse::m2l::TranslateReadable = the ModKit's mission2lua_readable, byte for byte). A patch
+// ships no game code: only its own Lua and `--[[@edit ... --@to ... ]]` blocks - "these lines of the readable mission
+// become those". Every enabled mod's patch applies, in load order; a patch whose edits don't each match exactly one
+// place, that is for another translator version, or that doesn't compile is left out (reported).
+using pse::m2l::MissionPatch;
+std::string g_patchInfo;   // the overlay's / report's list of the patches in use
+
+std::string GameDirA() {
+    char exe[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string dir = exe;
+    return dir.substr(0, dir.find_last_of("\\/"));
+}
+
+// Every enabled mod's <Stem>.patch.lua (any sub folder but the mod's records\, like the mod index), in load order.
+std::vector<MissionPatch> FindPatches(const char* dllName) {
+    std::vector<MissionPatch> out;
+    const std::string stem = std::string(dllName).substr(0, strlen(dllName) - 4);
+    const std::string want = Lower(stem + ".patch.lua");
+    const std::string root = GameDirA() + "\\Mods";
+    for (const std::string& mod : features::LoadedMods()) {
+        std::vector<std::string> found;
+        std::function<void(const std::string&, bool)> scan = [&](const std::string& dir, bool top) {
+            WIN32_FIND_DATAA fd;
+            HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
+            if (h == INVALID_HANDLE_VALUE) return;
+            std::vector<std::string> files, dirs;
+            do {
+                if (fd.cFileName[0] == '.') continue;
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    if (!(top && _stricmp(fd.cFileName, "records") == 0)) dirs.push_back(fd.cFileName);
+                } else if (Lower(fd.cFileName) == want) {
+                    files.push_back(dir + "\\" + fd.cFileName);
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+            std::sort(dirs.begin(), dirs.end(), [](const std::string& a, const std::string& b) { return _stricmp(a.c_str(), b.c_str()) < 0; });
+            found.insert(found.end(), files.begin(), files.end());
+            for (const std::string& d : dirs) scan(dir + "\\" + d, false);
+        };
+        scan(root + "\\" + mod, true);
+        for (const std::string& path : found) {
+            MissionPatch p;
+            p.path = path;
+            p.label = path.substr(root.size() + 1);
+            std::vector<uint8_t> raw;
+            if (!pse::m2l::ReadFileBytes(std::wstring(path.begin(), path.end()), &raw)) continue;
+            p.text = pse::m2l::NormalizePatchText(raw);
+            out.push_back(std::move(p));
+        }
+        if (found.size() > 1)
+            features::ModLog("[warn] %s has %zu files named %s - all of them apply", mod.c_str(), found.size(), want.c_str());
+    }
+    return out;
+}
+
+// The game's own DLL of a mission level: the game folder's file, else PSE\Originals' (the name as on disk in *disk).
+bool FindGameDll(const char* name, std::wstring* path, std::string* disk) {
+    WIN32_FIND_DATAW fd;
+    const std::wstring wname(name, name + strlen(name));
+    std::wstring dir = g_game;
+    HANDLE h = FindFirstFileW((dir + L"\\" + wname).c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) h = FindFirstFileW(((dir = g_game + L"\\PSE\\Originals") + L"\\" + wname).c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    *path = dir + L"\\" + fd.cFileName;
+    if (disk) *disk = Narrow(fd.cFileName);
+    return true;
+}
+
+bool RunPatched(const char* name, const std::wstring& dllPath, std::vector<MissionPatch> patches) {
+    static std::set<std::string> rebuilt;   // dev builds: regenerated once per run (Dev\PseRebuild)
+    const bool force = g_rebuild >= 1 && rebuilt.insert(Lower(name)).second;
+    // on a thread of its own: the translator recurses deeply (the game thread has a 1 MB stack)
+    struct Job {
+        std::wstring dll, dir, game;
+        bool force;
+        pse::m2l::ReadableCache rc;
+    } job{dllPath, g_cacheDir + L"\\readable", g_game, force, {}};
+    HANDLE th = CreateThread(
+        nullptr, 64u << 20,
+        [](void* p) -> DWORD {
+            Job* j = static_cast<Job*>(p);
+            j->rc = pse::m2l::EnsureReadableCached(j->dll, j->dir, j->game, j->force);
+            return 0;
+        },
+        &job, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (!th) {
+        dslog::Write("[fail] Mission source: %s: no thread for the readable translation", name);
+        return false;
+    }
+    WaitForSingleObject(th, INFINITE);
+    CloseHandle(th);
+    const pse::m2l::ReadableCache& rc = job.rc;
+    if (!rc.ok) {
+        features::ModLog("[fail] %s: the readable mission couldn't be made (%s) - its mission patches are left out", name,
+                         rc.error.c_str());
+        dslog::Write("[fail] Mission source: %s: readable translation failed: %s", name, rc.error.c_str());
+        return false;
+    }
+    if (rc.generated)
+        dslog::Write("Mission source: %s made readable by mission2lua_readable %s in %.0f ms", name,
+                     pse::m2l::ReadableBuild(), rc.ms);
+    std::string text = rc.bundle;
+    std::vector<MissionPatch> used;
+    lua_State* check = luaL_newstate();
+    for (MissionPatch& p : patches) {
+        std::string why;
+        bool ok = pse::m2l::ParseMissionPatch(name, &p, &why);
+        if (ok && luaL_loadbuffer(check, p.text.data(), p.text.size(), ("@" + p.label).c_str()) != LUA_OK) {
+            why = lua_tostring(check, -1) ? lua_tostring(check, -1) : "doesn't compile";
+            ok = false;
+        }
+        lua_settop(check, 0);
+        if (ok) ok = pse::m2l::ApplyMissionPatchEdits(&text, p, &why);
+        if (ok) {
+            used.push_back(p);
+            continue;
+        }
+        features::ModLog("[fail] %s: %s - this patch is left out", p.label.c_str(), why.c_str());
+        dslog::Write("[fail] Mission source: %s: %s", p.label.c_str(), why.c_str());
+    }
+    lua_close(check);
+    if (used.empty()) return false;
+    if (!pse::m2l::HandOutMissionEnv(&text)) {
+        features::ModLog("[fail] %s: the readable mission has no start section - its mission patches are left out", name);
+        return false;
+    }
+    std::string scene;
+    std::string sceneLua = "return {objects = {}, waypoints = {}, regions = {}, cameras = {}}";
+    if (!rc.scene.empty() && pse::m2l::ReadArchiveFile(g_game, rc.scene, &scene)) {
+        const std::string t = pse::m2l::SceneTableLua(scene);
+        if (!t.empty()) sceneLua = t;
+    }
+    const std::vector<uint8_t> src(text.begin(), text.end());
+    g_patchInfo.clear();
+    for (const MissionPatch& p : used) g_patchInfo += (g_patchInfo.empty() ? "" : ", ") + p.label;
+    BeforeInit before = [&](lua_State* L, std::string* why) -> bool {
+        lua_getglobal(L, "__pse_mission_env");
+        if (!lua_istable(L, -1)) {
+            *why = "the readable mission didn't hand out its names";
+            return false;
+        }
+        const int env = lua_gettop(L);
+        lua_pushnil(L);
+        lua_setglobal(L, "__pse_mission_env");
+        auto runIn = [&](const std::string& code, const std::string& chunk) -> bool {
+            lua_pushcfunction(L, Traceback);
+            const int msgh = lua_gettop(L);
+            if (luaL_loadbuffer(L, code.data(), code.size(), chunk.c_str()) != LUA_OK) {
+                *why = lua_tostring(L, -1);
+                return false;
+            }
+            lua_pushvalue(L, env);
+            lua_setupvalue(L, -2, 1);   // the chunk's _ENV = the mission's
+            if (lua_pcall(L, 0, LUA_MULTRET, msgh) != LUA_OK) {
+                *why = lua_tostring(L, -1) ? lua_tostring(L, -1) : "error";
+                return false;
+            }
+            return true;
+        };
+        const int top = lua_gettop(L);
+        if (!runIn(sceneLua, "=SCENE")) return false;
+        lua_setfield(L, env, "SCENE");
+        lua_settop(L, top);
+        if (!runIn(pse::m2l::MissionPatchPrelude(), "=mission patches")) return false;
+        lua_settop(L, top);
+        for (const MissionPatch& p : used) {
+            if (!runIn(p.text, "@" + p.label)) {
+                *why = p.label + ": " + *why;
+                return false;
+            }
+            lua_settop(L, top);
+        }
+        return true;
+    };
+    if (!RunLua(name, rc.luaPath, src, before)) {
+        features::ModLog("[fail] %s: its mission patches stopped it from starting (see DesertStormFix.log) - it runs "
+                         "without them", name);
+        g_patchInfo.clear();
+        return false;
+    }
+    features::ModLog("%s runs as readable Lua with %zu mission patch(es): %s", name, used.size(), g_patchInfo.c_str());
+    dslog::Write("Mission source: %s runs with mission patches: %s", name, g_patchInfo.c_str());
+    return true;
+}
+
 int __stdcall LoadMissionLevelImpl(const char* name) {
     using LoadFn = int(__stdcall*)(const char*);
     const auto original = reinterpret_cast<LoadFn>(kLoadMissionDll);
@@ -276,6 +485,16 @@ int __stdcall LoadMissionLevelImpl(const char* name) {
             features::ModLog("[fail] %s: the mod mission %s failed to start (see DesertStormFix.log) - the game's DLL runs",
                              name, mod.c_str());
             return original(name);
+        }
+        // mission patches: the readable version of the game's DLL + every enabled mod's <Stem>.patch.lua
+        std::vector<MissionPatch> patches = FindPatches(name);
+        std::wstring dllPath;
+        if (!patches.empty()) {
+            if (!FindGameDll(name, &dllPath, nullptr)) {
+                features::ModLog("[fail] %s: not in the game folder - its mission patches are left out", name);
+            } else if (RunPatched(name, dllPath, std::move(patches))) {
+                return 1;
+            }
         }
     }
     if (g_source == Source::Dll) return original(name);
@@ -352,6 +571,7 @@ int __stdcall LoadMissionLevelImpl(const char* name) {
 int __stdcall LoadMissionLevel(const char* name) {
     g_how = nullptr;
     g_lastLua.clear();
+    g_patchInfo.clear();
     const int result = LoadMissionLevelImpl(name);
     if (IsMissionDll(name)) {
         const bool cached = !g_lastLua.empty() && !g_cacheDir.empty() &&
@@ -359,7 +579,11 @@ int __stdcall LoadMissionLevel(const char* name) {
         const std::wstring wname(name, name + strlen(name));
         const bool dllHere = GetFileAttributesW((g_game + L"\\" + wname).c_str()) != INVALID_FILE_ATTRIBUTES ||
                              !features::OriginalPath(name).empty();   // (moved to PSE\Originals still counts)
-        g_how = !g_L ? "DLL" : !cached ? "Lua (mod mission)" : dllHere ? "Lua (translated)" : "Lua (translated, no DLL)";
+        g_how = !g_L                  ? "DLL"
+                : !g_patchInfo.empty() ? "Lua (readable + mission patches)"
+                : !cached              ? "Lua (mod mission)"
+                : dllHere              ? "Lua (translated)"
+                                       : "Lua (translated, no DLL)";
     }
     return result;
 }
@@ -402,7 +626,7 @@ void features::ApplyMissionSource() {
     DWORD dw = 0;
     std::string v;
     const bool player = PlayerSetting();   // declared always (the PLUGINS menu lists it)
-    const bool dev = DevValue("MissionSource", &dw, &v);
+    const bool dev = DevValue("MissionSource", &dw, &v) && !v.empty();   // (an empty value = not set)
     if (dev) {
         v = Lower(v);
         g_source = v == "lua" || v == "1" ? Source::Lua : v == "both" || v == "2" ? Source::Both : Source::Dll;
@@ -415,14 +639,6 @@ void features::ApplyMissionSource() {
         dslog::Write("Mission source: Dev\\MissionSource = dll - the game's DLLs, mod mission replacements off");
         return;
     }
-    if (g_source == Source::Dll) {
-        // mods may still replace a mission with their own Lua (ModReplacement); nothing is translated
-        if (!patch::HookCall(kLoadMissionDllCall, reinterpret_cast<const void*>(&LoadMissionLevel), kLoadMissionDll))
-            dslog::Write("[fail] Mission source: level-init hook not installed - mod mission replacements are off");
-        return;
-    }
-    dw = 0;
-    g_unverified = DevValue("MissionUnverified", &dw, nullptr) && dw != 0;
 #ifdef DS_DIST
     g_rebuild = 0;   // players: regenerated only when the DLL or the translator changes (the stamp)
 #else
@@ -433,7 +649,16 @@ void features::ApplyMissionSource() {
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     g_game = exe;
     g_game.resize(g_game.find_last_of(L"\\/"));
-    g_cacheDir = pse::m2l::DefaultMissionsDir(g_game);
+    g_cacheDir = pse::m2l::DefaultMissionsDir(g_game);   // (mission patches' readable missions live there too)
+    if (g_source == Source::Dll) {
+        // mods may still replace a mission with their own Lua (ModReplacement) or patch its readable version
+        // (FindPatches); nothing else is translated
+        if (!patch::HookCall(kLoadMissionDllCall, reinterpret_cast<const void*>(&LoadMissionLevel), kLoadMissionDll))
+            dslog::Write("[fail] Mission source: level-init hook not installed - mod mission replacements are off");
+        return;
+    }
+    dw = 0;
+    g_unverified = DevValue("MissionUnverified", &dw, nullptr) && dw != 0;
     if (!patch::HookCall(kLoadMissionDllCall, reinterpret_cast<const void*>(&LoadMissionLevel), kLoadMissionDll)) {
         dslog::Write("[fail] Mission source: level-init hook not installed - mission DLLs run as DLLs");
         return;

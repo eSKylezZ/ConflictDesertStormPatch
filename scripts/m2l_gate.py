@@ -26,7 +26,8 @@ REPO = os.path.dirname(HERE)
 
 
 def find_game():
-    for c in (r"H:\SteamLibrary\steamapps\common\conflict_desert_storm", r"H:\GOG\Games\Conflict - Desert Storm"):
+    env = os.environ.get("PSE_GAME_DIR")
+    for c in ([env] if env else []) + [r"C:\Program Files (x86)\Steam\steamapps\common\conflict_desert_storm", r"C:\GOG Games\Conflict - Desert Storm"]:
         if os.path.exists(os.path.join(c, "Mission1.dll")) or os.path.exists(os.path.join(c, "PSE", "Originals")):
             return c
     return None
@@ -40,7 +41,7 @@ def dll_folder(game):
 
 
 def find_pse_build():
-    for d in ("build-pse-t", "build-pse", "build"):
+    for d in ("build-pse", "build"):
         for cfg in ("RelWithDebInfo", "Release", "Debug"):
             p = os.path.join(REPO, d, "pse", cfg, "pse_build.exe")
             if os.path.exists(p):

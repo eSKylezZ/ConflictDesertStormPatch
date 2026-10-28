@@ -54,6 +54,7 @@ struct Table {
     std::map<uint32_t, uint32_t> values;   // case index -> target
     uint32_t tableVa = 0;                  // jmp [reg*4 + table]
     bool byteTable = false;
+    uint16_t indexReg = 0;                 // the register the cases are numbered by (the byte table's index register)
 };
 
 struct Block {
@@ -70,7 +71,12 @@ public:
     uint32_t entry;
     std::map<uint32_t, Block> blocks;   // sorted by address (Python: sorted(f.blocks))
 
+    // missionflow.Function._table_targets alone (mission2lua_readable calls it on a function shell): the targets, and
+    // the table in *table when there are any
+    static std::vector<uint32_t> BaseTableTargets(Dll& dll, const Insn& i, std::unique_ptr<Table>* table);
+
 private:
+    explicit Function(Dll& dll) : entry(0), d_(dll) {}
     std::vector<uint32_t> TableTargets(const Insn& i);       // base shapes, then the register-bound one
     std::vector<uint32_t> TableTargetsBase(const Insn& i);   // missionflow.Function._table_targets
     std::vector<uint32_t> RegisterBound(const Insn& i);      // mission2lua._Function (VERSION 2)

@@ -83,7 +83,7 @@ Every field of `settings::Values` is declared through `pse.settings` (`Declare` 
 
 Optional features (`g_toggles`, OPTIONS > DESERTSTORMFIX, group "OPTIONAL FEATURES"), all bool, L unless marked R:
 FeatLoadout (1), FeatUniformSelect (0), FeatTimeOfDay (1), FeatFreeGear (0), FeatLoadoutSpin (1),
-FeatLoadoutLookAhead (1), FeatVoices (1), FeatPlayerVoice (0), FeatNameplates (1), FeatStreamerMode (1: join / reply codes and IP addresses hidden on the online screens), FeatMultiKbm (1), FeatCoopScripts (1), FeatMods (1, R),
+FeatLoadoutLookAhead (1), FeatVoices (1), FeatPlayerVoice (0), FeatNameplates (1), FeatStreamerMode (1: join / reply codes and IP addresses hidden on the online screens), FeatMultiKbm (1), FeatCoopScripts (1), FeatMods (1, R), FeatLibraryGear (0, R: OTHER GAMES' GEAR - the asset library's weapons and uniforms on the loadout screen, see layout.md "PSE\Library"),
 FeatCustomMissions (1), FeatVersus (1, R), FeatCheats (1, R), FeatWeather (1), FeatFootprintsAll (0),
 FeatFootprintsWeather (1), FeatRunInBackground (0), FeatDevConsole (0).
 

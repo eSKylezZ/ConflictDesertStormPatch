@@ -1,7 +1,7 @@
 """Controller pictures for the CONTROLLER screen (src/features/controls.cpp).
 
 Source: Zacksly "PS5 Button Icons and Controls" and "Xbox Series Button Icons and Controls" (CC BY 3.0,
-https://zacksly.itch.io) - download both zips into the repo root first (third-party archives, not committed).
+https://zacksly.itch.io) - download both zips into assets/controller-art first (third-party archives, not committed).
 Modified: cropped to the controller and scaled.
 Writes src/generated/controller_ps5.png, controller_xbox.png (RCDATA 301/302 via src/game_icons.rc) and
 controller_art.h: image size inside the 2048x1024 texture and, per game button (PS2 numbering 0-15, then 16 left
@@ -15,7 +15,8 @@ import zipfile
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # games/ds1
-REPO = os.path.dirname(os.path.dirname(ROOT))                          # the button-icon zips are at the repo root
+REPO = os.path.dirname(os.path.dirname(ROOT))
+ART = os.path.join(REPO, "assets", "controller-art")                    # the button-icon zips (not committed)
 GEN = os.path.join(ROOT, "src", "generated")
 TEX_W, TEX_H = 2048, 1024
 
@@ -30,7 +31,7 @@ XBOX = [(2489, 693), (2606, 810), (2489, 924), (2376, 810), (1595, 495), (2502, 
 
 
 def build(pack, anchors, out_png):
-    z = zipfile.ZipFile(os.path.join(REPO, f"{pack} Button Icons and Controls.zip"))
+    z = zipfile.ZipFile(os.path.join(ART, f"{pack} Button Icons and Controls.zip"))
     im = Image.open(io.BytesIO(z.read(f"{pack} Button Icons and Controls/Controller Images/Solid/Solid Color 4k.png")))
     im = im.convert("RGBA")
     box = im.getchannel("A").getbbox()

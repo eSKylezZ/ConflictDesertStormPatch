@@ -12,7 +12,9 @@
 // by one quad (call 0x499555 -> the 2D draw 0x446F00, thiscall(renderer, 2, verts, 0x1C), pretransformed FVF 0x144)
 // sized to the film's 4:3 frame at the screen's full height: 241..1679 x 0..1080 at 1920 x 1080, black at the sides.
 // With FilmsFill the quad is zoomed about the screen's centre until it covers the width - the frame's top and bottom
-// go past the screen's edges (on 16:9 an eighth each; the story films' own letterbox bars are what goes).
+// go past the screen's edges (on 16:9 an eighth each; the story films' own letterbox bars are what goes) - only for the
+// menu background and the story films (films.cpp FilmFillsScreen): the legal screen / logos / chapter cards / briefings
+// have text near the frame's top and bottom.
 #include <algorithm>
 
 #include "core/log.h"
@@ -37,7 +39,7 @@ using Draw2DFn = void(__thiscall*)(void*, int, uint8_t*, int);
 
 void __fastcall FilmDraw(void* renderer, void*, int count, uint8_t* verts, int stride) {
     const auto* r = *reinterpret_cast<const uint8_t* const*>(kRenderer);
-    if (r && verts && count == 2 && stride >= 8) {
+    if (r && verts && count == 2 && stride >= 8 && features::FilmFillsScreen()) {
         const float w = static_cast<float>(*reinterpret_cast<const int*>(r + 0x40690));
         const float h = static_cast<float>(*reinterpret_cast<const int*>(r + 0x40694));
         float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;

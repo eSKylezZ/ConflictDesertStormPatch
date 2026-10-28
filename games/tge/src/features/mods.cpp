@@ -1,7 +1,7 @@
 // Mods folder (basic resolver): any file the game opens by name can be replaced - or added - by dropping a file with
 // that name into a folder under <game>\Mods\. Port of DesertStorm2Fix's mods.cpp resolver part (games/ds2/src/features/
 // mods.cpp; DS2 addresses in brackets) - the engine's Files.cpp / Catalog.cpp is the same code. No table merging,
-// .strings, level patches, sound packs or MODS menu yet.
+// .strings, level patches or sound packs yet; the MODS menu is modsmenu.cpp.
 //
 // Layout: <game>\Mods\<mod name>\...any sub folders...\<FILE.EXT>. Mods are applied in name order; when two mods ship
 // the same file name the later one wins (logged). Folders starting with '_' or '.' are switched off. The index (upper-
@@ -219,7 +219,10 @@ const ModFile* Find(const char* name) {
     const char* base = name;
     for (const char* p = name; *p; ++p)
         if (*p == '\\' || *p == '/') base = p + 1;
-    auto it = g_files.find(Upper(base));
+    const std::string key = Upper(base);
+    // sound caches never through the resolver: a mod's LEVEL01.SCH is a partial overlay (mods_sound.cpp merges it)
+    if (key.size() > 4 && key.compare(key.size() - 4, 4, ".SCH") == 0) return nullptr;
+    auto it = g_files.find(key);
     return it == g_files.end() ? nullptr : &it->second;
 }
 
@@ -314,6 +317,7 @@ void features::ApplyMods() {
     g_modsRoot = GameDir() + "\\Mods";
     BeginReport();
     BuildIndex();
+    BuildModTables();
     if (g_files.empty()) dslog::Write("Mods: no mods switched on (%s)", g_modsRoot.c_str());
     if (!patch::Matches(kResolve, kResolveEntry, sizeof kResolveEntry) || !patch::Matches(kOpen, kOpenEntry, sizeof kOpenEntry)) {
         ModLog("[fail] Mods: unexpected game code (file resolver / opener) - mods not loaded");
@@ -334,9 +338,38 @@ void features::ApplyMods() {
     ModLog("[ok]   Mods: %zu mod(s), %zu file(s)", g_mods.size(), g_files.size());
 }
 
+void features::ReloadModsIndex() {
+    if (g_modsRoot.empty()) return;
+    g_files.clear();
+    g_mods.clear();
+    BuildIndex();
+    BuildModTables();
+    ModLog("[ok]   Mods: index rebuilt - %zu mod(s), %zu file(s)", g_mods.size(), g_files.size());
+}
+
+const char* features::ModFilePath(const char* name) {
+    const ModFile* f = Find(name);
+    if (!f) return nullptr;
+    NoteServed(name, *f);
+    return f->path.c_str();
+}
+
+// A file built by mods_tables.cpp (merged table, model copy) served under `name` like a mod's own file.
+void features::SetModFile(const std::string& name, const std::string& path, int mod) {
+    if (path.size() >= kPathBufferSize) {
+        ModLog("[fail] Mods: %s - path longer than %u characters, not used", path.c_str(),
+               static_cast<unsigned>(kPathBufferSize - 1));
+        return;
+    }
+    const uint32_t size = 0;
+    g_files[Upper(name)] = {path, mod, size};
+}
+const std::vector<std::string>& features::LoadedMods() { return g_mods; }
+
 int features::ModCount() { return static_cast<int>(g_mods.size()); }
 int features::ModProblems() { return g_problems; }
 void features::SetInMission(bool inMission) { g_inMission = inMission; }
+bool features::InMission() { return g_inMission; }
 
 void features::ModLog(const char* fmt, ...) {
     char text[1024];

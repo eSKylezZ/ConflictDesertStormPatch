@@ -7,6 +7,105 @@ changes are in the repo's `CHANGELOG.md`.
 
 First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still change until SDK 1.0.
 
+- 2026-10-28 – **DS1: mission patches** ([reference/mission-patches.md](reference/mission-patches.md)): a mod's
+  `<Stem>.patch.lua` (header `--@patches <Stem>.dll` + `--@readable 1`, `--[[@edit ... --@to ... ]]` blocks, Lua) is
+  applied to the readable Lua DesertStormFix makes from the player's own mission DLL and runs instead of the DLL -
+  every enabled mod's patch, in load order; a patch that doesn't apply / compile is left out (mod report). Patches get
+  `SCENE` (every editor ID of the scene), `TEXT` / `MOVIE` / `text_hash` / `movie_hash`, `X`. Order of mission sources:
+  mod DLL > `--@replaces` Lua > patches > MISSIONS FROM LUA > the DLL. New: the C++ port of the ModKit's readable
+  translator (`pse/build/mission2lua/m2r_*.cpp`, `pse::m2l::TranslateReadable`, byte-identical with
+  `mission2lua_readable.py` on all 18 mission DLLs - gate `scripts/m2r_gate.py`, data `scripts/sync_m2r_data.py` ->
+  `m2r_data.inc`), its cache `<missions cache>\readable\<Stem>.lua` + `.stamp` (translator build `1+cpp.1`), and
+  `pse_build missions --readable [--dll <file>] [--patch <file>]`. ModKit: `conflict_ds_tools/mission_patch.py`,
+  `cli/ds_mission_patch.py`; `mission2lua_readable` iterates its sets sorted (the output no longer depends on Python's
+  set layout - condition order in some functions changed; behaviour identical in the offline differential test).
+- 2026-10-25 – **TGE: action prompts, sharper text, film fill per film** (internal plugins `tgefix.prompts`, setting
+  `ActionPrompts` (1), and `tgefix.fontsharp` (follows `HudScaling`)); FilmsFill only zooms the menu background and
+  story films - see [game-tge.md](reference/game-tge.md). No interface changed.
+- 2026-10-25 – **TGE: in-game menus + device-following input** (internal plugins `tgefix.fixmenus` and
+  `tgefix.ingameinput`, CLIENT_ONLY): OPTIONS > GREATESCAPEFIX, OPTIONS > CONTROLS > CONTROLLER (+ BUTTON LAYOUT), main
+  menu CUSTOM MISSIONS; launcher / Settings… / Advanced driven with a pad; input mode, cursor, prompts, key names and
+  tutorial texts follow the device in use, pad pulled out = pause – see
+  [game-tge.md](reference/game-tge.md#in-game-menus-tgefixfixmenus-client_only-gamestgesrcfeaturesfixmenuscpp--gui_filecpp).
+  No interface changed; no new settings (the menus edit the existing `tgefix` ones).
+- 2026-10-25 – **DS2: new plugin `ds2fix.loadout`** (SIMULATION, setting `FeatLoadout`, default on): a pre-mission
+  LOADOUT screen (squad weapons) and, while it is installed, the save header's object counts taken again at every save
+  plus a co-save chunk `KITS` v1 - see [game-ds2.md](reference/game-ds2.md#ds2fixloadout-gamesds2pluginsloadout-2026-10-25).
+  **New interface `ds2fix.options` v1** (`games/ds2/src/pse/ds2fix_options.h`, published by ds2fix): `AddToggle` /
+  `RemoveToggle` - ON / OFF rows for plugins' settings in DS2's OPTIONS screen.
+- 2026-10-28 – CGS: `cgsfix.mods` also replaces **models** (`.evo` / `.pi2`): they open through the stream open
+  `0x4599EB`, not the whole-file loader, so a mod model was indexed but never used before - see
+  [game-cgs.md](reference/game-cgs.md#mods-folder-per-asset-since-2026-10-25). No interface changed.
+- 2026-10-25 – CGS: `cgsfix.mods` now replaces **single assets packed inside the `.dat` archives** (hook on the
+  whole-file loader entry `0x52357C`; the mod file is read through the game's own disk branch), on top of the
+  CreateFileA whole-file redirect - see [game-cgs.md](reference/game-cgs.md#mods-folder-per-asset-since-2026-10-25).
+  No interface changed.
+- 2026-10-25 – **Denied Ops: MODS menu** (internal plugin `deniedopsfix.modsmenu` CLIENT_ONLY, setting
+  `FeatModsMenu`, default on, needs `FeatMods`): a MODS item in the game's own main menu opens a MODS screen that
+  switches each Mods folder on / off while the game runs - see
+  [game-deniedops.md](reference/game-deniedops.md#mods-menu-2026-10-25). The Mods folder hooks are now installed
+  whenever `Mods\` exists (also with every mod switched off). No interface changed.
+- 2026-10-25 – **Denied Ops: widescreen modes + Mods folder** (internal plugins `deniedopsfix.widescreen`
+  CLIENT_ONLY and `deniedopsfix.mods` SIMULATION, settings `FeatWidescreen` / `FeatMods`, both default on;
+  [game-deniedops.md](reference/game-deniedops.md)). ID database `deniedops` filled: 17 ids, database 0 (unpublished;
+  code signatures are the SteamStub-decrypted bytes). No interface changed. Plugin authors: on Denied Ops the game's
+  `.text` is encrypted until after `PSEPlugin_Load` - patch code only after the hand-over (see the SteamStub section).
+- 2026-10-25 – CGS: `cgsfix.modsmenu` live-verified and **`FeatModsMenu` now defaults on** (MODS after OPTIONS in
+  the main menu, MODS screen with the game's bars / prompts / slides, paging past 8 mods) - see
+  [game-cgs.md](reference/game-cgs.md#mods-menu---mods-item-in-the-games-own-main-menu-live-verified-2026-10-25-default-on).
+  No interface changed.
+- 2026-10-25 – **TGE: controller support, films, mod layers, Lua missions** (internal plugin `tgefix.controller`, CLIENT_ONLY,
+  [game-tge.md](reference/game-tge.md#controller-tgefixcontroller-client_only-gamestgesrcfeaturescontrollercpp)).
+  No interface changed. New `tgefix` settings `Controller` (1), `PadDeadzone` (40, 0..90), `PadVibration` (1),
+  `PadTriggers` (1), `PadModernLayout` (1). Same day: internal plugins `tgefix.films` (Bink films from the Mods
+  folder, films on request) and `tgefix.modtables` (tables, `.strings`, `.weapon` / `.vehicle` / `.unit`, mission DLLs
+  from mods, `.dllpatch` / `.envpatch` / `.uses`, `.level`), `tgefix.modsound` (sound packs, level sounds, music,
+  weapon shot sounds), `tgefix.weaponicons` (picture files) and `tgefix.scripthost` (Lua missions: `game.*`, `game.film`,
+  campaign.txt, `+level` / `+campaign`).
+- 2026-10-24 – **TGE: main menu MODS** (internal plugin `tgefix.modsmenu`, CLIENT_ONLY,
+  [game-tge.md](reference/game-tge.md#main-menu-mods-tgefixmodsmenu-client_only-gamestgesrcfeaturesmodsmenucpp)).
+  No interface changed. `GE_FrontEnd.gui` is patched as the game reads it (a MODS button + a MODS screen); a mod that
+  ships its own `GE_FrontEnd.gui` keeps the menu only if the patch still finds its landmarks (else a `[fail]` line in
+  the mod report and no MODS item). Nothing without `FeatMods`.
+- 2026-10-24 – CGS: internal plugin `cgsfix.modsmenu` is now a MODS item + screen in the game's own main menu
+  (setting `FeatModsMenu`, **default off** until verified in game); the pre-launcher dialog and the F9 overlay
+  (`cgsfix.modsoverlay`, `FeatModsOverlay`) are removed - see [game-cgs.md](reference/game-cgs.md). No API change.
+- 2026-10-24 – CV: internal plugin `cvfix.modsmenu` (MODS item in the game's main menu + front-end state `0x39`
+  listing the Mods folder ON / OFF) - see [game-cv.md](reference/game-cv.md). No API change.
+- 2026-10-24 – **New game layer `pse_cv` (game id `cv`, Conflict: Vietnam)**: exe detection (`PSEGame_Detect` by
+  SHA-256/PE timestamp/image base, `pse/games/cv/`) and the host plugin `cvfix` (`games/cv/src/pse/`, opt-in
+  `CV_PSE_PLUGIN` / preset `cv-pse` - the standalone `dinput8.dll` build keeps working unchanged, same precedent as
+  DS2's `DS2_PSE_PLUGIN`). Scope is deliberately narrow (the user's request): widescreen display modes and the Mods
+  folder only, both reusing the standalone build's existing `features/widescreen.cpp` / `mods.cpp` files unchanged
+  (routed through the shared broker, `games/ds1/src/core/patch.cpp`, instead of CV's own plain `core/patch.cpp`).
+  New public header `pse/include/pse/pse_game_cv.h` (`PSEGameCvV1` v1: `ExeSha256`/`ExeKnown` only - no core event
+  hooks yet, see [game-cv.md](reference/game-cv.md) "What runs on CV"). New ID database `pse/ids/cv.ids.txt`
+  (database 0, unpublished, 5 ids, all verified against the real exe with `--verify-exe cv`). Live-verified against
+  the installed game (background mode): pse.ids 5/5 resolved, widescreen patch applied, Mods folder found and
+  hooked through the broker.
+- 2026-10-24 – **New game layer `pse_deniedops` (game id `deniedops`, Conflict: Denied Ops)**, step 1 only: exe
+  detection (`PSEGame_Detect` by SHA-256/PE timestamp/image base, `pse/games/deniedops/`) and a minimal host plugin
+  `deniedopsfix` (`games/deniedops/`), both freshly built and live-verified against the real Steam install - the PSE
+  shim's entry-point redirect survives this exe's SteamStub wrapper (confirmed empirically, see
+  [game-deniedops.md](reference/game-deniedops.md)). New public header `pse/include/pse/pse_game_deniedops.h`
+  (`PSEGameDeniedOpsV1` v1: `ExeSha256`/`ExeKnown` only so far). No core event hooks, no ID database entries
+  (`pse/ids/deniedops.ids.txt` is an empty skeleton), no mods folder, no widescreen check yet - all deferred.
+- 2026-10-24 – **New game layer `pse_cgs` (game id `cgs`, Conflict: Global Storm / Global Terror)**: exe detection
+  (`PSEGame_Detect` by SHA-256/PE timestamp/image base, `pse/games/cgs/`) and the host plugin `cgsfix`
+  (`games/cgs/src/pse/`, opt-in `CGS_PSE_PLUGIN` / preset `cgs-pse` - the standalone `dinput8.dll` build keeps
+  working unchanged). Scope: widescreen display modes (reused unchanged from `features/widescreen.cpp`) and a NEW
+  Mods folder (`cgsfix.mods`, `src/pse/features/mods.cpp`) - this exe's file resolver was not reverse engineered
+  (almost all of its logic runs inside a SecuROM VM with no static call sites), so unlike every other game's Mods
+  folder this one hooks the plain kernel32 `CreateFileA` import slot and redirects by basename: it can replace or
+  add a whole file (an archive, a loose file) but not one asset packed inside an archive - see
+  [game-cgs.md](reference/game-cgs.md) "Mods folder" for the exact limitation and what finding the real resolver
+  would take. `cgsfix.frame` / `cgsfix.devbg` (also reused unchanged from `features/frame.cpp` / `devbg.cpp` /
+  `graphics.cpp`) keep this build testable off-screen the same safe way as the standalone's. New public header
+  `pse/include/pse/pse_game_cgs.h` (`PSEGameCgsV1` v1: `GameWindow`/`ExeSha256`/`ExeKnown` only - no core event
+  hooks, same reason as the file resolver). New ID database `pse/ids/cgs.ids.txt` (database 0, unpublished, 9 ids,
+  all verified against the real exe with `--verify-exe cgs`). Live-verified against the installed game (background
+  mode, off-screen window, muted): pse.ids 9/9 resolved, widescreen 2 patches applied, Mods folder indexed and the
+  CreateFileA hook installed, reached the front end without taking the screen.
 - 2026-10-24 – **New interface `dsfix.services` v1** (`games/ds1/src/core/dsfix_services.h`, published by `dsfix.dll`
   at the end of its Load): game texts, control icons, online state, the host's synced values, mods' vehicle handling,
   plus a text provider and a trigger feel provider for features in their own DLLs

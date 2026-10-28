@@ -69,6 +69,7 @@ struct Values {
     bool featCoopScripts = true;     // the missions' own co-op handling (script API player count, coopscripts.cpp)
     // FeatAimAudio / FeatShadowFix: settings of the plugins dsfix.audio / dsfix.shadows (own DLLs since 2026-10-23)
     bool featMods = true;            // Mods folder + MODS menu
+    bool featLibraryGear = false;    // other Conflict games' weapons / uniforms from PSE\Library on the loadout screen
     bool featCustomMissions = true;  // Lua missions + CUSTOM CAMPAIGNS
     bool featVersus = true;          // VERSUS menu (off = the game's MULTIPLAYER entry)
     bool featCheats = true;          // extended CHEATS menu, free camera, DEVELOPER page

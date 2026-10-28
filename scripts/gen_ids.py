@@ -10,7 +10,7 @@ for ever with the same name and kind; it may get new builds / addresses, never a
   python scripts/gen_ids.py --verify-exe ds1        # every signature of the build against the exe (needs pefile)
   python scripts/gen_ids.py --publish ds1           # freeze every id not yet published (+ database version + 1)
 
---exe <path> picks the exe for --fill-signatures / --verify-exe (default: Steam, then GOG install; the build is
+--exe <path> picks the exe for --fill-signatures / --verify-exe (default: env PSE_GAME_EXE_<GAME>, then the standard Steam / GOG install; the build is
 found by its PE timestamp + image size).
 
 Generated (do not edit): pse/ids/generated/pse_ids_<game>.h (the table the host registers), pse/include/pse/
@@ -28,14 +28,14 @@ KINDS = {"function": 1, "global": 2, "site": 3, "vtable": 4, "data": 5}
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
 BUILD_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 DEFAULT_EXES = {
-    "ds1": [r"H:\SteamLibrary\steamapps\common\conflict_desert_storm\DesertStorm.exe",
-            r"H:\GOG\Games\Conflict - Desert Storm\DesertStorm.EXE"],
+    "ds1": [r"C:\Program Files (x86)\Steam\steamapps\common\conflict_desert_storm\DesertStorm.exe",
+            r"C:\GOG Games\Conflict - Desert Storm\DesertStorm.EXE"],
     # Desert Storm II: the disc-free CDS II.exe (the retail SecuROM exe is no build of the database yet).
-    "ds2": [r"H:\SCI Games\Conflict Desert Storm II\CDS II.exe"],
+    "ds2": [],
     # The Great Escape: the no-CD GreatEscape.exe 1.0 (the retail SafeDisc exe's code is encrypted on disk).
-    "tge": [r"H:\SCI Games\The Great Escape\GreatEscape.exe"],
+    "tge": [],
     # Conflict: Vietnam: the Sep 2004 build without SecuROM sections (the retail / "1.0 Fixed" exes are earlier builds).
-    "cv": [r"H:\SCI Games\Conflict Vietnam\Vietnam.exe"],
+    "cv": [],
 }
 # Byte patches of the game's feature code (reference windows for globals avoid them - a plugin may patch there).
 # ds1: DesertStormFix's table; other games: none yet (their patch tables live in their own repos).
@@ -263,7 +263,8 @@ class Exe:
 
 
 def find_exe(game, override):
-    paths = [override] if override else DEFAULT_EXES.get(game, [])
+    env = os.environ.get(f"PSE_GAME_EXE_{game.upper()}")
+    paths = [override] if override else ([env] if env else []) + DEFAULT_EXES.get(game, [])
     for p in paths:
         if p and os.path.exists(p):
             return Exe(p)
