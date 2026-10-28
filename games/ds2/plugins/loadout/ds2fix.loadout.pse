@@ -1,0 +1,6 @@
+# DesertStorm2Fix's pre-mission loadout screen (games/ds2/plugins/loadout): after a mission's intro the world pauses
+# and each squad member's main weapon / sidearm / launcher can be swapped for another weapon the level already has.
+# Also keeps saves made after such a swap loadable (the save header's object counts). Changes what soldiers carry,
+# so online peers must run the same version (SIMULATION).
+name     = ds2fix.loadout
+requires = pse.game.ds2 >= 1.0, ds2fix >= 0.1

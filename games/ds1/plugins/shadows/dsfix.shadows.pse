@@ -1,0 +1,4 @@
+# Shadow fix for Conflict: Desert Storm (DesertStormFix): shadows stop at the floor below the caster.
+name     = dsfix.shadows
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

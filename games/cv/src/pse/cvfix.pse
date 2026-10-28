@@ -1,0 +1,5 @@
+# VietnamFix as a PSE host plugin (src/pse/cvfix.cpp). The CV game layer (PSE\Games\pse_cv.dll) allows "cvfix" as a
+# host plugin: it gets pse.host and loads before every other plugin.
+name = cvfix
+host = true
+requires = pse.game.cv >= 1.0

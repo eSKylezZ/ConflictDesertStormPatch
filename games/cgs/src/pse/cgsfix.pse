@@ -1,0 +1,5 @@
+# GlobalStormFix as a PSE host plugin (cgsfix.cpp). The CGS game layer (PSE\Games\pse_cgs.dll) allows "cgsfix" as a
+# host plugin: it gets pse.host and loads before every other plugin.
+name = cgsfix
+host = true
+requires = pse.game.cgs >= 1.0

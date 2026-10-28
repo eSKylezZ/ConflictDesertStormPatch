@@ -1,0 +1,3 @@
+# Discord status for Conflict: Desert Storm (DesertStormFix). Reads the game through pse.game.ds1 only.
+name     = dsfix.discord
+requires = pse.game.ds1 >= 1.0

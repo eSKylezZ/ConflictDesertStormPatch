@@ -1,0 +1,5 @@
+# Online co-op for Conflict: Desert Storm (DesertStormFix): connection, lobby, host authority, own view, nameplates.
+name     = dsfix.online
+requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

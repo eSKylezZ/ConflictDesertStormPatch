@@ -1,0 +1,3 @@
+# test.ds2_harness - TEST ONLY: runs Conflict: Desert Storm II off-screen for the DS2 game layer's live test
+# (pse/tests/ds2_harness/ds2_harness.cpp). Never shipped, never part of an install tree.
+name = test.ds2_harness

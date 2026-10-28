@@ -1,0 +1,37 @@
+# PSE ID database: Conflict: Vietnam (game id cv). Source of truth - compiled by scripts/gen_ids.py into
+# pse/ids/generated/pse_ids_cv.h, pse/include/pse/pse_ids_cv.h and docs/sdk/reference/ids-cv.md.
+# Format + rules: docs/sdk/reference/ids.md. Ids listed in cv.published.txt are frozen for ever: never removed,
+# renumbered, renamed or given another kind. New ids take the next free number (never a freed one).
+#
+# Addresses: games/cv/CLAUDE.md "Widescreen, HUD, front end" / "Mods folder", mapped 2026-10-10. Only the sites
+# cvfix (games/cv/src/pse) actually patches - widescreen's mode filter and the mods folder's file layer. The CV game
+# layer (pse/games/cv) does not yet hook the frame loop, render call, level load or window shutdown (no verified
+# function entry / prologue for them, only call sites) - see pse/games/cv/cv_layer.cpp.
+#
+#   game <id> <title>
+#   database <n>                                  (+1 by gen_ids.py --publish)
+#   build <name> <pe timestamp> <image size> <sha256 | -> <notes>
+#   [ids]                <id> <name> <kind> <description>      kind = function | site | global | vtable | data
+#   [addresses <build>]  <id> <va> <signature>
+
+game cv Conflict: Vietnam
+database 0
+
+# Vietnam.exe, Sep 2004 build (no SecuROM sections, unlike "Vietnam - Original.exe" / "Vietnam 1.0 Fixed.exe" which
+# share an earlier time stamp 0x411BBEAF): the one the tools and this plugin target.
+build nocd-200409 414ECA49 0053BD70 636576CA842066A56660C1DAE615FBA4DB9726AEA1EF851EE5FD4C6D8CE3710C Vietnam.exe (Sep 2004, no SecuROM)
+
+[ids]
+# id  name                     kind     description
+1     Launcher_ModeFilter      function eax = width, ecx = height -> 1 for 640x480 / 800x600 / 1024x768 / 1280x1024 (Launcher_FillResolutions' whitelist)
+2     File_Resolve             function cdecl(name, search paths, flags) -> path in File_PathBuffer, or the bare name in archive mode (0 = not found)
+3     File_Open                function thiscall(file object, path) ret 4 -> 1 = opened: copies File_Flags to file +0x40 (bit 0 = from the archive)
+4     File_Exists              function cdecl(name) -> 1 = exists (archive mode: the archive index; else the resolver)
+5     File_Flags               global   u32 [0x85DAEC]: file system flags (bit 0 = archive mode, set by the start-up option "-d", cleared by "-e")
+
+[addresses nocd-200409]
+1     0x00419969  558BEC8B4D0881F980020000
+2     0x005308F5  83EC0CA0ECDA85005633F6A8
+3     0x0052FA17  558BEC81EC0401000053568B
+4     0x0053154E  F605ECDA8500017405E925E6
+5     0x0085DAEC  @0x0042984E:F605ECDA85000A0F

@@ -1,0 +1,43 @@
+# PSE ID database: Conflict: Global Storm / Global Terror (game id cgs). Source of truth - compiled by
+# scripts/gen_ids.py into pse/ids/generated/pse_ids_cgs.h, pse/include/pse/pse_ids_cgs.h and
+# docs/sdk/reference/ids-cgs.md. Format + rules: docs/sdk/reference/ids.md.
+#
+# Addresses: games/cgs/CLAUDE.md (GlobalStormFix standalone build, mapped 2026-10-10/24), verified 2026-10-24 with
+# `scripts/gen_ids.py --fill-signatures cgs --verify-exe cgs --exe "<game folder>\
+# ConflictGlobal.exe"` (0 mismatches). Most of this exe's logic (window creation, launcher dialogs, the resolution
+# filter body, the keyboard poll, command line parsing) runs inside a SecuROM VM with no static call sites - the ids
+# below are only the plain (non-VM) call sites / globals the standalone widescreen.cpp / frame.cpp / hud.cpp already
+# patch; VM'd function bodies are not given ids (there is nothing stable to sign - see games/cgs/CLAUDE.md
+# "Environment").
+
+game cgs Conflict: Global Storm
+database 0
+
+# ConflictGlobal.exe - RELOADED NoCD dump, the only exe that runs (the retail SecuROM 7 original never does on
+# current Windows). 14 475 401 bytes, PE time stamp 0x43032523, SHA-256 D1EE014F...39A1 (see pse_game_cgs.cpp note:
+# fill the exact hex from `certutil -hashfile ConflictGlobal.exe SHA256` before relying on it for anything beyond the
+# timestamp+imagebase check PSEGame_Detect already does).
+build reloaded-nocd 43032523 00F9D000 - ConflictGlobal.exe (RELOADED NoCD, the only exe that runs)
+
+[ids]
+# id  name                     kind     description
+1     ModeFilter_CallTable     site     0x51EF36: call ModeFilter (SecuROM VM) from the mode-table builder - patched to `mov eax,1`
+2     ModeFilter_CallDialog    site     0x418886: call ModeFilter (SecuROM VM) from the Settings resolution combo - patched to `mov eax,1`
+3     Frame_CallGame           site     0x437BD7: WinMain's call to the per-frame game update (0x4360C0)
+4     Frame_CallOther          site     0x437BD0: WinMain's call to the other per-frame loop (0x42ED50), gated by [Main_ActiveFlag2]
+5     Renderer                 global   [0x8DE724]: renderer object (+0x41F20 W, +0x41F24 H, +0x41D58 device)
+6     FontManager_PickHiRes    site     0x59A9A4: `cmp [renderer+0x41F20], 0x400/0x500` - patched to W >= 1024
+7     GameState                global   [0x72912C]: front-end/in-play state byte (0x16 = in play)
+8     Main_ActiveFlag          global   [0x727CF8]: WinMain active flag (0 -> WaitMessage instead of PeekMessage)
+9     Main_ActiveFlag2         global   [0x727BA8]: gates Frame_CallOther
+
+[addresses reloaded-nocd]
+1     51EF36  E8B58DEFFF83C40885C00F84
+2     418886  E865F4FFFF83C40885C00F84
+3     437BD7  E8E4E4FFFFE86F70FFFFA11C
+4     437BD0  E87B71FFFFEB05E8E4E4FFFF
+5     8DE724  @0x00402602:8B0D24E78D0053E8
+6     59A9A4  7E053D00050000740433DBEB
+7     72912C  @0x0040837F:833D2C917200020F
+8     727CF8  @0x004344B0:C705F87C72000000
+9     727BA8  @0x0042EE47:C705A87B72000000

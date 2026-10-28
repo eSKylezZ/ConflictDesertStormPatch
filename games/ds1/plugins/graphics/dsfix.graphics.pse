@@ -1,0 +1,6 @@
+# MSAA / anisotropic filtering / V-Sync, the D3D9 / D3D9On12 / DXGI renderers (HDR, bloom, puddle reflections) and
+# OPTIONS > VIDEO for Conflict: Desert Storm (DesertStormFix).
+name     = dsfix.graphics
+requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

@@ -6,12 +6,16 @@
 # Local reverse-engineering helpers and working notes (not needed to build or use the patch)
 tools/
 /TODO.md
+/FEATURES.md
 /SERVICE_RECORD_RESEARCH.md
+/_delete_me/
+/releases/
 /research
 
 # AI assistant context and settings
 CLAUDE.md
 .claude/
+/docs/internal
 
 # Game binaries and data (Steam / GOG / Xbox) – never commit
 *.exe
@@ -48,8 +52,14 @@ Data/
 
 # Build output
 build/
+# ... but pse/build/ is source (the first-run builder: asset store + mission translator)
+!/pse/build/
 build-dist/
 build-release/
+build-*/
+# build logs left in the root (e.g. a configure run piped to build-<name>.cfg.txt)
+/build-*.txt
+/build-*.log
 *.pdb
 *.ilk
 *.obj
@@ -71,10 +81,12 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# Files extracted from Xbox / PS2 / GameCube disc images
+# Files extracted from Xbox / PS2 / GameCube disc images (all under re-data/ since 2026-10-25)
+/re-data/
 xbox/
 xbox_eu/
 ps2/
+ps2_jp/
 gc/
 demos/
 pcretail/
@@ -85,3 +97,20 @@ media/
 
 # Assets exported from the game archives (tools/datx.py) – never commit
 extracted/
+
+# PSE first-run build output (asset store, translated missions): made from the player's own game files - never commit
+PSE/Cache/
+pse-cache/
+store.pack
+store.idx
+*.man
+
+# Other games' patches (games/<id>, moved in 2026-10-19 from the DS2 / Vietnam / Global Storm repos). The patterns
+# above without a leading "/" (tools/, build/, build-*/, extracted/, media/, CLAUDE.md, CMakeUserPresets.json, game
+# binaries / data, disc dumps) apply inside games/ too; these are the root-anchored ones of those repos' .gitignore:
+/games/*/TODO.md
+/games/*/SERVICE_RECORD_RESEARCH.md
+/games/*/PLATFORM_DIFFERENCES.md
+/games/*/research/
+/games/*/.vscode/*
+!/games/*/.vscode/extensions.json

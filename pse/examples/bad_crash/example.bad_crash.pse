@@ -1,0 +1,2 @@
+# Test plugin: crashes in PSEPlugin_Load. The loader must disable it, undo what it registered and carry on.
+name = example.bad_crash

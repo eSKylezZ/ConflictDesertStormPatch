@@ -1,0 +1,5 @@
+# Vehicle grip / spin damping from mods' .vehicle files (DesertStormFix). Uses dsfix.services.
+name     = dsfix.handling
+requires = dsfix >= 3.3
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

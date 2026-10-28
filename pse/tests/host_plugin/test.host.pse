@@ -1,0 +1,3 @@
+# pse_tests host plugin (test_layout.cpp). Never deployed into a game.
+name = test.host
+host = true

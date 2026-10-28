@@ -15,11 +15,147 @@
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/build-dist",
       "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "ds2",
+      "displayName": "DS2: DesertStorm2Fix dev (games/ds2)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-ds2",
+      "cacheVariables": { "PSE_GAME": "ds2" }
+    },
+    {
+      "name": "ds2-dist",
+      "displayName": "DS2: DesertStorm2Fix distribution package",
+      "inherits": "ds2",
+      "binaryDir": "${sourceDir}/build-ds2-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "ds2-pse",
+      "displayName": "DS2: DesertStorm2Fix on PSE (ds2fix.dll + shim / loader / layer / DS2 plugins, tree)",
+      "inherits": "ds2",
+      "binaryDir": "${sourceDir}/build-ds2fix",
+      "cacheVariables": { "DS2_PSE_PLUGIN": "ON" }
+    },
+    {
+      "name": "ds2-pse-dist",
+      "displayName": "DS2: DesertStorm2Fix release package (PSE tree + readme, zip)",
+      "inherits": "ds2-pse",
+      "binaryDir": "${sourceDir}/build-ds2fix-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "cv",
+      "displayName": "Vietnam: VietnamFix dev (games/cv)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-cv",
+      "cacheVariables": { "PSE_GAME": "cv" }
+    },
+    {
+      "name": "cv-dist",
+      "displayName": "Vietnam: VietnamFix distribution package",
+      "inherits": "cv",
+      "binaryDir": "${sourceDir}/build-cv-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "cv-pse",
+      "displayName": "Vietnam: VietnamFix on PSE (cvfix.dll + shim / loader / layer, tree)",
+      "inherits": "cv",
+      "binaryDir": "${sourceDir}/build-cvfix",
+      "cacheVariables": { "CV_PSE_PLUGIN": "ON" }
+    },
+    {
+      "name": "cv-pse-dist",
+      "displayName": "Vietnam: VietnamFix release package (PSE tree + readme, zip)",
+      "inherits": "cv-pse",
+      "binaryDir": "${sourceDir}/build-cvfix-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "cgs",
+      "displayName": "Global Storm: GlobalStormFix dev (games/cgs)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-cgs",
+      "cacheVariables": { "PSE_GAME": "cgs" }
+    },
+    {
+      "name": "cgs-dist",
+      "displayName": "Global Storm: GlobalStormFix distribution package",
+      "inherits": "cgs",
+      "binaryDir": "${sourceDir}/build-cgs-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "cgs-pse",
+      "displayName": "Global Storm: GlobalStormFix on PSE (cgsfix.dll + shim / loader / layer, tree)",
+      "inherits": "cgs",
+      "binaryDir": "${sourceDir}/build-cgsfix",
+      "cacheVariables": { "CGS_PSE_PLUGIN": "ON" }
+    },
+    {
+      "name": "cgs-pse-dist",
+      "displayName": "Global Storm: GlobalStormFix release package (PSE tree + readme, zip)",
+      "inherits": "cgs-pse",
+      "binaryDir": "${sourceDir}/build-cgsfix-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "tge",
+      "displayName": "TGE: GreatEscapeFix on PSE (tgefix.dll + shim / loader / layer, tree)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-tge",
+      "cacheVariables": { "PSE_GAME": "tge" }
+    },
+    {
+      "name": "tge-dist",
+      "displayName": "TGE: GreatEscapeFix release package (PSE tree + readme, zip)",
+      "inherits": "tge",
+      "binaryDir": "${sourceDir}/build-tge-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
+    },
+    {
+      "name": "deniedops-pse",
+      "displayName": "Denied Ops: DeniedOpsFix on PSE (deniedopsfix.dll + shim / loader / layer, tree)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build-deniedops",
+      "cacheVariables": { "PSE_GAME": "deniedops" }
+    },
+    {
+      "name": "deniedops-pse-dist",
+      "displayName": "Denied Ops: DeniedOpsFix release package (PSE tree + readme, zip)",
+      "inherits": "deniedops-pse",
+      "binaryDir": "${sourceDir}/build-deniedops-dist",
+      "cacheVariables": { "DS_DIST": "ON" }
     }
   ],
   "buildPresets": [
     { "name": "debug",   "displayName": "Debug",   "configurePreset": "x86",  "configuration": "Debug" },
     { "name": "release", "displayName": "Release", "configurePreset": "x86",  "configuration": "RelWithDebInfo" },
-    { "name": "dist",    "displayName": "Package", "configurePreset": "dist", "configuration": "Release" }
+    { "name": "dist",    "displayName": "Package", "configurePreset": "dist", "configuration": "Release" },
+    { "name": "ds2-debug",   "displayName": "DS2: Debug",   "configurePreset": "ds2",      "configuration": "Debug" },
+    { "name": "ds2-release", "displayName": "DS2: Release", "configurePreset": "ds2",      "configuration": "RelWithDebInfo" },
+    { "name": "ds2-dist",    "displayName": "DS2: Package", "configurePreset": "ds2-dist", "configuration": "Release" },
+    { "name": "ds2-pse", "displayName": "DS2: PSE tree (ds2fix + runtime + plugins)", "configurePreset": "ds2-pse", "configuration": "RelWithDebInfo" },
+    { "name": "ds2-pse-dist", "displayName": "DS2: PSE release package", "configurePreset": "ds2-pse-dist", "configuration": "Release" },
+    { "name": "cv-debug",    "displayName": "Vietnam: Debug",   "configurePreset": "cv",      "configuration": "Debug" },
+    { "name": "cv-release",  "displayName": "Vietnam: Release", "configurePreset": "cv",      "configuration": "RelWithDebInfo" },
+    { "name": "cv-dist",     "displayName": "Vietnam: Package", "configurePreset": "cv-dist", "configuration": "Release" },
+    { "name": "cv-pse", "displayName": "Vietnam: PSE tree (cvfix + runtime)", "configurePreset": "cv-pse", "configuration": "RelWithDebInfo" },
+    { "name": "cv-pse-dist", "displayName": "Vietnam: PSE release package", "configurePreset": "cv-pse-dist", "configuration": "Release" },
+    { "name": "cgs-debug",   "displayName": "Global Storm: Debug",   "configurePreset": "cgs",      "configuration": "Debug" },
+    { "name": "cgs-release", "displayName": "Global Storm: Release", "configurePreset": "cgs",      "configuration": "RelWithDebInfo" },
+    { "name": "cgs-dist",    "displayName": "Global Storm: Package", "configurePreset": "cgs-dist", "configuration": "Release" },
+    { "name": "cgs-pse", "displayName": "Global Storm: PSE tree (cgsfix + runtime)", "configurePreset": "cgs-pse", "configuration": "RelWithDebInfo" },
+    { "name": "cgs-pse-dist", "displayName": "Global Storm: PSE release package", "configurePreset": "cgs-pse-dist", "configuration": "Release" },
+    { "name": "tge", "displayName": "TGE: PSE tree (tgefix + runtime)", "configurePreset": "tge", "configuration": "RelWithDebInfo" },
+    { "name": "tge-dist", "displayName": "TGE: PSE release package", "configurePreset": "tge-dist", "configuration": "Release" },
+    { "name": "deniedops-pse", "displayName": "Denied Ops: PSE tree (deniedopsfix + runtime)", "configurePreset": "deniedops-pse", "configuration": "RelWithDebInfo" },
+    { "name": "deniedops-pse-dist", "displayName": "Denied Ops: PSE release package", "configurePreset": "deniedops-pse-dist", "configuration": "Release" }
   ]
 }

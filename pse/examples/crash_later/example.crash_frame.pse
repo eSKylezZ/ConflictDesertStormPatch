@@ -1,0 +1,2 @@
+# Test plugin (pse/tests/test_plugins.cpp): loads, then faults in a PSE_EVENT_FRAME subscriber. Never install it in a game.
+name = example.crash_frame

@@ -1,0 +1,2 @@
+# example.lua_native - Lua functions for mission scripts through pse.lua (docs/sdk/reference/lua.md).
+name = example.lua_native

@@ -1,5 +1,204 @@
 # Changelog
 
+## Unreleased (3.3.0-Alpha test builds after 2026-10-15)
+
+Both PCs in an online session need the same build – older ones are refused when they connect.
+
+### Added
+
+**Mission patches**
+
+- Mods can change the game's own missions with a **mission patch** (`Mods\<Mod>\Mission1.patch.lua`). DesertStormFix
+  makes readable Lua from your own mission DLL, applies the patch to it and runs the result instead of the DLL. A
+  patch holds only the mod's own code, so it can be shared. Every installed mod's patch for a mission applies, in
+  load order. A patch that doesn't fit your game, or clashes with another, is left out and named in
+  `Mods\DesertStormFix-report.txt`. The first start of a patched mission takes up to 3.5 s longer; after that it is
+  cached. The ModKit's RestoredMissions example (cut content of the training missions and Mission 1) is now four
+  such patches
+
+**Other Conflict games' assets**
+
+- **Asset library**: everything of Desert Storm II, The Great Escape, Vietnam and Global Storm (models, characters,
+  vehicles, weapons, soldier types, animations, textures, sound banks), converted by the ModKit from your own copies
+  into `PSE\Library\<game>`, every name with the game's prefix (`DS2_T72M1.EVO`). It is never loaded at start-up: a
+  file is read only when a mod names it, so it changes nothing until something is built on it. Library sound banks
+  have their own sample numbers and can't clash with Desert Storm's sounds
+- **OTHER GAMES' GEAR** (OPTIONS > DESERTSTORMFIX, off by default, restart): the asset library's weapons appear on
+  the loadout screen's weapon rows and its characters as uniforms for Bradley; their models, pictures and sounds load
+  only when one is picked
+- Other games' mission maps as empty levels for modders in `PSE\Ports\<game>` (scenery, collision, lights, AI routes,
+  the squad start - run one with `+level mission01.lua` or open it in the editor). Playable converted campaigns were
+  dropped: their mission scripts kept failing on behaviour differences (vehicles, AI)
+- SHARED ASSET STORE is now **on by default** (OPTIONS > DESERTSTORMFIX > PLUGINS)
+- Attachment models from mods no longer bring up the "FIX NOW PLEASE - Connector object ..." warning box
+- Squad vehicles can be swapped on the loadout screen in every Lua mission too (custom missions and campaigns, editor
+  levels), not only in Desert Storm's own missions
+- CUSTOM CAMPAIGNS is in the CO-OPERATIVE CAMPAIGN menu too (split screen and online); a custom campaign starts at its
+  first mission without the co-op mission list
+- Mods' `.strings` texts now also answer the mission text lookup used by cutscene / movie texts and subtitles
+- **Mod load order**: the MODS screen numbers the mods in load order and Left / Right (pad: L1 / R1) moves one - when
+  two mods have a file of the same name, the mod loaded last wins. New mods load last; the first start keeps the old
+  alphabetical order. Online, a joiner takes the host's order along with its mods
+- Mods may keep their files in folders by type (`evos`, `dds`, `anims`, `sounds`, `tables`, `defs`, `levels` - what
+  the ModKit now makes for new mods); flat mods work as before. A mod with two files of one name in different folders
+  uses the last by sorted path and the mod report says so
+
+**Online co-op**
+
+- One lobby for online and split screen: up to 4 players over any number of PCs, joining per keyboard or pad, a
+  colour and name per player, READY, and SPLIT or OWN VIEW (only your own players' views; hold Tab / D-pad right to
+  peek at the others)
+- Plugged-in pads join as a new player instead of taking over the keyboard player
+- When only the mods differ, the joiner can download the host's mods in the lobby and play without a restart
+- The briefing / loadout screen opens on every PC at once (each PC sets up its own soldiers); it follows the host's
+  BRIEFING & LOADOUT setting
+- Cutscene skip vote: Esc / A / Cross is your vote, the counter shows who has voted, the cutscene ends when everyone
+  has. The host's SKIP CUTSCENES setting applies to everyone
+- Online menu (Esc / Start; the game keeps running): RESUME, RESTART MISSION (host), BACK TO THE LOBBY (host: everyone)
+  / LEAVE THE SESSION, QUIT GAME
+- Player names over the other players' soldiers; a red "NAME - DOWN, 23 m" marker for a downed player at any
+  distance, also at the edge of the screen when they are out of view
+- A player whose soldier starts as a prisoner (Mission 1's Foley) watches another player until freed
+- OPTIONS > DESERTSTORMFIX > STREAMER MODE (on by default): join codes and IP addresses are hidden on screen
+- `DesertStormFix-sync.csv`: every soldier and vehicle once a second, to compare two PCs after a problem – send it
+  with `DesertStormFix-online.log` from every PC
+
+**Mods**
+
+- Soldier bodies in several parts (ModKit exporter 1.8): the squad shows each part's own texture; the uniform covers
+  the main part only
+
+### Fixed
+
+- Quitting after a mission with rain, snow, wind or thunder no longer crashes on the way out: the weather sound kept
+  running after its plugin was unloaded.
+- A level whose loading picture is missing (Mission 3's M3.BMP, converted Desert Storm II Mission 1) no longer stops
+  the load with two error boxes – the loading screen just has no picture (logged)
+- Cavalry Charge (and any mission restarted from the loadout screen after a vehicle change, or with the console):
+  the mission never started after the restart – the M1 stayed put and the opening scene never ended. The briefing that
+  starts every mission was gone again before it could hand over; the mission now starts either way
+- Loadout screen with a changed vehicle (e.g. a Land Rover instead of Cavalry Charge's Bradley): the squad stayed in
+  the vehicle and the CHARACTER / LOADOUT views showed the vehicle instead of the soldier
+- Props a mod adds to a level (placed `records\*.lua` copies, `.envpatch` scenes) are drawn: the level's culling data
+  is rebuilt from the edited scene at load instead of using the game's own, which didn't know them
+- Online: items picked up, weapons held, held-up / lowered weapons and destroyed vehicles (the Mission 1 bridge tank and
+  its camera shot) now match on every PC
+- Online: another player's weapon names and pick-ups showed in your own top bar
+- Online: the joiner froze when it loaded the next mission from MISSION SUCCESSFUL before the host
+- Online: vehicles driven by another PC slowly turned away from their real heading
+- Online: button prompts showed keyboard keys while playing with a pad
+- Online: the player name over your view covered objective and pick-up messages (now top left, fades after 6 s)
+- Mods: high-detail soldier bodies (more than about 4,000 triangles) cast broken shadows – tall see-through columns
+  from the arms and gun down to the ground. Soldier shadows now handle bodies up to 65,535 triangles, and parts of a
+  body that aren't closed shapes still cast a closed shadow
+
+### Needs testing
+
+- Aiming of another player's soldier as seen on your PC, and some AI behaviour, still differ between the PCs (use
+  `DesertStormFix-sync.csv` to report)
+
+## 3.3.0-Alpha – 2026-10-15
+
+Alpha build for testers. It includes everything since 3.0.0; 3.1.0 and 3.2.0 were packaged without changelog entries.
+
+### Added
+
+**Settings in the game**
+
+- OPTIONS > VIDEO: every launcher setting in the game – resolution, display mode, V-Sync, frame rate limit,
+  anti-aliasing, texture filtering, texture resolution, draw distance, shrubs, shadows, per-pixel lighting, moving
+  vegetation, detail textures, decals, environment maps, HUD scaling / size, split-screen layout. Resolution, display
+  mode, V-Sync and anti-aliasing change without a restart (APPLY NOW, kept after confirming within 15 s); others
+  apply live, from the next level, or after APPLY > RESTART NOW
+- Start without the launcher (OPTIONS > VIDEO > LAUNCHER AT START, or the launcher's Settings); hold Shift at start
+  to see it again, and it comes back by itself after a start that failed
+- OPTIONS > DESERTSTORMFIX > CONTROLLER SUPPORT
+- Long menu texts are narrowed to fit their boxes (options rows, values, buttons) at every resolution; the online host /
+  join status lines wrap instead of running off the screen; CONTROLLER screen header no longer overlaps its title on 4:3
+
+**Briefing / squad screen**
+
+- CHARACTER tab: HEADGEAR, BACKPACK, FACE and POUCHES rows (caps, helmets, berets, shemaghs, packs, radio, sunglasses,
+  cigars, pouch sets of every faction); the camera moves to the part a row changes, and the squad keeps moving while
+  you choose. OPTIONS > DESERTSTORMFIX > FREE POUCH CHOICE replaces the pouch sets with one row per pouch spot
+- Changing faction (SAS / Delta / Russian / Iraqi) also puts on that faction's gear
+- A main weapon or sidearm picked on the LOADOUT tab comes with as much ammo as the gun it replaces had (as a share of
+  each gun's maximum) – the missions' kits are full, so you get a full load instead of 5 magazines
+- Your soldiers look straight ahead when the screen opens, not at the ground where the view was a moment before
+  (OPTIONS > DESERTSTORMFIX > LOADOUT: LOOK AHEAD, on by default); C / L3 = RESET VIEW straightens them up at any time
+- MISSION tab, Missions 8 and 9: VEHICLE row – swap the squad's vehicle for another ground vehicle (the level
+  restarts with it; the choice is remembered and kept in saves)
+
+**Gameplay**
+
+- VERY EASY and VERY HARD difficulties (OPTIONS > DESERTSTORMFIX > VERY EASY & VERY HARD, then restart the game)
+- Fixes ported from the Japanese release (OPTIONS > DESERTSTORMFIX > JAPANESE RELEASE FIXES): stuck tanks get free,
+  soldiers whose route is impossible are moved when no one is looking, path-builder overflow guards, dropped items no
+  longer land inside scenery
+- Field of view per player (OPTIONS > DESERTSTORMFIX > FIELD OF VIEW - PLAYER n)
+- Menu bar colour and HUD colour (OPTIONS > DESERTSTORMFIX): game green or any colour from a colour picker; text
+  on the bars stays readable
+- YOUR SOLDIER TALKS also covers spotted-enemy callouts, man down and incoming grenade
+- CHEATS: COMMANDEER ANY VEHICLE (trucks, BMPs, tanks the game normally never lets you enter); DEVELOPER > DEBUG
+  KEYS (the original developers' key bindings)
+- Bigger battles: higher engine limits for vehicles, physics objects, projectiles, particles, events and sounds
+  (saves stay compatible with the original game)
+
+**Weather and footprints**
+
+- WEATHER on the briefing screen's MISSION tab: clear, overcast, light rain, rain, thunderstorm, light snow, snow,
+  blizzard, dust, sandstorm, fog or random. Falling rain / snow / sand (stops at roofs), darker or tinted light,
+  greyer sky, closer fog (enemies see less), wet ground and puddles that form in rain and dry up after (reflecting, with rain ripples, on the Direct3D 9
+  renderers), gusting wind that bends bushes and carries smoke and dust, lightning,
+  and rain / wind / sand / thunder sound. Online the host's weather is used; Lua missions: `game.weather`
+- Footprints (OPTIONS > DESERTSTORMFIX > FOOTPRINTS): the game's own footprints last 12 s – now also 2 minutes,
+  permanent or off; every soldier can leave them (FOOTPRINTS: EVERYONE); wind, rain, snow and sand wear them away
+  (WEATHER WIPES FOOTPRINTS). Room for marks on the ground (footprints, bullet holes, blood) is 4× larger, and they
+  no longer vanish after every cutscene
+
+**Online co-op**
+
+- New sync model: every player's PC runs its own soldiers and the host runs the rest (as Pivotal's later games
+  did). Replaces the input lockstep, so differing graphics settings or frame rates no longer split the game
+- 3 and 4 players; grenades, rockets and M203 shots, damage, healing, deaths, vehicles (driving, turrets, getting
+  in and out) and mission events are shared; RESTART LEVEL starts the mission fresh for everyone
+
+**Mods**
+
+- Bigger textures: a mod's large textures (2048² and up) load; the main menu shows "2 GB MEMORY MODE" until the
+  4 GB patcher (DesertStormFix-Patcher.exe, in the zip) is run
+- `.unit` files: new soldier types (based on, type, model, health, experience, voice, items); bad table rows are left
+  out and reported instead of crashing the game
+- `.vehicle` files: `grip`, `spin damping` and `engine sound` for a vehicle's own handling and sound
+- `.vehicle` files: `gun = <base vehicle's gun> -> <weapon>` puts another weapon (e.g. a `.weapon` with its own model)
+  in place of one of the base vehicle's guns - a ported tank carries its own cannon and machine gun; `-> -` leaves
+  that gun off
+- `.strings` files: `#1A2B3C4D = text` sets a text by its hash; a `[SECTION]` no game text file has is a level's
+  own texts, switched on by `game.load_strings("<SECTION>Strs.loc")`
+- `.vehicle` files: `stat column N = value` gives the vehicle its own VStat row (armour, speeds ...) - ported
+  vehicles carry the source game's values
+- `.gear` and `.pouches` files: new hats, packs, face items and pouch sets for the CHARACTER tab
+- Lua: `game.kill`, `game.explode`, `game.difficulty`, `game.hud`
+
+### Fixed
+
+- Loading a "… Start" save (the one offered after MISSION SUCCESSFUL) unlocked the cheats and could crash
+  Mission 5A right after the loading bar
+- Free camera (F6) crashed in some levels on the first frame
+- Swapping a vehicle made every vehicle in the level sink through the ground
+- Vehicles on flat custom levels disappeared at once
+- A linked mission (5A …) picked from the mission list got the kit of an older play-through
+- Split screen at low resolutions: the HUD was drawn outside the views
+- Online: the game ran in slow motion below 60 fps
+
+### Needs testing
+
+- Online co-op between two homes and with 3–4 players; driving a vehicle online
+- Field of view, vehicle swaps and COMMANDEER ANY VEHICLE in real play
+- The Japanese-release fixes haven't been seen firing in play yet
+- 4 GB patcher on real installs
+- Weather in every mission, split screen, at night and on Renderers 1–3; the weather sounds by ear
+
 ## 3.0.0 – 2026-10-10
 
 ### Added

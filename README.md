@@ -14,10 +14,28 @@ Patch for the PC version of Conflict: Desert Storm, adding 16x9 support, control
 - Fixed game speed at high frame rates, plus a frame cap (monitor refresh rate, max 240 fps)
 - Settings in the launcher, and the launcher can be used with a controller
 
+## Games
+One repository for the Pivotal Games "Conflict" series patches. They share the Pivotal Script Extender in `pse/`
+(loader + one game layer per game in `pse/games/<id>`), the input-prompt art in `assets/` and Lua in `third_party/`.
+What each game's patch does and what is still to do: **[FEATURES.md](FEATURES.md)** (feature matrix for all six games).
+
+| Game | Patch | Where | State |
+| --- | --- | --- | --- |
+| Conflict: Desert Storm (`ds1`) | DesertStormFix | [games/ds1](games/ds1), PSE layer `pse/games/ds1` | full feature set (this README) |
+| The Great Escape (`tge`) | GreatEscapeFix | [games/tge](games/tge/README.md), PSE layer `pse/games/tge` | widescreen, menu / HUD scaling, windowed, frame cap, pads (unverified), Mods folder + MODS menu, mod tables / sounds / levels, Lua missions |
+| Conflict: Desert Storm II (`ds2`) | DesertStorm2Fix | [games/ds2](games/ds2/README.md), PSE layer `pse/games/ds2` | widescreen, HUD / menu scaling, split screen 2-4 + co-op join, Mods folder + MODS menu, `.skin` / `.weapon`, mod sounds / levels, Lua missions, limits, loadout screen |
+| Conflict: Vietnam (`cv`) | VietnamFix | [games/cv](games/cv/README.md), PSE layer `pse/games/cv` | widescreen, HUD / menu scaling, Mods folder + MODS menu |
+| Conflict: Global Storm (`cgs`) | GlobalStormFix | [games/cgs](games/cgs/README.md), PSE layer `pse/games/cgs` | widescreen, high-res fonts, menus kept 4:3, Mods folder (packed assets) + MODS menu |
+| Conflict: Denied Ops (`do`) | DeniedOpsFix | [games/deniedops](games/deniedops), PSE layer `pse/games/deniedops` | widescreen, Mods folder + MODS menu |
+
+Each `games/<id>` is its own CMake project (`cmake -S games/<id> --preset x86`), or build it from the repo root with
+the presets `ds2`, `cv`, `cgs` (+ `-dist`; `ds2-pse` = `ds2fix.dll`). The ports start from DesertStormFix's own
+sources in `games/ds1`.
+
 ## Install
 Copy `dinput8.dll` into the game folder (next to `DesertStorm.exe`). The exe itself is not modified;
-delete the DLL to uninstall. Settings live in the game's registry key and will be editable from the
-launcher / Options menu.
+delete the DLL to uninstall. Settings live in the registry (`HKCU\Software\PSE\ds1\Plugins\dsfix`, see
+[docs/sdk/ds1-settings.md](docs/sdk/ds1-settings.md)) and are changed from the launcher / Options menu.
 
 ## Building
 Requirements: Visual Studio 2022 Build Tools (C++ workload, includes CMake) and VS Code with the
@@ -36,9 +54,11 @@ To build straight into your game folder, copy `CMakeUserPresets.example.json` to
 then deploy on every build; in VS Code you can add a `launch.json` that starts `DesertStorm.exe` under
 the debugger.
 
-Byte patches are defined per feature in `scripts/patch_defs.py`; after changing them run
-`python scripts/gen_patch_tables.py` to regenerate `src/generated/patch_tables.h`. Button icons are
-baked by `python scripts/gen_prompt_icons.py` (needs Pillow).
+DesertStormFix's sources live in `games/ds1/` (`src/`, `plugins/`, `scripts/`, `dist/`); the root
+`CMakeLists.txt` builds them together with PSE (`pse/`). Byte patches are defined per feature in
+`games/ds1/scripts/patch_defs.py`; after changing them run `python games/ds1/scripts/gen_patch_tables.py`
+to regenerate `games/ds1/src/generated/patch_tables.h`. Button icons are baked by
+`python games/ds1/scripts/gen_prompt_icons.py` (needs Pillow).
 
 ### What not to commit
 Nothing from the game itself: no executables, DLLs, level data, textures, sounds or disassembly

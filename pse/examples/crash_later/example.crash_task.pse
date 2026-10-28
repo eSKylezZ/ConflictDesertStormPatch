@@ -1,0 +1,2 @@
+# Test plugin (pse/tests/test_plugins.cpp): loads, then faults in a pse.tasks task. Never install it in a game.
+name = example.crash_task

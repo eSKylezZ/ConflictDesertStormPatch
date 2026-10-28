@@ -1,0 +1,4 @@
+# Aiming audio fix for Conflict: Desert Storm (DesertStormFix): sounds keep their volume when you aim.
+name     = dsfix.audio
+# its mod data (Mods folder index, merged tables, mod weapons / skins ...) comes from dsfix.mods: load after it
+after    = dsfix.mods

@@ -1,0 +1,4 @@
+# The Mods folder, the shared asset store, big mod textures, mod weapon pictures, the MODS menu and custom campaigns
+# for Conflict: Desert Storm (DesertStormFix).
+name     = dsfix.mods
+requires = dsfix >= 3.3

@@ -1,0 +1,30 @@
+#include <winver.h>
+#include <winuser.h>
+
+// Configured by CMake for each game: DS1 (CMakeLists.txt) and DS2 (games/ds2/CMakeLists.txt, PATCHER_GAME_DS2).
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "@PATCHER_MANIFEST@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION  @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription",  "@PATCHER_DESCRIPTION@"
+            VALUE "FileVersion",      "@DS_VERSION_FULL@"
+            VALUE "InternalName",     "@PATCHER_NAME@"
+            VALUE "OriginalFilename", "@PATCHER_NAME@.exe"
+            VALUE "ProductName",      "@PATCHER_PRODUCT@"
+            VALUE "ProductVersion",   "@DS_VERSION_FULL@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

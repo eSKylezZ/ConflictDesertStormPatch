@@ -1,0 +1,270 @@
+# PSE ID database: Conflict: Desert Storm II (game id ds2). Source of truth - compiled by scripts/gen_ids.py into
+# src/generated/pse_ids_ds2.h, pse/include/pse/pse_ids_ds2.h and docs/sdk/reference/ids-ds2.md.
+# Format + rules: docs/sdk/reference/ids.md. Ids listed in ds2.published.txt are frozen for ever: never removed,
+# renumbered, renamed or given another kind. New ids take the next free number (never a freed one).
+# Names follow the ds1 database where the meaning is the same (Main_FrameDispatch, Site_FrameDispatchCall, World ...):
+# a plugin for both games resolves the same name on each - the addresses, calling conventions and offsets differ.
+#
+# Addresses: the DS2 patch (games/ds2, PORTING.md / src) + the game layer's own (2026-10-19).
+#
+#   game <id> <title>
+#   database <n>                                  (+1 by gen_ids.py --publish)
+#   build <name> <pe timestamp> <image size> <sha256 | -> <notes>
+#   [ids]                <id> <name> <kind> <description>      kind = function | site | global | vtable | data
+#   [addresses <build>]  <id> <va> <signature>
+
+game ds2 Conflict: Desert Storm II
+database 1
+
+# CDS II.exe as the user plays it: the disc-free build. The retail SecuROM exe ("CDS II - Original.exe", SHA-256
+# 44EF1E16...) has the same PE time stamp + image size but other .text bytes (imports called through SecuROM's own
+# thunks / IAT at 0x91C000) - not a build of this database yet (its signatures would mismatch, the game layer
+# doesn't detect it). sha256 = the file with the 4 GB (Large Address Aware) flag cleared.
+build nodisc-1.0 3F4B1A8A 005A6000 E9B46420DC00B13C3C48A9E9B7B3FDA29458D5EA83AC0D203F5B68FDD111542A CDS II.exe 1.0 (disc-free), 4 GB flag ignored
+
+[ids]
+# id  name                          kind     description
+# ---- main loop / frames ----
+1     Main_MessageLoop              function the game's message loop (frames only while Main_ActiveFlag is set)
+2     Main_FrameDispatch            function per-frame dispatcher: switch on Main_DispatchMode (0 front end, 1 Game_Update, 2 Level_LoadDispatch, 3 Film_Frame, 4 ?)
+3     Game_Update                   function dispatch mode 1: mission update + Render_Frame(1)
+4     Render_Frame                  function cdecl(int): render loop (per viewport: world, HUD; full screen in cutscenes)
+5     Render_HudPass                function per view: SetViewport + HUD draw
+6     Input_PerFrame                function per frame after Main_FrameDispatch (input devices update)
+7     Renderer_DeviceCheck          function thiscall(renderer) -> 1 = device usable (TestCooperativeLevel; message loop)
+# ---- levels ----
+8     Level_LoadDispatch            function thiscall(0x6315D0): dispatch mode 2 - unload, then the flow entry's level (front end / mission / film)
+9     Level_Unload                  function unloads the current level (the renderer's level resources, level memory)
+10    FrontEnd_Init                 function thiscall: loads the front end (FrontEnd.dat / .sch, scene name "FrontEnd"), Main_DispatchMode = 0
+11    Mission_Load                  function input blocks (+ one per split-screen player), Main_DispatchMode = 1, Level_Init(flow name)
+12    Level_Init                    function cdecl(const char* name) -> 0 = failed: mission level init (archive, scene, script DLL); scene name -> Level_SceneName
+13    Level_SetupPlayers            function player set-up after level init: camera + soldier per viewport
+14    Flow_CurrentName              function thiscall(Flow) -> const char*: the campaign flow entry's name ("mission01.dll")
+15    Film_Play                     function plays a flow entry's Bink film
+# ---- front end ----
+16    FrontEnd_SetState             function cdecl(state): switch the front-end state machine (FrontEnd_State)
+17    FrontEnd_ScreenOfState        function cdecl(state) -> screen object (states 1..0x35)
+18    FrontEnd_CreateMenus          function createGameMenus
+19    Text_Lookup                   function thiscall(table Text_Strings, hash) -> const wchar_t* (UTF-16 catalog text)
+# ---- saves ----
+20    Save_Game                     function thiscall(Save_Saver, const wchar_t* path, int flag) ret 8: path + ".sav" written ("wb"); flag != 0 = nothing written
+21    Save_Load                     function thiscall(Save_Saver, const wchar_t* path) ret 4: reads path with the extension replaced by ".sav"
+# ---- window / launcher ----
+22    Window_Create                 function creates the game window (class "CDS II", title "Conflict: Desert Storm II")
+23    Window_Proc                   function game window procedure (WM_DESTROY: level resources freed, PostQuitMessage)
+24    Launcher_ResolutionFilter     function mode filter of the launcher list (640x480 / 800x600 / 1024x768 / 1280x1024 only)
+25    Launcher_BuildModeList        function launcher resolution list builder
+26    Input_WaitAnyKey              function cdecl(timeout ms, 0 = forever): "press any key" wait with its own message loop
+27    Engine_Init                   function cdecl, 5 args: engine start-up ("Ivor"): renderer + D3D9 device
+# ---- renderer ----
+28    Renderer_ResetViewports       function thiscall(renderer): one full-screen viewport (only at device creation)
+29    Renderer_GetViewport          function thiscall(renderer, i) -> D3DVIEWPORT9*
+30    Renderer_SetViewport          function thiscall(renderer, viewport)
+31    Renderer_SetTexture           function thiscall(renderer, stage, texture): cached SetTexture
+# ---- HUD ----
+32    Sheet_SetScale                function thiscall(sheet, float x, float y, int flag) ret 0xC: image sheet scale
+33    Sheet_SetScaleUniform         function thiscall(sheet, float s) ret 4: image sheet scale (percent)
+34    Hud_AnchorPosition            function cdecl(out, view, anchor): view origin + view size x anchor + screen size x offset
+35    Text_DrawSmall                function small-font text routine (ammo counts, stats tables)
+# ---- input / players / split screen ----
+36    Input_ResetBlocks             function thiscall(Input_Manager): clears the input blocks
+37    Input_AddBlock                function thiscall(Input_Manager): adds one input block
+38    Input_PickSoldier             function player 1's soldier pick (squad member owned by the block's binding set)
+39    Input_ButtonValue             function thiscall(block, action): button binding evaluation (checks block +0xC devices)
+40    Input_AxisValue               function thiscall(block, action, opposite) -> float: analog value (no device check)
+41    Input_KeyHeld                 function key held query
+42    Input_MouseDelta              function smoothed mouse delta
+43    Bindings_Alloc                function allocates the binding table (sets, slots 3, actions 0x51)
+44    Bindings_Lookup               function cdecl(set, slot, action) -> binding
+45    Squad_AssignOwners            function soldier +0xEC4 owner by player count (jump table 0x4756C4)
+46    Time_SlowDown                 function "Slow down time" (downed-soldier slow motion)
+# ---- call sites ----
+47    Site_FrameDispatchCall        site     Main_MessageLoop: call Main_FrameDispatch (frame hook)
+48    Site_InputPerFrameCall        site     Main_MessageLoop: call Input_PerFrame
+49    Site_RenderCall               site     Game_Update: call Render_Frame(1)
+50    Site_LevelUnloadCall          site     Level_LoadDispatch: call Level_Unload
+51    Site_FrontEndInitCall         site     Level_LoadDispatch: call FrontEnd_Init (ecx = Level_LoadDispatch's this)
+52    Site_MissionLoadCall          site     Level_LoadDispatch: call Mission_Load
+53    Site_LevelInitCall            site     Mission_Load: call Level_Init(Flow_CurrentName())
+54    Site_WmDestroyCall            site     Window_Proc WM_DESTROY: call 0x40D730 (after the level resources' release call)
+55    Site_KeyWaitCall              site     call Input_WaitAnyKey after the level load
+56    Site_KeyWaitCall2             site     call Input_WaitAnyKey (front end)
+57    Site_PickSoldierCall          site     Level_SetupPlayers: call Input_PickSoldier for player 1
+58    Site_BindingsAllocCall        site     call Bindings_Alloc (push esi = 1 set)
+59    Site_CreateWindowCall         site     Window_Create: call [CreateWindowExA]
+60    Site_ShowWindowCall           site     Window_Create: call [ShowWindow]
+61    Site_PlaceWindowCall          site     call [SetWindowPos] (window placement)
+62    Site_PlaceWindowCall2         site     call [SetWindowPos] (fullscreen placement)
+63    Site_LauncherDialogCall       site     call [DialogBoxParamA]: the launcher (dialog 0x6E)
+64    Site_SettingsDialogCall       site     call [DialogBoxParamA]: launcher Settings (dialog 0x6F)
+65    Site_InactiveJump             site     Main_MessageLoop: je while the window is inactive (WaitMessage, no frame)
+66    Site_RestyleJump              site     Main_MessageLoop: je around the per-frame window restyle (0x15800000)
+67    Site_EngineInitCall           site     call Engine_Init (initGameSystem)
+68    Site_RendererViewportCall     site     call Renderer_ResetViewports after device creation
+69    Site_FullViewportCall         site     Render_Frame: SetViewport(full screen) after the per-view loop
+70    Site_SetCursorPosCall         site     call [SetCursorPos] (menu cursor setter)
+71    Site_SlowDownJump             site     tail jump to Time_SlowDown
+72    Site_TextRestoreCall          site     text queue: restore the saved sheet scale (Sheet_SetScaleUniform)
+73    Site_FontsScaleCall           site     set-up: Sheet_SetScaleUniform on the fonts
+# ---- globals ----
+74    Main_DispatchMode             global   u8: 0 front end, 1 mission (Game_Update), 2 level load pending, 3 film, 4 ?
+75    Main_ActiveFlag               global   u32: 1 = the message loop runs frames (WM_ACTIVATE)
+76    Main_Quit                     global   u32: non-zero = the message loop ends
+77    FrontEnd_State                global   u32: current front-end state (0x13 = mission running)
+78    Renderer                      global   renderer object* (W +0x41A38, H +0x41A3C, device +0x4187C, window +0x14, viewports +0x30 / +0x34)
+79    World                         global   world / environment object* (+0x1B8C bit 0 = cinematic, +0x1BBC scene name char*)
+80    Level_SceneName               global   char[]: a mission's scene name (World +0x1BBC points here; the front end points at "FrontEnd")
+81    Window_Handle                 global   HWND of the game window
+82    Text_Strings                  global   text table* (catalog.dat, current language)
+83    Save_Saver                    global   saver object* (Save_Game / Save_Load)
+84    Campaign                      global   campaign object* (+8 type)
+85    Flow                          global   campaign flow object (+0x10 entry index into the flow table: Logo / films / briefings / missions)
+86    Split_Object                  global   split screen: +0 local MP flag, +4 player count, +8 mode, +0xC orientation, +0x10 HUD layout table*
+87    Split_RenderActive            global   u32: split rendering on (set by level init)
+88    Input_Manager                 global   input manager (blocks at +0x13C)
+89    Input_Blocks                  global   input blocks [4], 0x58C bytes each (+4 player, +0xC devices, +0x2EC soldier, +0x3A4 joystick, +0x448 view)
+90    Input_BlockCount              global   u16: input blocks in use
+91    Players                       global   player objects* [4]
+92    Bindings_Table                global   binding table* {sets, slots 3, actions 0x51, data}
+93    Input_Joysticks               global   IDirectInputDevice8A* [8]
+94    Input_JoystickCount           global   u32: joysticks opened
+95    Input_AxisTable               global   float axis values (code + joystick * 0x70)
+96    Input_KeyboardUsed            global   keyboard used flag
+97    Hud_AnchorTable               global   float[variant][9][2] HUD anchors
+98    Startup_OptionsPtr            global   const char*: built-in start-up options ("-fl -d"; "-d <level>" boots a level)
+99    Launcher_Object               global   launcher dialog object* (+4 device table, +8 adapter, +0xC device, +0x10 mode)
+# ---- data ----
+100   Split_HudTable1p              data     HUD layout table: 1 player (Xbox format, 0x80 bytes)
+101   Split_HudTable2pTop           data     HUD layout table: 2 players top / bottom
+102   Split_HudTable2pSide          data     HUD layout table: 2 players side by side (the split object's default)
+103   Vtable_MainMenu               vtable   main menu screen (state 2)
+104   Vtable_SpMenu                 vtable   single-player menu screen (state 3, unused by the game)
+105   Iat_Direct3DCreate9           data     IAT slot d3d9!Direct3DCreate9
+106   Iat_CreateWindowExA           data     IAT slot USER32!CreateWindowExA
+107   Iat_ShowWindow                data     IAT slot USER32!ShowWindow
+108   Iat_SetWindowPos              data     IAT slot USER32!SetWindowPos
+109   Iat_DialogBoxParamA           data     IAT slot USER32!DialogBoxParamA
+110   Iat_ClipCursor                data     IAT slot USER32!ClipCursor
+111   Iat_SetCursorPos              data     IAT slot USER32!SetCursorPos
+112   Iat_MessageBoxA               data     IAT slot USER32!MessageBoxA
+113   Iat_ScreenToClient            data     IAT slot USER32!ScreenToClient
+114   Iat_ShowCursor                data     IAT slot USER32!ShowCursor
+115   Iat_PostQuitMessage           data     IAT slot USER32!PostQuitMessage
+
+[addresses nodisc-1.0]
+# id  va          signature
+1     0x00414AC0  8B44240483EC1C5633F65650
+2     0x00412040  E8DBFD0A00A168B87400406A
+3     0x00410240  83EC18E868EAFFFFE813BBFF
+4     0x0040FBA0  81EC58010000E8B5C1FFFF85
+5     0x0040DBC0  8B0D38006800538B59305733
+6     0x004CAFE0  A1E0FE67008B0850FF511CC7
+7     0x00541C50  81EC80000000538BD98B837C
+8     0x0042CEF0  578BF9E87852090085C07415
+9     0x0042C8B0  8B0D38006800E8A5A51000E8
+10    0x0042C930  5153E8196B090033DB535368
+11    0x0042CAD0  A1B8006800C700C08F4100C7
+12    0x00412690  558BEC81EC7C040000A13800
+13    0x0040C8B0  A138006800558B68305633F6
+14    0x00430900  8B411083F8FF75048D4120C3
+15    0x0042CB80  8B0DACF3620033C085C95674
+16    0x0043DFD0  A13C436300A340436300A14C
+17    0x0043BBA0  8B4424044883F8340F87BC00
+18    0x0043BF40  565768200F5E0033FF68A205
+19    0x004FBE50  8B413885C076318B54240448
+20    0x0041C600  8B44240881EC0401000085C0
+21    0x0041C7C0  8B44240481EC0401000085C0
+22    0x0040E970  A1ECF4620083EC383DB70000
+23    0x0040E7D0  83EC40568B74244C81FE0002
+24    0x00420590  8B4424043D00040000774074
+25    0x00420900  81EC1C0100008B8424200100
+26    0x004CCBD0  83EC2C53558B2D10A25D0056
+27    0x004D0A00  83EC408B0D10C361005333DB
+28    0x00537380  83EC14538BD956578B839400
+29    0x00536BB0  8B4424048D04408D44C134C2
+30    0x00537440  83EC14568BF1578B7C24208B
+31    0x005364E0  568BF18B86FC1D040085C074
+32    0x0052B1E0  D9442404D80D4CA75D00D959
+33    0x0052B1A0  D9442404D80D4CA75D00D951
+34    0x00459D10  A1186C620083EC1085C05674
+35    0x005294E0  83EC58538BD955568B0333ED
+36    0x00428D40  5556578BF133ED33FF6639AE
+37    0x00428A90  568BF10FB7867017000069C0
+38    0x00423620  83EC085333C0A0ECB0610056
+39    0x00422FA0  5355568BF18B86A403000057
+40    0x004230F0  51568BF183BEA4030000FFC7
+41    0x004CC030  A1E0FF670085C0750B8B4424
+42    0x004CACF0  518B41148B118D0440D94482
+43    0x0040A3E0  8B4424048B54240853568BF1
+44    0x0040A470  8B41040FAF44240403442408
+45    0x00475610  565733FF8BF189BEC40E0000
+46    0x0041E4B0  518B0D98006800E804010A00
+47    0x00414BFC  E83FD4FFFFE8CA66FFFFE8D5
+48    0x00414C06  E8D5630B00EB106A00FFD56A
+49    0x00410990  E80BF2FFFF83C4048B0D9400
+50    0x0042CF1E  E88DF9FFFFB908166300E803
+51    0x0042CF9B  E890F9FFFFC7051C16630000
+52    0x0042CFC1  E80AFBFFFFC7051C16630000
+53    0x0042CB64  E8275BFEFF83C40485C07505
+54    0x0040E8E0  E84BEEFFFFE876E2FFFF6A00
+55    0x0040FB50  E87BD00B0083C404891DB4F3
+56    0x004440ED  E8DE8A080083C40CC3909090
+57    0x0040C94A  E8D16C010033F685ED0F867E
+58    0x0040A556  E885FEFFFF84C0750433C05E
+59    0x0040EA99  FF154CA25D0085C0A31CF462
+60    0x0040EAB8  FF1550A25D008B151CF46200
+61    0x00411E14  FF1524A25D008B44244885C0
+62    0x00411FAD  FF1524A25D0057FF1530A25D
+63    0x00421AA7  FF15E8A15D0085C075196A01
+64    0x00421963  FF15E8A15D0085C075196A01
+65    0x00414BA5  74708B0D38006800E89ED012
+66    0x00414BCA  74308B0D380068008B51146A
+67    0x004137E3  E818D20B0083C41485C07526
+68    0x00541F67  E81454FFFF8B96781804008D
+69    0x0040FF4A  E8F17412008B0D8400680068
+70    0x004CB15C  FF1564A25D00A13800680089
+71    0x00427816  E9956CFFFF909090909083EC
+72    0x0050CD6F  E82CE40100895F0C5F5D5B83
+73    0x0040C74E  E84DEA11008B0D40F4620068
+74    0x00627158  @0x0040AD50:8A0D5871620033C0
+75    0x0062F4BC  @0x0040E86D:C705BCF462000000
+76    0x0062F3B8  @0x00414ACC:8935B8F36200E899
+77    0x0063433C  @0x00402D90:833D3C436300020F
+78    0x00680038  @0x004072FD:8B0D380068008B89
+79    0x0068008C  @0x00401FE0:8B0D8C0068006A00
+80    0x0062F7E0  @0x0041277C:14BAE0F762008A08
+81    0x0062F41C  @0x0040AB1C:8B0D1CF462008B15
+82    0x0062F460  @0x0040442F:90A160F4620083EC
+83    0x0062F458  @0x0040D633:391D58F462007437
+84    0x0062F454  @0x00401E16:8B0D54F462008B41
+85    0x00631608  @0x00403490:51B908166300E8A5
+86    0x00626C18  @0x0040485C:00A1186C620085C0
+87    0x0062F3A8  @0x0040DC12:00A1A8F3620085C0
+88    0x0062FE40  @0x0040DA8B:00B940FE6200E8AA
+89    0x0062FF7C  @0x0040C8F3:00B97CFF6200E8D2
+90    0x006315B0  @0x00405D74:B70DB0156300894C
+91    0x0062F36C  @0x0040A905:04856CF36200C390
+92    0x00627078  @0x0040A588:8B0D78706200E85D
+93    0x0067E7DC  @0x004CAF3D:F6BFDCE76700B202
+94    0x0067F6C0  @0x00423A5F:391DC0F667007604
+95    0x0067E948  @0x00423154:049548E96700D954
+96    0x0062FE1C  @0x00423274:C7051CFE62000100
+97    0x00613FE0  @0x00459D35:34C5E03F61008B04
+98    0x0060981C  @0x0040B0BD:8B351C986000B361
+99    0x0062FDFC  @0x00421608:8B0DFCFD6200568B
+100   0x006086D0  @0x006086F0:0100000000000000000000000000803F
+101   0x00608750  @0x00608770:0100000000000000000000000000803F
+102   0x006087D0  @0x006087F0:0100000000000000000000000000003F
+103   0x005E6F58  60CD450010C9450020DC4200
+104   0x005E7968  20654600B063460020DC4200
+105   0x005DA2C4  @0x00566570:FF25C4A25D008B0D
+106   0x005DA24C  @0x0040EA99:FF154CA25D0085C0
+107   0x005DA250  @0x00420D12:8B1D50A25D0050FF
+108   0x005DA224  @0x00411E14:FF1524A25D008B44
+109   0x005DA1E8  @0x0041CCFF:FF15E8A15D0085C0
+110   0x005DA1C4  @0x0040B315:FF15C4A15D00C390
+111   0x005DA264  @0x004CB15C:FF1564A25D00A138
+112   0x005DA1D4  @0x0040E917:FF15D4A15D008B44
+113   0x005DA260  @0x004CB17C:FF1560A25D005F5E
+114   0x005DA1C0  @0x0040B287:8B35C0A15D007417
+115   0x005DA280  @0x0040E8F4:FF1580A25D00EB21
