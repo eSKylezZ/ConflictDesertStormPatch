@@ -24,6 +24,14 @@
 //    After it our FILE is closed and the stream's +0x30 handed back.
 //  - FILE* belong to the game's CRT (MSVCR80.dll): opened / sized / closed through the exe's own import slots.
 // Not covered: files the game fopens itself (films, saves, Operations.xml / profile writers), the async streamer.
+//
+// Octree for a mod's scene (2026-11-01, DS1 levels on the DO engine): Level_Init 0x441820 loads <scene>.PC.OCT unless
+// the start-up value of flag 'd' (0x633960 cdecl(letter) -> byte, the table at 0xC45308) is '2' - then (0x4425E7) it
+// builds every zone's octree in memory (0x82A860 thiscall([0xE558C4], 0)). The call at 0x4425DF answers '2' when the
+// scene index (*.ENV) this level opened came from a mod: a shipped .PC.OCT indexes the shipped world, not the mod's.
+// A mod's <SCENE>.level sidecar with a "--@script none" line (DS1 levels on a shipped level's slot) also clears the
+// mission script object [0x9F2B3C] there - after the DLL's init has loaded the scene, before the first update: the
+// shipped script would look its own objects up by id in a world that doesn't have them (every caller tests it for 0).
 #include <windows.h>
 
 #include <algorithm>
@@ -47,6 +55,8 @@ constexpr uint32_t kClose = 0x5E3960;
 constexpr uint8_t kCloseEntry[] = {0x8B, 0x15, 0x74, 0x06, 0xBE, 0x00};                            // mov edx,[0xBE0674]
 constexpr uint32_t kFileFlags = 0xBE0674;
 constexpr uint32_t kFopenSlot = 0x90E388, kFcloseSlot = 0x90E38C, kFseekSlot = 0x90E1E0, kFtellSlot = 0x90E1E4;
+constexpr uint32_t kOctreeFlagCall = 0x4425DF, kFlagValue = 0x633960;   // Level_Init: push 'd'; call
+constexpr uint32_t kScriptObject = 0x9F2B3C;
 constexpr size_t kNameMax = 0x100;   // File_Open copies the name into a 0x108-byte stack buffer
 
 using OpenFn = int(__thiscall*)(void*, const char*);
@@ -135,7 +145,7 @@ void ScanFolder(const std::string& dir, int mod, int& count) {
             features::ModLog("[fail] Mods: %s - file name too long, not used", path.c_str());
             continue;
         }
-        if (key == "DENIEDOPSFIX-REPORT.TXT") continue;
+        if (key == "DENIEDOPSFIX-REPORT.TXT" || key == "CAMPAIGN.TXT") continue;   // campaign.txt: campaigns.cpp
         auto it = g_files.find(key);
         if (it != g_files.end())
             features::ModLog("Mods: %s replaces %s's %s", g_mods[mod].c_str(), g_mods[it->second.mod].c_str(), fd.cFileName);
@@ -210,9 +220,65 @@ void NoteOpened(const char* name) {
 void NoteOpened(const char*) {}
 #endif
 
+bool g_sceneFromMod = false;   // the last scene index (*.ENV) opened was a mod's
+std::string g_sceneName;       // ... and its bare name ("M_BAS.ENV")
+
+uint32_t g_sceneGeneration = 0;   // + 1 per scene index opened (a level load)
+
+bool SceneWithoutScript() { return !_stricmp(features::SceneLevelOption("script").c_str(), "none"); }
+
+bool IsSceneIndex(const char* name) {
+    const size_t n = name ? strlen(name) : 0;
+    return n > 4 && _stricmp(name + n - 4, ".ENV") == 0;
+}
+
+// Lighting of a mod's scene (research DeniedOps_tools\lighting\LIGHTING.md): an instance gets lights only from the
+// .LGT, HLO records or a copy of its zone's list; with lighting on and an EMPTY list the light-constant upload 0x627DC0
+// builds one directional light of diffuse 0 and ambient 0 (the three fldz at 0x62812B / 0x628133 / 0x62813B) - black.
+// Ported levels (DS1 ...) bake their lighting into vertex colours: for a mod's scene that default becomes ambient
+// (1,1,1) = texture x vertex colour, the source game's own look; shipped scenes keep the game's (every shipped instance
+// has a light, so nothing there changes either way).
+const uint8_t kFldz[] = {0xD9, 0xEE};
+const uint8_t kFld1[] = {0xD9, 0xE8};
+const BytePatch kSceneLight[] = {
+    {DS_PATCH_NAME("empty light list: ambient r = 1"), 0x62812B, kFldz, kFld1, 2, false},
+    {DS_PATCH_NAME("empty light list: ambient g = 1"), 0x628133, kFldz, kFld1, 2, false},
+    {DS_PATCH_NAME("empty light list: ambient b = 1"), 0x62813B, kFldz, kFld1, 2, false},
+};
+
+void SceneLight(bool modScene) {
+    static int state = -1;
+    if (state == static_cast<int>(modScene)) return;
+    state = modScene;
+    if (modScene ? patch::ApplyGroup("SCENE_LIGHT", kSceneLight) : patch::RevertGroup("SCENE_LIGHT", kSceneLight))
+        dslog::Write("Mods: unlit instances %s", modScene ? "take white ambient (a mod's scene)" : "back to the game's black");
+    else
+        dslog::Write("[fail] Mods: light constant code at 0x%08X not recognised", kSceneLight[0].va);
+}
+
+int __cdecl OctreeFlag(int letter) {
+    const char v = reinterpret_cast<char(__cdecl*)(int)>(kFlagValue)(letter);
+    SceneLight(g_sceneFromMod);
+    if (!g_sceneFromMod) return v;
+    dslog::Write("Mods: the scene comes from a mod - its octree is built at load (not the shipped .PC.OCT)");
+    if (SceneWithoutScript() && *reinterpret_cast<void**>(kScriptObject)) {
+        *reinterpret_cast<void**>(kScriptObject) = nullptr;
+        features::ModLog("Mods: %s runs without its mission script (--@script none)", g_sceneName.c_str());
+    }
+    return '2';
+}
+
 int __fastcall Open(uint8_t* stream, void* /*edx*/, const char* name) {
     NoteOpened(name);
     const ModFile* m = Find(name);
+    if (IsSceneIndex(name)) {
+        g_sceneFromMod = m != nullptr;
+        const char* base = name;
+        for (const char* p = name; *p; ++p)
+            if (*p == '\\' || *p == '/') base = p + 1;
+        g_sceneName = Upper(base);
+        ++g_sceneGeneration;
+    }
     if (!m) return g_open(stream, name);
     auto& flags = *reinterpret_cast<uint32_t*>(kFileFlags);
     if (!(flags & 1)) {   // disk mode (never in the shipped game): the game's own fopen of the mod's path
@@ -283,6 +349,9 @@ void Apply() {
     }
     if (!HookEntry(kExists, reinterpret_cast<const void*>(&Exists), g_exists, kExistsEntry, sizeof kExistsEntry))
         features::ModLog("[fail] Mods: exists check at 0x%08X not recognised - files only a mod has may be skipped", kExists);
+    if (!patch::HookCall(kOctreeFlagCall, reinterpret_cast<const void*>(&OctreeFlag), kFlagValue))
+        features::ModLog("[fail] Mods: Level_Init octree check at 0x%08X not recognised - a mod's scene uses the shipped "
+                         ".PC.OCT", kOctreeFlagCall);
     features::ModLog("[ok]   Mods: %zu mod(s), %zu file(s)", g_mods.size(), g_files.size());
 }
 }  // namespace
@@ -306,6 +375,34 @@ void features::ApplyMods() {
     if (g_files.empty()) dslog::Write("Mods: no mods switched on (%s)", g_modsRoot.c_str());
     AfterUnpack(&Apply);
 }
+
+// The full path of the switched-on mods' file with this bare name ("" = no mod has it).
+std::string features::ModFilePath(const char* name) {
+    const ModFile* f = Find(name);
+    return f ? f->path : std::string();
+}
+
+// A "--@<key> <value>" line of the current scene's <scene stem>.level in a mod ("" = none / the scene isn't a mod's).
+std::string features::SceneLevelOption(const char* key) {
+    if (!g_sceneFromMod || g_sceneName.empty()) return {};
+    const std::string level = ModFilePath((g_sceneName.substr(0, g_sceneName.find_last_of('.')) + ".level").c_str());
+    FILE* f = nullptr;
+    if (level.empty() || fopen_s(&f, level.c_str(), "rb") || !f) return {};
+    const std::string tag = std::string("--@") + key;
+    std::string value;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        const char* p = line;
+        while (*p == ' ' || *p == '\t') ++p;
+        if (_strnicmp(p, tag.c_str(), tag.size()) || (p[tag.size()] != ' ' && p[tag.size()] != '\t')) continue;
+        char word[64] = {};
+        if (sscanf_s(p + tag.size(), " %63s", word, static_cast<unsigned>(sizeof word)) == 1) value = word;
+    }
+    fclose(f);
+    return value;
+}
+
+uint32_t features::SceneGeneration() { return g_sceneGeneration; }
 
 std::vector<features::ModFolder> features::ModList() {
     std::vector<ModFolder> out;

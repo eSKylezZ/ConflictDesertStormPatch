@@ -20,8 +20,16 @@
 // Texts: the catalog lookup 0x5EFD20 thiscall(catalog, key hash) -> wchar_t* (text controls look their key up when
 // drawn) answers our keys. Names hash with the archive LFSR over the lower-cased name (SCR_GAME_MENU = 0xF23EA323).
 // Code patches wait for SteamStub's hand-over (unpack.cpp).
+//
+// CUSTOM CAMPAIGNS (2026-10-30, campaigns.cpp) is built the same way (ListScreen): SCR_DSFIX_CAMPAIGNS with 8 rows
+// and DSFIX_BN_CAMPAIGNS after MODS (only while a Mods folder has a campaign.txt). The screen shows campaigns.cpp's
+// current list (campaigns, a campaign's chapters, the missions) in an 8-row window: rows past the list are hidden, the
+// window scrolls when Up / Down moves the game's focus onto its edge row while the list goes on (followed from the
+// row texts' lookups, asked every frame). Its Cancel is a Notify to the screen (not Back), so Back can step up a list
+// before it leaves for SCR_GAME_MENU.
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -58,7 +66,7 @@ constexpr uint32_t kScreenChildren = 0x28, kCtrlChildren = 0x48, kPosY = 0x2C;
 constexpr uint32_t kVisible = 0x8000;
 constexpr int kEvUp = 2, kEvDown = 3, kEvAction = 4, kEvCancel = 5;
 constexpr int kActSelectScreen = 0, kActNotify = 2, kActNext = 4, kActPrev = 5, kActBack = 7;
-constexpr int kMsgNotify = 4, kMsgOpened = 0x15, kMsgLoaded = 0x1E;
+constexpr int kMsgNotify = 4, kMsgCancel = 5, kMsgOpened = 0x15, kMsgLoaded = 0x1E;
 constexpr int kMaxRows = 8;
 constexpr uint32_t kGameMenuHash = 0xF23EA323;
 
@@ -87,6 +95,28 @@ void*& Ptr(void* p, uint32_t off) { return *reinterpret_cast<void**>(U8(p, off))
 float& F32(void* p, uint32_t off) { return *reinterpret_cast<float*>(U8(p, off)); }
 void* Alloc(uint32_t size) { return reinterpret_cast<void*(__cdecl*)(uint32_t, uint32_t)>(kAlloc)(size, 4); }
 
+// One list screen built from SCR_GAME_MENU (MODS, CUSTOM CAMPAIGNS): kMaxRows row buttons, their controls / text keys,
+// its own copy of the base screen vtable and SCR_GAME_MENU's companion screens.
+struct ListScreen {
+    const char* name;        // screen name ("SCR_DSFIX_MODS")
+    const char* rowPrefix;   // row controls "<prefix>_<n>", texts "<prefix>TXT_<n>"
+    const char* button;      // main menu button name
+    const char* buttonKey;   // its text key
+    const char* titleKey;    // the screen's title key
+    uint32_t hScreen = 0, hTitle = 0, hButton = 0, hButtonText = 0;
+    uint32_t rowCtrl[kMaxRows] = {}, rowText[kMaxRows] = {};
+    void* rowObj[kMaxRows] = {};
+    int rowCount = 0;
+    void* vtable[kVtableSlots] = {};
+    void* screen = nullptr;
+    void* menu = nullptr;
+    void* companions[2][8] = {};
+    bool companionsDone = false;
+};
+ListScreen g_mods = {"SCR_DSFIX_MODS", "DSFIX_MOD", "DSFIX_BN_MODS", "DSFIX_MODS", "DSFIX_MODS_TITLE"};
+ListScreen g_camp = {"SCR_DSFIX_CAMPAIGNS", "DSFIX_CAMP", "DSFIX_BN_CAMPAIGNS", "DSFIX_CAMPAIGNS", "DSFIX_CAMPAIGNS_TITLE"};
+
+// ---- MODS: one row per Mods folder, MORE MODS paging ----
 struct Row {
     std::string folder;
     std::wstring text;
@@ -94,18 +124,17 @@ struct Row {
 };
 std::vector<Row> g_rows;
 bool g_noMods = false;
-uint32_t g_hMods = 0, g_hTitle = 0, g_hScreen = 0, g_hButton = 0;
-uint32_t g_rowCtrl[kMaxRows] = {}, g_rowText[kMaxRows] = {};
-void* g_rowObj[kMaxRows] = {};
-int g_rowCount = 0, g_perPage = 0, g_page = 0;
+int g_perPage = 0, g_page = 0;
 std::wstring g_moreText;
-void* g_vtable[kVtableSlots] = {};
-void* g_modsScreen = nullptr;
-void* g_modsMenu = nullptr;
-void* g_companions[2][8] = {};
-bool g_companionsDone = false;
 const wchar_t kModsText[] = L"MODS";
 const wchar_t kNoModsText[] = L"NO MODS IN THE MODS FOLDER";
+
+// ---- CUSTOM CAMPAIGNS: the current list of campaigns.cpp in an 8-row window that scrolls at its edges ----
+std::vector<features::CampaignRow> g_campRows;
+std::wstring g_campTitle;
+int g_campTop = 0;         // first list row in the window
+int g_campFocus = -1;      // window row focused when last looked at
+const wchar_t kCampaignsText[] = L"CUSTOM CAMPAIGNS";
 
 void RefreshRows() {
     g_rows.clear();
@@ -120,19 +149,20 @@ void RefreshRows() {
 }
 
 int Pages() { return g_perPage ? (static_cast<int>(g_rows.size()) + g_perPage - 1) / g_perPage : 1; }
-bool HasMoreRow() { return g_rowCount == kMaxRows && static_cast<int>(g_rows.size()) > kMaxRows; }
+bool HasMoreRow() { return g_mods.rowCount == kMaxRows && static_cast<int>(g_rows.size()) > kMaxRows; }
 int ModOfRow(int i) {   // row -> index into g_rows, or -1 (the MORE MODS row / an empty row on the last page)
     if (HasMoreRow() && i == kMaxRows - 1) return -1;
     int m = g_page * g_perPage + i;
     return m < static_cast<int>(g_rows.size()) ? m : -1;
 }
+void ShowRow(void* row, bool shown) {
+    if (!row) return;
+    if (shown) U32(row, 0x20) |= kVisible;
+    else U32(row, 0x20) &= ~kVisible;
+}
 void ShowPage() {
-    for (int i = 0; i < g_rowCount; ++i) {
-        if (!g_rowObj[i]) continue;
-        bool shown = g_noMods || ModOfRow(i) >= 0 || (HasMoreRow() && i == kMaxRows - 1);
-        if (shown) U32(g_rowObj[i], 0x20) |= kVisible;
-        else U32(g_rowObj[i], 0x20) &= ~kVisible;
-    }
+    for (int i = 0; i < g_mods.rowCount; ++i)
+        ShowRow(g_mods.rowObj[i], g_noMods || ModOfRow(i) >= 0 || (HasMoreRow() && i == kMaxRows - 1));
     wchar_t t[64];
     swprintf_s(t, L"MORE MODS - PAGE %d OF %d", g_page + 1, Pages());
     g_moreText = t;
@@ -140,6 +170,62 @@ void ShowPage() {
 
 void* FindChild(void* container, uint32_t hash) {
     return reinterpret_cast<void*(__fastcall*)(void*, void*, uint32_t)>(kFindChild)(container, nullptr, hash);
+}
+void SetFocus(ListScreen& s, int row) {   // the container's focus setter un-focuses the old row and highlights this one
+    if (!s.menu || row < 0 || row >= s.rowCount || !s.rowObj[row]) return;
+    reinterpret_cast<void(__fastcall*)(void*, void*, void*)>(kSetFocus)(U8(s.menu, kCtrlChildren), nullptr, s.rowObj[row]);
+}
+int FocusedRow(const ListScreen& s) {
+    if (!s.menu) return -1;
+    void* f = Ptr(U8(s.menu, kCtrlChildren), 0x10);
+    for (int i = 0; i < s.rowCount; ++i)
+        if (f && f == s.rowObj[i]) return i;
+    return -1;
+}
+
+// Campaign rows into the window: rows past the list hidden; `focusRow` = the list row to focus (-1 = keep).
+int CampWindow() { return std::min(static_cast<int>(g_campRows.size()), g_camp.rowCount); }
+void CampShow(int focusRow) {
+    const int n = static_cast<int>(g_campRows.size()), win = CampWindow();
+    if (focusRow >= 0) {
+        // the focused row sits one row in from the window's edges where the list goes on (scrolling look-ahead)
+        if (focusRow < g_campTop + 1) g_campTop = focusRow - 1;
+        if (focusRow > g_campTop + win - 2) g_campTop = focusRow - win + 2;
+    }
+    g_campTop = std::clamp(g_campTop, 0, std::max(0, n - win));
+    for (int i = 0; i < g_camp.rowCount; ++i) ShowRow(g_camp.rowObj[i], i < win || (n == 0 && i == 0));
+    if (focusRow >= 0 && win > 0) {
+        g_campFocus = std::clamp(focusRow - g_campTop, 0, win - 1);
+        SetFocus(g_camp, g_campFocus);
+    }
+}
+void CampRefresh() {
+    int start = 0;
+    g_campRows = features::CampaignRows(&start);
+    g_campTitle = features::CampaignTitle();
+    g_campTop = 0;
+    CampShow(start);
+    dslog::Write("Campaign screen: %d row(s), starts on row %d", static_cast<int>(g_campRows.size()), start);
+}
+// Up / Down move the game's own focus (the menu's previous / next); a move onto the window's edge row scrolls the
+// window instead when the list goes on, and a wrap from one end to the other jumps the window with it.
+void CampFollowFocus() {
+    const int n = static_cast<int>(g_campRows.size()), win = CampWindow();
+    const int f = FocusedRow(g_camp);
+    if (f < 0 || f == g_campFocus || win < 2) return;
+    const int prev = g_campFocus;
+    g_campFocus = f;
+    dslog::Write("Campaign screen: focus on window row %d (window from list row %d)", f, g_campTop);
+    if (prev == win - 1 && f == 0 && g_campTop + win >= n) {   // wrapped from the last row to the first
+        g_campTop = 0;
+        return;
+    }
+    if (prev == 0 && f == win - 1 && g_campTop == 0 && n > win) {   // wrapped from the first row to the last
+        g_campTop = n - win;
+        return;
+    }
+    if (f == win - 1 && g_campTop + win < n) CampShow(g_campTop + f);
+    else if (f == 0 && g_campTop > 0) CampShow(g_campTop + f);
 }
 
 // Pointer arrays {+4 array, +8 count byte, +0xA capacity byte} (child containers, control event tables) grown to hold
@@ -157,12 +243,13 @@ void Reserve(void* table, int extra) {
     *U8(table, 0xA) = static_cast<uint8_t>(ncap);
 }
 
-void AddEvent(void* ctrl, int event, int action, uint32_t target) {
+void* AddEvent(void* ctrl, int event, int action, uint32_t target) {
     Reserve(ctrl, 1);   // the control's own event table: +4 array, +8 count, +0xA capacity
     void* e = reinterpret_cast<void*(__fastcall*)(void*, void*, int)>(kAddEvent)(ctrl, nullptr, event);
     U32(e, 4) = static_cast<uint32_t>(action);
     U32(e, 8) = target;
     *U8(e, 0x10) = static_cast<uint8_t>(event <= 3 ? 4 : 1);   // what the event table loader 0x70EB80 gives these
+    return e;
 }
 
 // Every dword equal to `from` in the control's subtree becomes `to` (a button's text key sits in its text control
@@ -219,9 +306,9 @@ void* FindScreen(void* mgr, uint32_t hash) {
 
 // Companion screens {+0 array, +4 count byte, +6 capacity byte}: +0x54 drawn in front (SCR_NAVIGATION_OVERLAY - title
 // bar / button prompts - and the blue panels), +0x5C behind (the menu backgrounds). The game classes' constructors fill
-// them; a plain GUI screen has none, so the MODS screen shows SCR_GAME_MENU's.
-void CopyCompanions() {
-    if (g_companionsDone || !g_modsScreen) return;
+// them; a plain GUI screen has none, so the list screens show SCR_GAME_MENU's.
+void CopyCompanions(ListScreen& s) {
+    if (s.companionsDone || !s.screen) return;
     void* gui = *reinterpret_cast<void**>(0xBD0C40);
     if (!gui) return;
     void* menu = FindScreen(Ptr(gui, 0x24), kGameMenuHash);
@@ -230,29 +317,35 @@ void CopyCompanions() {
         uint32_t off = l ? 0x5C : 0x54;
         uint8_t c = *U8(menu, off + 4);
         if (c > 8) c = 8;
-        memcpy(g_companions[l], Ptr(menu, off), c * sizeof(void*));
-        Ptr(g_modsScreen, off) = g_companions[l];
-        *U8(g_modsScreen, off + 4) = c;
-        *U8(g_modsScreen, off + 6) = c;
+        memcpy(s.companions[l], Ptr(menu, off), c * sizeof(void*));
+        Ptr(s.screen, off) = s.companions[l];
+        *U8(s.screen, off + 4) = c;
+        *U8(s.screen, off + 6) = c;
     }
-    g_companionsDone = true;
-    dslog::Write("Mods menu: MODS screen shows SCR_GAME_MENU's companion screens (%u in front, %u behind)",
-                 *U8(g_modsScreen, 0x58), *U8(g_modsScreen, 0x60));
+    s.companionsDone = true;
+    dslog::Write("Mods menu: %s shows SCR_GAME_MENU's companion screens (%u in front, %u behind)", s.name,
+                 *U8(s.screen, 0x58), *U8(s.screen, 0x60));
+}
+void CopyAllCompanions() {
+    CopyCompanions(g_mods);
+    CopyCompanions(g_camp);
 }
 
-int __fastcall ScreenMessage(void* screen, void*, int msg, void* param) {
-    CopyCompanions();
-    if ((msg == kMsgOpened || msg == kMsgLoaded) && g_modsMenu) {
+int BaseMessage(void* screen, int msg, void* param) {
+    return reinterpret_cast<MessageFn>(reinterpret_cast<void**>(kScreenVtable)[0xC / 4])(screen, nullptr, msg, param);
+}
+
+int __fastcall ModsMessage(void* screen, void*, int msg, void* param) {
+    CopyAllCompanions();
+    if ((msg == kMsgOpened || msg == kMsgLoaded) && g_mods.menu) {
         RefreshRows();
         ShowPage();
-        if (g_rowCount && g_rowObj[0])   // the container's focus setter un-focuses the old row and highlights this one
-            reinterpret_cast<void(__fastcall*)(void*, void*, void*)>(kSetFocus)(U8(g_modsMenu, kCtrlChildren), nullptr,
-                                                                                g_rowObj[0]);
+        SetFocus(g_mods, 0);
     }
     if (msg == kMsgNotify && param) {
         uint32_t h = U32(param, 0x14);
-        for (int i = 0; i < g_rowCount; ++i) {
-            if (h != g_rowCtrl[i]) continue;
+        for (int i = 0; i < g_mods.rowCount; ++i) {
+            if (h != g_mods.rowCtrl[i]) continue;
             if (g_noMods) return 1;
             if (HasMoreRow() && i == kMaxRows - 1) {
                 g_page = (g_page + 1) % Pages();
@@ -270,70 +363,113 @@ int __fastcall ScreenMessage(void* screen, void*, int msg, void* param) {
             return 1;
         }
     }
-    return reinterpret_cast<MessageFn>(reinterpret_cast<void**>(kScreenVtable)[0xC / 4])(screen, nullptr, msg, param);
+    return BaseMessage(screen, msg, param);
+}
+
+// Cancel (Esc / pad Back) reaches the screen's Message as message 5 before the screen's Cancel event (Back to
+// SCR_GAME_MENU) runs; answering it (1) in a chapter or mission list steps up a list and keeps the screen. (A Notify
+// from a Cancel event never reaches the Message, and a Back to the screen itself ends the game.)
+int __fastcall CampaignsMessage(void* screen, void*, int msg, void* param) {
+    CopyAllCompanions();
+    if (msg == kMsgOpened && g_camp.menu) {
+        features::CampaignsOpened();
+        CampRefresh();
+    } else if (msg == kMsgLoaded && g_camp.menu) {
+        CampRefresh();
+    } else if (msg == kMsgCancel && g_camp.menu && features::CampaignBack()) {
+        dslog::Write("Campaign screen: Back - up a list");
+        CampRefresh();
+        return 1;
+    }
+    if (msg == kMsgNotify && param) {
+        const uint32_t h = U32(param, 0x14);
+        for (int i = 0; i < g_camp.rowCount; ++i) {
+            if (h != g_camp.rowCtrl[i]) continue;
+            CampFollowFocus();
+            const int row = g_campTop + i;
+            if (row >= static_cast<int>(g_campRows.size()) || g_campRows[row].locked) return 1;
+            dslog::Write("Campaign screen: row %d picked", row);
+            features::CampaignPick(row);   // a list change, or a mission start (the flow takes the front end over)
+            if (*reinterpret_cast<uint32_t*>(0xA29290 + 0x1097B4) == 0) CampRefresh();
+            return 1;
+        }
+    }
+    return BaseMessage(screen, msg, param);
 }
 
 const wchar_t* __fastcall Lookup(void* catalog, void* edx, uint32_t hash) {
-    if (hash && (hash == g_hMods || hash == g_hTitle)) {
-        CopyCompanions();
-        return kModsText;
+    if (hash) {
+        if (hash == g_mods.hButtonText || hash == g_mods.hTitle) {
+            CopyAllCompanions();
+            return kModsText;
+        }
+        if (hash == g_camp.hButtonText) return kCampaignsText;
+        if (hash == g_camp.hTitle) return g_campTitle.empty() ? kCampaignsText : g_campTitle.c_str();
     }
-    for (int i = 0; i < g_rowCount; ++i) {
-        if (!g_rowText[i] || hash != g_rowText[i]) continue;
+    for (int i = 0; i < g_mods.rowCount; ++i) {
+        if (!g_mods.rowText[i] || hash != g_mods.rowText[i]) continue;
         if (g_noMods) return kNoModsText;
         if (HasMoreRow() && i == kMaxRows - 1) return g_moreText.c_str();
         int m = ModOfRow(i);
         return m >= 0 ? g_rows[m].text.c_str() : L"";
     }
+    for (int i = 0; i < g_camp.rowCount; ++i) {
+        if (!g_camp.rowText[i] || hash != g_camp.rowText[i]) continue;
+        if (i == 0) CampFollowFocus();   // asked every frame the screen is drawn: follow Up / Down there
+        const int row = g_campTop + i;
+        if (g_campRows.empty() && i == 0) return L"NO CUSTOM CAMPAIGNS";
+        return row < static_cast<int>(g_campRows.size()) ? g_campRows[row].text.c_str() : L"";
+    }
     return g_nextLookup(catalog, edx, hash);
 }
 
-void AddModsScreen(void* mgr, const std::vector<uint8_t>& d, void* ver) {
+// A copy of SCR_GAME_MENU as screen `s`: its menu emptied and filled with kMaxRows (MODS: as many as needed) copies of
+// BN_OPTIONS that notify the screen, Up / Down = previous / next; Cancel = Back to SCR_GAME_MENU.
+bool AddListScreen(ListScreen& s, void* mgr, const std::vector<uint8_t>& d, void* ver, int rows, MessageFn message) {
     long screenAt = FindRecord(d, "SCR_GAME_MENU", true), nextScreen = FindRecord(d, "TEST", true);
     long options = FindRecord(d, "BN_OPTIONS", false), download = FindRecord(d, "BN_DOWNLOAD_CONTENT", false);
     if (screenAt < 0 || nextScreen <= screenAt || options < 0 || download <= options) {
-        dslog::Write("[fail] Mods menu: screen records not found in Main.gsc - no MODS screen");
-        return;
+        dslog::Write("[fail] Mods menu: screen records not found in Main.gsc - no %s", s.name);
+        return false;
     }
     if (*U8(mgr, 0x11C) >= *U8(mgr, 0x11E)) {
-        dslog::Write("[fail] Mods menu: the screen list is full - no MODS screen");
-        return;
+        dslog::Write("[fail] Mods menu: the screen list is full - no %s", s.name);
+        return false;
     }
     // The screen record after its name hash: [len][name]... - renamed for the copy.
-    const char* name = "SCR_DSFIX_MODS";
     uint32_t oldLen = *reinterpret_cast<const uint32_t*>(d.data() + screenAt + 4);
-    std::vector<uint8_t> rec(4 + strlen(name));
-    U32(rec.data(), 0) = static_cast<uint32_t>(strlen(name));
-    memcpy(rec.data() + 4, name, strlen(name));
+    std::vector<uint8_t> rec(4 + strlen(s.name));
+    U32(rec.data(), 0) = static_cast<uint32_t>(strlen(s.name));
+    memcpy(rec.data() + 4, s.name, strlen(s.name));
     rec.insert(rec.end(), d.begin() + screenAt + 8 + oldLen, d.begin() + nextScreen);
 
     void* screen = Alloc(kScreenSize);
     if (!screen) {
-        dslog::Write("[fail] Mods menu: out of GUI memory - no MODS screen");
-        return;
+        dslog::Write("[fail] Mods menu: out of GUI memory - no %s", s.name);
+        return false;
     }
     memset(screen, 0, kScreenSize);
     reinterpret_cast<void*(__fastcall*)(void*, void*, int)>(kScreenCtor)(screen, nullptr, 0);
-    memcpy(g_vtable, reinterpret_cast<void*>(kScreenVtable), sizeof g_vtable);
-    g_vtable[0xC / 4] = reinterpret_cast<void*>(&ScreenMessage);
-    for (int slot : {15, 16, 19}) g_vtable[slot] = reinterpret_cast<void**>(kGameMenuVtable)[slot];
-    Ptr(screen, 0) = g_vtable;
+    memcpy(s.vtable, reinterpret_cast<void*>(kScreenVtable), sizeof s.vtable);
+    s.vtable[0xC / 4] = reinterpret_cast<void*>(message);
+    for (int slot : {15, 16, 19}) s.vtable[slot] = reinterpret_cast<void**>(kGameMenuVtable)[slot];
+    Ptr(screen, 0) = s.vtable;
     uint8_t* pos = rec.data();
     using LoadFn = void(__fastcall*)(void*, void*, uint8_t**, void*);
     reinterpret_cast<LoadFn>(reinterpret_cast<void**>(kScreenVtable)[0x54 / 4])(screen, nullptr, &pos, ver);
     if (pos != rec.data() + rec.size()) {
-        dslog::Write("[fail] Mods menu: screen record parsed to %d of %u bytes - no MODS screen",
-                     static_cast<int>(pos - rec.data()), static_cast<unsigned>(rec.size()));
-        return;   // the half-built object is left unreferenced
+        dslog::Write("[fail] Mods menu: screen record parsed to %d of %u bytes - no %s", static_cast<int>(pos - rec.data()),
+                     static_cast<unsigned>(rec.size()), s.name);
+        return false;   // the half-built object is left unreferenced
     }
-    U32(screen, 0x14) = g_hScreen;
+    U32(screen, 0x14) = s.hScreen;
     void* menu = FindChild(U8(screen, kScreenChildren), Hash("MENU_MAIN_SCREEN"));
     void* title = FindChild(U8(screen, kScreenChildren), Hash("CTRL_TITLE_BAR_TEXT19"));
     if (!menu) {
-        dslog::Write("[fail] Mods menu: the copied screen has no menu - no MODS screen");
-        return;
+        dslog::Write("[fail] Mods menu: the copied screen has no menu - no %s", s.name);
+        return false;
     }
-    if (title) U32(title, 0x50) = g_hTitle;
+    if (title) U32(title, 0x50) = s.hTitle;
     void* list = U8(menu, kCtrlChildren);
     // Rows stack from the menu's top button down, one main-menu step apart.
     float top = 0, step = 0;
@@ -354,57 +490,70 @@ void AddModsScreen(void* mgr, const std::vector<uint8_t>& d, void* ver) {
         }
     }
     *U8(list, 8) = 0;   // the main menu's own buttons go; the rows take their place
-    g_noMods = g_rows.empty();
-    int rows = g_noMods ? 1 : static_cast<int>(g_rows.size());
-    if (rows > kMaxRows) rows = kMaxRows;
-    g_rowCount = rows;
-    g_perPage = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows - 1 : kMaxRows;
-    g_page = 0;
+    s.rowCount = rows;
     if (!ParseChildren(list, d.data() + options, static_cast<size_t>(download - options), rows, ver)) {
-        g_rowCount = 0;
-        return;
+        s.rowCount = 0;
+        return false;
     }
     void** items = static_cast<void**>(Ptr(list, 4));
     const uint32_t optionsKey = Hash("Options");
     for (int i = 0; i < rows; ++i) {
-        char key[32];
-        sprintf_s(key, "DSFIX_MOD_%d", i);
-        g_rowCtrl[i] = Hash(key);
-        sprintf_s(key, "DSFIX_MODTXT_%d", i);
-        g_rowText[i] = Hash(key);
-        g_rowObj[i] = items[i];
-        U32(items[i], 0x14) = g_rowCtrl[i];
+        char key[48];
+        sprintf_s(key, "%s_%d", s.rowPrefix, i);
+        s.rowCtrl[i] = Hash(key);
+        sprintf_s(key, "%sTXT_%d", s.rowPrefix, i);
+        s.rowText[i] = Hash(key);
+        s.rowObj[i] = items[i];
+        U32(items[i], 0x14) = s.rowCtrl[i];
         U32(items[i], 0x20) |= kVisible;
         F32(items[i], kPosY) = top + step * static_cast<float>(i);
-        ReplaceKey(items[i], optionsKey, g_rowText[i]);
+        ReplaceKey(items[i], optionsKey, s.rowText[i]);
         AddEvent(items[i], kEvAction, kActNotify, 0);
     }
-    Ptr(list, 0x10) = nullptr;   // the copy's focus pointed at the main menu's buttons; set on open (ScreenMessage)
-    g_modsMenu = menu;
-    ShowPage();
+    Ptr(list, 0x10) = nullptr;   // the copy's focus pointed at the main menu's buttons; set on open (the message handler)
+    s.menu = menu;
     AddEvent(menu, kEvUp, kActPrev, 0);
     AddEvent(menu, kEvDown, kActNext, 0);
     AddEvent(screen, kEvCancel, kActBack, kGameMenuHash);
     uint8_t n = *U8(mgr, 0x11C);
     static_cast<void**>(Ptr(mgr, 0x118))[n] = screen;
     *U8(mgr, 0x11C) = static_cast<uint8_t>(n + 1);
-    g_modsScreen = screen;
-    g_companionsDone = false;
-    CopyCompanions();
-    dslog::Write("Mods menu: MODS screen added (%d row(s), %d mod(s), %d page(s), top %.0f step %.0f)", rows,
-                 static_cast<int>(g_rows.size()), Pages(), top, step);
+    s.screen = screen;
+    s.companionsDone = false;
+    CopyCompanions(s);
+    dslog::Write("Mods menu: %s added (%d row(s), top %.0f step %.0f)", s.name, rows, top, step);
+    return true;
 }
 
-void AddMainMenuItem(void* mgr, const std::vector<uint8_t>& d, void* ver) {
+void AddModsScreen(void* mgr, const std::vector<uint8_t>& d, void* ver) {
+    g_noMods = g_rows.empty();
+    int rows = g_noMods ? 1 : static_cast<int>(g_rows.size());
+    if (rows > kMaxRows) rows = kMaxRows;
+    g_perPage = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows - 1 : kMaxRows;
+    g_page = 0;
+    if (!AddListScreen(g_mods, mgr, d, ver, rows, &ModsMessage)) return;
+    ShowPage();
+    dslog::Write("Mods menu: MODS screen - %d mod(s), %d page(s)", static_cast<int>(g_rows.size()), Pages());
+}
+
+void AddCampaignsScreen(void* mgr, const std::vector<uint8_t>& d, void* ver) {
+    if (!AddListScreen(g_camp, mgr, d, ver, kMaxRows, &CampaignsMessage)) return;
+    features::CampaignsOpened();
+    CampRefresh();
+}
+
+// A copy of the main menu's hidden BN_CHEATS button, visible, text `s.buttonKey`, Action -> Select Screen `s`, put
+// right after the button `after` (list order = layout and Up / Down order; the buttons below move down a step).
+void AddMainMenuItem(ListScreen& s, void* mgr, const std::vector<uint8_t>& d, void* ver, uint32_t after) {
     long cheats = FindRecord(d, "BN_CHEATS", false), signin = FindRecord(d, "BN_SIGNIN_OUT", false);
     if (cheats < 0 || signin <= cheats) {
-        dslog::Write("[fail] Mods menu: main menu records not found in Main.gsc - no MODS item");
+        dslog::Write("[fail] Mods menu: main menu records not found in Main.gsc - no %s item", s.buttonKey);
         return;
     }
     void* screen = FindScreen(mgr, kGameMenuHash);
     void* menu = screen ? FindChild(U8(screen, kScreenChildren), Hash("MENU_MAIN_SCREEN")) : nullptr;
     if (!menu) {
-        dslog::Write("[fail] Mods menu: SCR_GAME_MENU / MENU_MAIN_SCREEN not loaded - no MODS item");
+        dslog::Write("[fail] Mods menu: SCR_GAME_MENU / MENU_MAIN_SCREEN not loaded - no %s item", s.buttonKey);
         return;
     }
     void* list = U8(menu, kCtrlChildren);
@@ -412,19 +561,19 @@ void AddMainMenuItem(void* mgr, const std::vector<uint8_t>& d, void* ver) {
     void** items = static_cast<void**>(Ptr(list, 4));
     uint8_t count = *U8(list, 8);
     void* item = items[count - 1];
-    U32(item, 0x14) = g_hButton;
+    U32(item, 0x14) = s.hButton;
     U32(item, 0x20) |= kVisible;   // BN_CHEATS is the main menu's hidden button
-    ReplaceKey(item, Hash("CHEATS"), g_hMods);
-    AddEvent(item, kEvAction, kActSelectScreen, g_hScreen);
+    ReplaceKey(item, Hash("CHEATS"), s.hButtonText);
+    AddEvent(item, kEvAction, kActSelectScreen, s.hScreen);
     int at = -1;
     for (int i = 0; i + 1 < count; ++i)
-        if (items[i] && U32(items[i], 0x14) == Hash("BN_OPTIONS")) at = i;
+        if (items[i] && U32(items[i], 0x14) == after) at = i;
     if (at < 0) {
-        dslog::Write("[fail] Mods menu: BN_OPTIONS not in the main menu - MODS left out");
+        dslog::Write("[fail] Mods menu: the button before %s not in the main menu - left out", s.buttonKey);
         U32(item, 0x20) &= ~kVisible;
         return;
     }
-    // Rows are laid out from the y fields: MODS takes the step below OPTIONS, the buttons below it move down a step.
+    // Rows are laid out from the y fields: the new item takes the step below `after`, the buttons below it move down.
     float y0 = F32(items[at], kPosY), step = 0;
     for (int i = 0; i + 1 < count; ++i) {
         if (!items[i] || i == at || !(U32(items[i], 0x20) & kVisible)) continue;
@@ -437,7 +586,7 @@ void AddMainMenuItem(void* mgr, const std::vector<uint8_t>& d, void* ver) {
     F32(item, kPosY) = y0 + step;
     memmove(&items[at + 2], &items[at + 1], (count - 2 - at) * sizeof(void*));   // list order = Up / Down order
     items[at + 1] = item;
-    dslog::Write("Mods menu: MODS item added to the main menu (after OPTIONS, step %.0f)", step);
+    dslog::Write("Mods menu: %s item added to the main menu (step %.0f)", s.buttonKey, step);
 }
 
 // The GUI allocator is a CLinearBuffer (0x634F70: bump pointer, no free list, "Out of heap space" box + 0 when full).
@@ -475,11 +624,13 @@ private:
     uint32_t saved_[3] = {};
 };
 
+bool g_withMods = false, g_withCampaigns = false;
+
 int __fastcall LoadScreenFile(void* mgr, void* edx, const char* name, int platforms, void* ver) {
     int r = g_nextLoad(mgr, edx, name, platforms, ver);
-    CopyCompanions();
+    CopyAllCompanions();
     if (!name || _stricmp(name, "Main.gsc") || !ver) return r;
-    if (FindScreen(mgr, g_hScreen)) return r;   // the front end loaded again: still there
+    if (FindScreen(mgr, g_withMods ? g_mods.hScreen : g_camp.hScreen)) return r;   // the front end loaded again
     // The loader reads "<ver +0x5C><name>".
     char path[MAX_PATH];
     sprintf_s(path, "%s%s", reinterpret_cast<const char*>(U8(ver, 0x5C)), name);
@@ -487,7 +638,7 @@ int __fastcall LoadScreenFile(void* mgr, void* edx, const char* name, int platfo
     uint32_t size = 0;
     using LoadFileFn = int(__cdecl*)(const char*, void**, uint32_t*, int, int);
     if (!reinterpret_cast<LoadFileFn>(kLoadFile)(path, &raw, &size, 0, 0x14) || !raw || size < 8) {
-        dslog::Write("[fail] Mods menu: %s could not be read again - no MODS menu", path);
+        dslog::Write("[fail] Mods menu: %s could not be read again - no MODS / CUSTOM CAMPAIGNS menu", path);
         return r;
     }
     std::vector<uint8_t> d(static_cast<uint8_t*>(raw), static_cast<uint8_t*>(raw) + size);
@@ -496,13 +647,26 @@ int __fastcall LoadScreenFile(void* mgr, void* edx, const char* name, int platfo
     uint16_t saved = version;
     version = *reinterpret_cast<uint16_t*>(d.data());
     RefreshRows();
+    const bool campaigns = g_withCampaigns && features::CampaignsAvailable();
     {
         ArenaSwap arena;
         if (!arena.ok()) {
-            dslog::Write("[fail] Mods menu: GUI memory not found - no MODS menu");
+            dslog::Write("[fail] Mods menu: GUI memory not found - no MODS / CUSTOM CAMPAIGNS menu");
         } else {
-            AddModsScreen(mgr, d, ver);
-            if (g_modsScreen) AddMainMenuItem(mgr, d, ver);
+            uint32_t after = Hash("BN_OPTIONS");
+            if (g_withMods) {
+                AddModsScreen(mgr, d, ver);
+                if (g_mods.screen) {
+                    AddMainMenuItem(g_mods, mgr, d, ver, after);
+                    after = g_mods.hButton;
+                }
+            }
+            if (campaigns) {
+                AddCampaignsScreen(mgr, d, ver);
+                if (g_camp.screen) AddMainMenuItem(g_camp, mgr, d, ver, after);
+            } else if (g_withCampaigns) {
+                dslog::Write("Campaign screen: no custom campaigns in the Mods folder - no CUSTOM CAMPAIGNS item");
+            }
         }
     }
     version = saved;
@@ -514,22 +678,31 @@ void Apply() {
                              kLookupEntry, sizeof kLookupEntry) ||
         !patch::HookFunction(kLoadScreenFile, reinterpret_cast<void*>(&LoadScreenFile),
                              reinterpret_cast<void**>(&g_nextLoad), kLoadScreenFileEntry, sizeof kLoadScreenFileEntry)) {
-        dslog::Write("[fail] Mods menu: unexpected game code - no MODS menu");
+        dslog::Write("[fail] Mods menu: unexpected game code - no MODS / CUSTOM CAMPAIGNS menu");
         return;
     }
-    dslog::Write("[ok]   Mods menu: front-end hooks installed");
+    dslog::Write("[ok]   Mods menu: front-end hooks installed (MODS %s, CUSTOM CAMPAIGNS %s)", g_withMods ? "on" : "off",
+                 g_withCampaigns ? "on" : "off");
+}
+
+void Names(ListScreen& s) {
+    s.hScreen = Hash(s.name);
+    s.hTitle = Hash(s.titleKey);
+    s.hButton = Hash(s.button);
+    s.hButtonText = Hash(s.buttonKey);
 }
 }  // namespace
 
+// MODS (FeatModsMenu) and CUSTOM CAMPAIGNS (FeatCampaigns) share the front-end hooks: installed when either is on.
 void features::ApplyModsMenu() {
-    if (!Get().mods || !Get().modsMenu) {
-        dslog::Write("[off]  Mods menu: off (FeatMods / FeatModsMenu)");
+    g_withMods = Get().mods && Get().modsMenu;
+    g_withCampaigns = Get().mods && Get().campaigns;
+    if (!g_withMods && !g_withCampaigns) {
+        dslog::Write("[off]  Mods menu: off (FeatMods / FeatModsMenu / FeatCampaigns)");
         return;
     }
-    g_hMods = Hash("DSFIX_MODS");
-    g_hTitle = Hash("DSFIX_MODS_TITLE");
-    g_hScreen = Hash("SCR_DSFIX_MODS");
-    g_hButton = Hash("DSFIX_BN_MODS");
+    Names(g_mods);
+    Names(g_camp);
     if (Hash("SCR_GAME_MENU") != kGameMenuHash) {
         dslog::Write("[fail] Mods menu: name hash self-check failed");
         return;

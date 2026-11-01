@@ -8,7 +8,7 @@
 //     internal plugin "deniedopsfix.<feature>";
 //   - the exe is SteamStub-wrapped: code patches wait until the stub has decrypted .text (features/unpack.cpp);
 //   - settings: pse.settings of "deniedopsfix" (HKCU\Software\PSE\deniedops\Plugins\deniedopsfix) - FeatWidescreen,
-//     FeatMods, FeatModsMenu; no in-game menu for them yet.
+//     FeatMods, FeatModsMenu, FeatCampaigns, FeatThirdPerson; no in-game menu for them yet.
 #include <windows.h>
 
 #include <deque>
@@ -38,7 +38,12 @@ struct Feature {
 const Feature kFeatures[] = {
     {"deniedopsfix.widescreen", "Widescreen display modes", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyWidescreen},
     {"deniedopsfix.mods", "Mods folder", PSE_PLUGIN_SIMULATION, &features::ApplyMods},
+    {"deniedopsfix.campaigns", "Custom campaigns", PSE_PLUGIN_SIMULATION, &features::ApplyCampaigns},
     {"deniedopsfix.modsmenu", "MODS menu", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyModsMenu},
+    {"deniedopsfix.loadingscreen", "Loading-screen texts from mods", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyLoadingScreen},
+    {"deniedopsfix.thirdperson", "Third-person camera", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyThirdPerson},
+    {"deniedopsfix.luamission", "Lua missions on ported levels", PSE_PLUGIN_SIMULATION, &features::ApplyLuaMission},
+    {"deniedopsfix.prompt", "On-screen prompts for Lua missions", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyPrompt},
 #ifndef DS_DIST
     {"deniedopsfix.devinput", "Dev: scripted menu input", PSE_PLUGIN_CLIENT_ONLY, &features::ApplyDevInput},
 #endif
@@ -101,6 +106,10 @@ __declspec(dllexport) int PSE_CALL PSEPlugin_Load(const PSELoadInterface* pse) {
                                   "Files in <game>\\Mods\\<mod>\\ replace or add game files by name");
     g_settings.modsMenu = DeclareBool("FeatModsMenu", true, "MODS MENU",
                                       "A MODS item in the main menu switches each Mods folder on or off");
+    g_settings.campaigns = DeclareBool("FeatCampaigns", true, "CUSTOM CAMPAIGNS",
+                                       "A CUSTOM CAMPAIGNS item in the main menu plays the campaign.txt campaigns of mods");
+    g_settings.thirdPerson = DeclareBool("FeatThirdPerson", true, "THIRD-PERSON CAMERA",
+                                         "F7 switches between first and third person (DS1 levels start in third person)");
     RegisterFeatures();
     for (const Feature& f : kFeatures) {
         patch::OwnerScope scope(pse_host::Find(f.name));

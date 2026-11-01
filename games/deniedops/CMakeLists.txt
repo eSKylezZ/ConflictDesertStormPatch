@@ -86,16 +86,22 @@ deniedops_ship_target(deniedops_pse_layer "Pivotal Script Extender - Conflict: D
 # ---- deniedopsfix.dll + .pse: DeniedOpsFix as the host plugin (src/pse/deniedopsfix.cpp) ----
 # Patching = DesertStormFix's broker-backed games/ds1/src/core/patch.cpp, so every byte group / hook has an owner:
 # the feature's sub-plugin "deniedopsfix.<feature>". pse:: calls through pse/hostlink.
+# Lua 5.4.7 (MIT, the repo's third_party/lua): Lua missions on ported levels (luamission.cpp)
+file(GLOB DENIEDOPS_LUA_SOURCES CONFIGURE_DEPENDS ${PSE_REPO_ABS}/third_party/lua/*.c)
+add_library(deniedops_lua STATIC ${DENIEDOPS_LUA_SOURCES})
+target_compile_definitions(deniedops_lua PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_include_directories(deniedops_lua PUBLIC ${PSE_REPO_ABS}/third_party/lua)
+
 add_library(deniedopsfix SHARED
     src/pse/deniedopsfix.cpp src/pse/deniedopsfix.pse
     src/core/log.cpp
-    src/features/unpack.cpp src/features/widescreen.cpp src/features/mods.cpp src/features/modsmenu.cpp src/features/devinput.cpp
+    src/features/unpack.cpp src/features/widescreen.cpp src/features/mods.cpp src/features/modsmenu.cpp src/features/campaigns.cpp src/features/devinput.cpp src/features/thirdperson.cpp src/features/loadingscreen.cpp src/features/luamission.cpp src/features/prompt.cpp
     ${PSE_REPO_ABS}/games/ds1/src/core/patch.cpp)
 set_source_files_properties(src/pse/deniedopsfix.pse PROPERTIES HEADER_FILE_ONLY ON)
 target_include_directories(deniedopsfix PRIVATE src)
 target_compile_definitions(deniedopsfix PRIVATE DS_VERSION="${PROJECT_VERSION}"
     "DENIEDOPS_PSE_PATCH_H=\"${PSE_REPO_ABS}/games/ds1/src/core/patch.h\"")
-target_link_libraries(deniedopsfix PRIVATE deniedops_pse_hostlink advapi32 bcrypt user32 ole32)
+target_link_libraries(deniedopsfix PRIVATE deniedops_pse_hostlink deniedops_lua advapi32 bcrypt user32 ole32 d3d9)
 target_link_options(deniedopsfix PRIVATE /SAFESEH:NO)
 set_target_properties(deniedopsfix PROPERTIES OUTPUT_NAME deniedopsfix PREFIX "")
 deniedops_ship_target(deniedopsfix "DeniedOpsFix - Conflict: Denied Ops enhancement patch (PSE host plugin)" deniedopsfix.dll)

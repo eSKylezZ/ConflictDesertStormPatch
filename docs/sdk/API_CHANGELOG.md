@@ -7,6 +7,29 @@ changes are in the repo's `CHANGELOG.md`.
 
 First implementation, inside DesertStormFix's `dinput8.dll`. Anything may still change until SDK 1.0.
 
+- 2026-11-01 – **Denied Ops: Lua missions** (new `deniedopsfix.luamission`): a mod level's `.level` sidecar line
+  `--@lua <file>` runs that Lua file as the level's mission with the `dox` natives (script API calls, object lookup,
+  checked memory, clock, log). Reference: game-deniedops.md "Lua missions".
+- 2026-11-01 – **Denied Ops ports: DO lighting** (ModKit `ds1todolight`, `ds1todolevel lighting="do"`): ported scenes
+  get DO lights converted from the source's lights, all at one intensity incl. the sun (203.3 x `GAIN` 2.5; ART
+  `SUNBRIGHT` / `SUNAMBBRIGHT` = its ln). Reference: game-deniedops.md "A mod's own scene on a shipped level".
+- 2026-11-01 – **Denied Ops: loading-screen texts from mods** (new `deniedopsfix.loadingscreen`, under `FeatMods`):
+  `<OP>.loading` (`KEY = text`, `tip = text`) changes an operation's loading-screen header / title / tips; the picture
+  comes from a mod's `<OP>_HARDCODED.APAK`. Docs: deniedops-mods.md "An operation's loading screen".
+- 2026-11-01 – **Denied Ops: a mod's own scene + third-person camera** (`deniedopsfix.mods`, new
+  `deniedopsfix.thirdperson`, setting `FeatThirdPerson`): a mod's `<STEM>.ENV` scene gets its octree built at load;
+  the `<STEM>.level` sidecar takes `--@script none` and `--@camera third`; F7 toggles third person. An instance with no
+  lights in a mod's scene takes white ambient instead of black (the port's source games bake light into vertex colours). Reference:
+  game-deniedops.md "A mod's own scene on a shipped level" / "Third-person camera".
+- 2026-10-30 – **Denied Ops: custom campaigns + mission DLLs from mods** (new internal plugin
+  `deniedopsfix.campaigns`, SIMULATION, setting `FeatCampaigns` default on): main menu CUSTOM CAMPAIGNS (after MODS,
+  screen `SCR_DSFIX_CAMPAIGNS` built like the MODS screen) with the full `campaign.txt` format (chapters, mission
+  select, unlocks, 8-row scrolling lists, Back steps up a list); a mission = an Operations.xml operation's DLL
+  (`M_CMB.dll`) or a mod DLL (same name = replaces it; new name + `<Name>.level` `--@archive <operation>` = plays on
+  that operation's data); a won campaign mission starts the next one, the last returns to the main menu; progress
+  `Campaign <mod>` in deniedopsfix's key. No difficulty pick on that path; no Lua missions yet. Modder page
+  [deniedops-mods.md](deniedops-mods.md), addresses [game-deniedops.md](reference/game-deniedops.md). No interface
+  changed.
 - 2026-10-28 – **DS1: mission patches** ([reference/mission-patches.md](reference/mission-patches.md)): a mod's
   `<Stem>.patch.lua` (header `--@patches <Stem>.dll` + `--@readable 1`, `--[[@edit ... --@to ... ]]` blocks, Lua) is
   applied to the readable Lua DesertStormFix makes from the player's own mission DLL and runs instead of the DLL -
