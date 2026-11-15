@@ -4,11 +4,13 @@
 
 ### Fixed
 
-- Loading screens with the V-SYNC setting on: the game presents a frame for every second texture and every
-  environment object it loads (~1,100 per mission). The original game never really synced, so this cost nothing; with
-  V-Sync each present waited for a monitor refresh, so loads that take about 1.5 s showed the bar for 10–20 s
-  (starting a mission and quitting to the main menu alike). The bar is now redrawn at most 20 times a second:
-  measured 20.2 s → 1.6 s starting Mission 3 and 14.5 s → 0.8 s back to the main menu
+- Loading screens with the V-SYNC setting on (the default): the loading bar presents a frame for every second
+  texture and every environment object the game loads (430–1,370 times a level, ~840 for the main menu), and with
+  V-Sync each present waits for a monitor refresh, so loads that take 0.5–1.5 s showed the bar for up to 23 s at
+  60 Hz (less at higher refresh rates, more with a frame limit below the refresh rate) – starting a mission and
+  quitting to the main menu alike. The bar is now drawn at most 20 times a second; the other calls take the game's
+  own no-draw path. Measured at 60 Hz (bar on screen): 19.6 s → 1.5 s starting Mission 3, 18.4 s → 1.3 s starting
+  Mission 1 and 14.6 s → 0.8 s back to the main menu
 
 ## 3.0.0 – 2026-10-10
 
