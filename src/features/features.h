@@ -33,6 +33,7 @@ void OnFrameFollowers();
 void* GiveSpawnedWeapon(void* soldier, const char* weapon, int mags);  // loadout.cpp: weapon in his hands, no unlock
 bool GiveSpawnedMedikit(void* soldier);                                // loadout.cpp: a MediKit (level's own record)
 void ApplyAudio();       // audio listener stays behind the soldier while aiming (no louder mix when zoomed)
+void ApplyLoadScreen();   // loading bar redrawn at most every 50 ms (V-Sync made loads 10x slower)
 void ApplyShadows();      // shadow volumes end below the caster (no shadows through floors / walls)
 void ApplyTooltips();    // inventory: "use" hints (MediKit on yourself, fire mode)
 void ApplyDiagnostics(); // game messages / file opens in the log (dev), performance overlay (F11)

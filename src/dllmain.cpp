@@ -76,6 +76,7 @@ void Init() {
     features::ApplyDiagnostics();
     features::ApplyAudio();
     features::ApplyShadows();
+    features::ApplyLoadScreen();
     features::ApplyScriptHost();
     features::ApplyCampaigns();
     features::ApplyDevHooks();
