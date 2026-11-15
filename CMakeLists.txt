@@ -73,6 +73,7 @@ add_library(dinput8 SHARED
     src/features/cheats.cpp
     src/features/freecam.cpp
     src/features/developer.cpp
+    src/features/loadscreen.cpp
     src/features/modsmenu.cpp
     ${CMAKE_BINARY_DIR}/version.rc
     src/game_icons.rc
